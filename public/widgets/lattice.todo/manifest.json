@@ -1,0 +1,12 @@
+{
+  "id": "lattice.todo",
+  "name": "待办清单",
+  "version": "0.1.0",
+  "description": "极简待办，勾选即完成，数据存在组件私有存储里",
+  "author": "Lattice",
+  "entry": "index.html",
+  "size": { "w": 280, "h": 240, "minW": 200, "minH": 140 },
+  "layer": "top",
+  "permissions": ["storage"],
+  "sdk": "^0.1"
+}

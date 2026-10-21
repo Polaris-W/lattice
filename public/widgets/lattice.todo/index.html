@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>待办清单</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="todo">
+      <form class="todo-form" id="form">
+        <input
+          class="todo-input"
+          id="input"
+          type="text"
+          placeholder="加一件要做的事，回车确认"
+          autocomplete="off"
+          maxlength="120"
+        />
+      </form>
+      <ul class="todo-list" id="list"></ul>
+      <p class="todo-empty" id="empty">还没有待办</p>
+    </main>
+    <script src="widget.js"></script>
+  </body>
+</html>

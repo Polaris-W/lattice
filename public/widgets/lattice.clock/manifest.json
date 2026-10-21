@@ -1,0 +1,12 @@
+{
+  "id": "lattice.clock",
+  "name": "时钟",
+  "version": "0.1.0",
+  "description": "大字号时钟，显示日期与时区，可切换 12/24 小时制",
+  "author": "Lattice",
+  "entry": "index.html",
+  "size": { "w": 240, "h": 140, "minW": 160, "minH": 110 },
+  "layer": "desktop",
+  "permissions": ["clock", "storage"],
+  "sdk": "^0.1"
+}
