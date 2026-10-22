@@ -39,6 +39,7 @@
 | 加上 `--disable-gpu-compositing` 后透明窗口建不出来                    | 该开关会关掉 DirectComposition，逐像素透明依赖它                                                          | 不要加这个开关                                                           |
 | 组件窗口背景永远是白的，`transparent(true)` 无效                          | 逐像素透明要求 WebView2 走合成，软件渲染下拿不到；`DwmEnableBlurBehindWindow` 也压不住                             | 放弃逐像素透明：窗口不透明、宿主页自己画卡片、`SetWindowRgn` 裁圆角                         |
 | `layer: desktop` 的组件跑到了最上层                                  | `window.show()` 在 `apply_to` 之后调用，ShowWindow 会把窗口重新提到最前                                    | 先 `show()` 再应用层级                                                  |
+| 投放之后组件"消失"，`GetWindowRect` 显示在 -31000 一带                   | 主窗口最小化后 `window.screenX/screenY` 变成 `-32000` 哨兵值，防抖同步拿它重算画布原点，把窗口 `set_position` 到屏幕外      | 缓存上一次可信的原点，遇到哨兵值退回缓存                                             |
 | `cargo build` 报 `export ordinal too large: 92606`           | `crate-type` 里有 `cdylib`，windows-gnu 要导出巨大符号表                                              | 只留 `rlib`                                                         |
 
 ### 环境与构建（windows-gnu）
