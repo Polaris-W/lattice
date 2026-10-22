@@ -1,8 +1,8 @@
 {
   "id": "lattice.note",
-  "name": "便签",
+  "name": "Note",
   "version": "0.1.0",
-  "description": "随手记点东西，自动保存到组件私有存储",
+  "description": "Jot something down; saved automatically to widget storage",
   "author": "Lattice",
   "entry": "index.html",
   "size": { "w": 260, "h": 200, "minW": 180, "minH": 120 },

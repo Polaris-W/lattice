@@ -1,32 +1,31 @@
-# 示例：计数器
+# Example: Counter
 
-一个最小的第三方组件，用来验证整条安装链路：
+A minimal third-party widget that exercises the whole install path:
 
-- 从磁盘安装（拖进窗口）
-- 自定义协议 `lattice-widget://` 加载 HTML / CSS / JS
-- 主题令牌下发（`--surface` / `--fg` …）
-- `storage` 权限申请与私有存储读写
+- Installing from disk (drag the folder into the window)
+- Loading HTML / CSS / JS over the `lattice-widget` protocol
+- Receiving theme tokens (`--surface`, `--fg`, …)
+- Requesting the `storage` permission and reading/writing private storage
 
-## 试一下
+## Try it
 
-把这个**目录**（不是里面的文件）从资源管理器拖进棂的窗口，组件库顶部会提示安装成功，
-然后点「计数器」卡片放到画布上。第一次点 `+1` 会弹出授权提示，允许之后计数就会存盘。
+Drag this **folder** (not the files inside it) from Explorer into a Lattice window. The widget library confirms the install; then click the "Counter" card to place it on the canvas. The first click on `+1` asks for permission — once granted, the count is persisted.
 
-## 结构
+## Layout
 
 ```
 counter/
-  manifest.json   清单：id、入口、尺寸、申请的权限
-  index.html      结构，只用相对路径引资源
-  style.css       配色全部走 --surface / --fg 这类变量，跟随平台明暗
-  widget.js       桥客户端 + 业务逻辑，不 import 平台任何代码
+  manifest.json   id, entry, size, requested permissions
+  index.html      markup; only relative asset paths
+  style.css       colours come from --surface / --fg style variables, so it follows the theme
+  widget.js       bridge client + business logic; imports nothing from the platform
 ```
 
-## 可以照着改的地方
+## What to change
 
-- `manifest.json` 的 `id` 要换成你自己的（只允许小写字母、数字、`.`、`-`），
-  并且和目录名保持一致，装完才不会串。
-- 想读别的数据就改 `permissions`，然后在 `widget.js` 里 `call("<方法>")`。
-  方法表见 `docs/WIDGET_SPEC.md` 第 4 节。
-- 样式里**不要**写死颜色。平台会通过 `theme` 推送把 `--lattice-*` 换成当前主题的值，
-  `widget.js` 里那段 `THEME_MAP` 负责把它们映射成组件自己的变量。
+- `manifest.json`: `id` must be your own (lowercase letters, digits, `.` and `-` only) and
+  must match the folder name, or installs get mixed up.
+- To read other data, extend `permissions` and call `call("<method>")` from `widget.js`.
+  The method table is in `docs/WIDGET_SPEC.md` §4.
+- Never hard-code colours. The platform pushes the current `--lattice-*` values with a
+  `theme` message; `THEME_MAP` in `widget.js` maps them onto the widget's own variables.

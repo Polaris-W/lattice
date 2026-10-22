@@ -69,18 +69,18 @@ export class ManifestError extends Error {}
  */
 export function normalizeManifest(raw: unknown, dirName: string): WidgetManifest {
   if (!raw || typeof raw !== "object") {
-    throw new ManifestError("manifest.json 不是对象");
+    throw new ManifestError("manifest.json is not an object");
   }
   const input = raw as Record<string, unknown>;
 
   const id = requireString(input.id, "id");
   if (!ID_RE.test(id)) {
-    throw new ManifestError(`id "${id}" 不符合反向域名格式，例如 lattice.clock`);
+    throw new ManifestError(`id "${id}" is not a reverse-domain id, e.g. lattice.clock`);
   }
 
   const version = requireString(input.version, "version");
   if (!VERSION_RE.test(version)) {
-    throw new ManifestError(`version "${version}" 不是合法的语义化版本`);
+    throw new ManifestError(`version "${version}" is not a valid semver string`);
   }
 
   const rawSize = (input.size ?? {}) as Partial<WidgetSize>;
@@ -104,7 +104,7 @@ export function normalizeManifest(raw: unknown, dirName: string): WidgetManifest
     name: optionalString(input.name) || dirName,
     version,
     description: optionalString(input.description),
-    author: optionalString(input.author) || "未知作者",
+    author: optionalString(input.author) || "Unknown author",
     entry: optionalString(input.entry) || "index.html",
     size,
     layer,
@@ -135,7 +135,7 @@ function normalizePermissions(raw: unknown): Permission[] {
 
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string" || !value.trim()) {
-    throw new ManifestError(`缺少必填字段 ${field}`);
+    throw new ManifestError(`missing required field "${field}"`);
   }
   return value.trim();
 }
@@ -148,12 +148,12 @@ function positive(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : fallback;
 }
 
-/** 权限的中文标签，UI 与文档共用一份，避免文案漂移 */
+/** 权限的显示名，UI 与文档共用一份，避免文案漂移 */
 export const PERMISSION_LABELS: Record<Permission, string> = {
-  clock: "读取系统时间",
-  storage: "组件私有存储",
-  "clipboard:write": "写入剪贴板",
-  network: "访问网络",
-  "system:monitor": "读取系统指标",
-  "media:control": "控制媒体播放",
+  clock: "System time",
+  storage: "Widget storage",
+  "clipboard:write": "Write clipboard",
+  network: "Network access",
+  "system:monitor": "System metrics",
+  "media:control": "Media control",
 };

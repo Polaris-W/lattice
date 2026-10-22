@@ -95,14 +95,14 @@ export async function handleBridgeRequest(
 
   const spec = methods.get(message.method);
   if (!spec) {
-    reply({ ok: false, code: "unknown_method", error: `未知方法 ${message.method}` });
+    reply({ ok: false, code: "unknown_method", error: `unknown method ${message.method}` });
     return;
   }
   if (spec.permission && !ctx.granted.has(spec.permission)) {
     reply({
       ok: false,
       code: "permission_denied",
-      error: `未授予权限 ${spec.permission}`,
+      error: `permission not granted: ${spec.permission}`,
       permission: spec.permission,
     });
     return;
@@ -225,7 +225,7 @@ defineMethod("storage.remove", "storage", async (params, ctx) => {
 defineMethod("clipboard.write", "clipboard:write", async (params) => {
   const text = (params as { text?: unknown } | undefined)?.text;
   if (typeof text !== "string") {
-    throw new BridgeError("bad_params", "clipboard.write 需要字符串参数 text");
+    throw new BridgeError("bad_params", "clipboard.write requires a string parameter \"text\"");
   }
   await navigator.clipboard.writeText(text);
   return { ok: true };
@@ -241,7 +241,7 @@ defineMethod("window.close", null, (_params, ctx) => {
 function readKey(params: unknown): string {
   const key = (params as { key?: unknown } | undefined)?.key;
   if (typeof key !== "string" || !key) {
-    throw new BridgeError("bad_params", "缺少字符串参数 key");
+    throw new BridgeError("bad_params", "missing string parameter \"key\"");
   }
   return key;
 }

@@ -55,7 +55,7 @@ pub fn clip_rounded(hwnd: isize, width: u32, height: u32, radius: f64) -> Result
     #[cfg(not(windows))]
     {
         let _ = (hwnd, width, height, radius);
-        Err("窗口裁剪目前只实现了 Windows".to_string())
+        Err("window clipping is only implemented on Windows".to_string())
     }
 }
 
@@ -73,7 +73,7 @@ pub fn apply_layer(
     #[cfg(not(windows))]
     {
         let _ = (hwnd, layer, click_through, interactive);
-        Err("窗口层级控制目前只实现了 Windows".to_string())
+        Err("window layering is only implemented on Windows".to_string())
     }
 }
 
@@ -96,7 +96,7 @@ pub fn install_guard(hwnd: isize) -> Result<(), String> {
     #[cfg(windows)]
     {
         if hwnd == 0 {
-            return Err("窗口句柄为空".to_string());
+            return Err("window handle is null".to_string());
         }
         imp::install_guard(hwnd as windows_sys::Win32::Foundation::HWND)
     }
@@ -143,18 +143,18 @@ pub fn apply_to(
             if guard {
                 let _ = window.run_on_main_thread(move || {
                     if let Err(error) = install_guard(target) {
-                        eprintln!("[lattice] 安装底层守卫失败：{error}");
+                        eprintln!("[lattice] failed to install the z-order guard: {error}");
                     }
                 });
             }
             return Ok(());
         }
-        Err("拿不到 Win32 窗口句柄".to_string())
+        Err("could not obtain the Win32 window handle".to_string())
     }
     #[cfg(not(windows))]
     {
         let _ = (handle, scale, size);
-        Err("窗口层级控制目前只实现了 Windows".to_string())
+        Err("window layering is only implemented on Windows".to_string())
     }
 }
 
@@ -189,7 +189,7 @@ mod imp {
     /// GDI 的区域是右开区间，少 1px 会吃掉最后一行/列。
     pub fn clip_rounded(hwnd: isize, width: u32, height: u32, radius: f64) -> Result<(), String> {
         if hwnd == 0 {
-            return Err("窗口句柄为空".to_string());
+            return Err("window handle is null".to_string());
         }
         if width == 0 || height == 0 {
             return Ok(());
@@ -206,7 +206,7 @@ mod imp {
             )
         };
         if region.is_null() {
-            return Err("创建圆角裁剪区域失败".to_string());
+            return Err("failed to create the rounded window region".to_string());
         }
         // 成功后区域归系统所有，不能再删；失败才需要自己释放
         let ok = unsafe { SetWindowRgn(hwnd as HWND, region, 1) };
@@ -214,7 +214,7 @@ mod imp {
             unsafe {
                 DeleteObject(region);
             }
-            return Err("设置窗口裁剪区域失败".to_string());
+            return Err("failed to apply the window region".to_string());
         }
         Ok(())
     }
@@ -284,7 +284,7 @@ mod imp {
         interactive: bool,
     ) -> Result<(), String> {
         if hwnd == 0 {
-            return Err("窗口句柄为空".to_string());
+            return Err("window handle is null".to_string());
         }
         let hwnd = hwnd as HWND;
 
@@ -392,7 +392,7 @@ mod imp {
     pub fn install_guard(hwnd: HWND) -> Result<(), String> {
         let ok = unsafe { SetWindowSubclass(hwnd, Some(bottom_proc), SUBCLASS_ID, 0) };
         if ok == 0 {
-            Err("SetWindowSubclass 返回 0（跨线程调用会这样）".to_string())
+            Err("SetWindowSubclass returned 0 (happens when called off the window thread)".to_string())
         } else {
             Ok(())
         }

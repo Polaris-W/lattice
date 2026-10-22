@@ -20,9 +20,9 @@ import { useLattice, type ThemeMode } from "./store";
 type View = "menu" | "signin" | "profile";
 
 const THEME_OPTIONS: Array<{ value: ThemeMode; label: string }> = [
-  { value: "light", label: "浅色" },
-  { value: "system", label: "跟随系统" },
-  { value: "dark", label: "深色" },
+  { value: "light", label: "Light" },
+  { value: "system", label: "System" },
+  { value: "dark", label: "Dark" },
 ];
 
 function Avatar({ name, size }: { name?: string; size: number }) {
@@ -131,21 +131,21 @@ export function SettingsMenu({ installedCount, placementCount }: SettingsMenuPro
         }}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title="设置（Ctrl+,）"
+        title="Settings (Ctrl+,)"
       >
         <Avatar name={profile?.name} size={24} />
       </button>
 
       {open && (
-        <div className="lattice-menu" role="dialog" aria-label="设置">
+        <div className="lattice-menu" role="dialog" aria-label="Settings">
           {view === "menu" && (
             <>
               <header className="lattice-account">
                 <Avatar name={profile?.name} size={38} />
                 <div className="lattice-account-text">
-                  <div className="lattice-account-name">{profile?.name ?? "未登录"}</div>
+                  <div className="lattice-account-name">{profile?.name ?? "Not signed in"}</div>
                   <div className="lattice-account-sub">
-                    {profile ? profile.email || "本地档案" : "登录后记住你的偏好"}
+                    {profile ? profile.email || "Local profile" : "Sign in to keep your preferences"}
                   </div>
                 </div>
               </header>
@@ -153,11 +153,11 @@ export function SettingsMenu({ installedCount, placementCount }: SettingsMenuPro
               <div className="lattice-account-card">
                 <div className="lattice-account-stats">
                   <div>
-                    <span>已安装</span>
+                    <span>Installed</span>
                     <b>{installedCount}</b>
                   </div>
                   <div>
-                    <span>画布上</span>
+                    <span>On canvas</span>
                     <b>{placementCount}</b>
                   </div>
                 </div>
@@ -166,14 +166,14 @@ export function SettingsMenu({ installedCount, placementCount }: SettingsMenuPro
                   className={`lattice-btn is-small${profile ? "" : " is-primary"}`}
                   onClick={profile ? startProfile : startSignIn}
                 >
-                  {profile ? "编辑个人信息" : "登录"}
+                  {profile ? "Edit profile" : "Sign in"}
                 </button>
               </div>
 
               <div className="lattice-menu-list">
                 <div className="lattice-menu-row is-static">
                   <Glyph d={ICON.appearance} />
-                  <span className="lattice-menu-label">外观</span>
+                  <span className="lattice-menu-label">Appearance</span>
                   <div className="lattice-segmented is-compact is-icons">
                     {THEME_OPTIONS.map((option) => (
                       <button
@@ -193,13 +193,13 @@ export function SettingsMenu({ installedCount, placementCount }: SettingsMenuPro
 
                 <div className="lattice-menu-row is-static">
                   <Glyph d={ICON.grid} />
-                  <span className="lattice-menu-label">网格吸附</span>
-                  <label className="lattice-switch" title="拖动时对齐到 8px 网格">
+                  <span className="lattice-menu-label">Snap to grid</span>
+                  <label className="lattice-switch" title="Align to an 8px grid while dragging">
                     <input
                       type="checkbox"
                       checked={snapToGrid}
                       onChange={toggleSnap}
-                      aria-label="网格吸附"
+                      aria-label="Snap to grid"
                     />
                   </label>
                 </div>
@@ -210,14 +210,14 @@ export function SettingsMenu({ installedCount, placementCount }: SettingsMenuPro
                   onClick={profile ? startProfile : startSignIn}
                 >
                   <Glyph d={ICON.user} />
-                  <span className="lattice-menu-label">个人信息</span>
+                  <span className="lattice-menu-label">Profile</span>
                   <Glyph d={ICON.chevron} size={13} />
                 </button>
 
                 <div className="lattice-menu-row is-static">
                   <Glyph d={ICON.info} />
-                  <span className="lattice-menu-label">关于棂</span>
-                  <span className="lattice-menu-note">v0.1.0 · 本地优先</span>
+                  <span className="lattice-menu-label">About Lattice</span>
+                  <span className="lattice-menu-note">v0.1.0 · local-first</span>
                 </div>
               </div>
 
@@ -233,7 +233,7 @@ export function SettingsMenu({ installedCount, placementCount }: SettingsMenuPro
                     }}
                   >
                     <Glyph d={ICON.logout} />
-                    <span className="lattice-menu-label">退出登录</span>
+                    <span className="lattice-menu-label">Sign out</span>
                   </button>
                 </>
               )}
@@ -245,33 +245,33 @@ export function SettingsMenu({ installedCount, placementCount }: SettingsMenuPro
               <header className="lattice-account-form-head">
                 <button type="button" className="lattice-icon-btn" onClick={() => setView("menu")}>
                   <Glyph d={ICON.back} />
-                  <span className="lattice-sr-only">返回</span>
+                  <span className="lattice-sr-only">Back</span>
                 </button>
-                <span>{view === "profile" ? "个人信息" : "登录"}</span>
+                <span>{view === "profile" ? "Profile" : "Sign in"}</span>
               </header>
 
               <div className="lattice-account-form-body">
                 <div className="lattice-account-preview">
                   <Avatar name={draftName || profile?.name} size={46} />
                   <div>
-                    <div className="lattice-account-name">{draftName.trim() || "你的名字"}</div>
-                    <div className="lattice-account-sub">{draftEmail.trim() || "还没有填邮箱"}</div>
+                    <div className="lattice-account-name">{draftName.trim() || "Your name"}</div>
+                    <div className="lattice-account-sub">{draftEmail.trim() || "No email yet"}</div>
                   </div>
                 </div>
 
                 <label className="lattice-textfield">
-                  <span>昵称</span>
+                  <span>Display name</span>
                   <input
                     value={draftName}
                     onChange={(event) => setDraftName(event.target.value)}
-                    placeholder="怎么称呼你"
+                    placeholder="What should we call you?"
                     maxLength={24}
                     autoFocus
                   />
                 </label>
 
                 <label className="lattice-textfield">
-                  <span>邮箱（可选）</span>
+                  <span>Email (optional)</span>
                   <input
                     value={draftEmail}
                     onChange={(event) => setDraftEmail(event.target.value)}
@@ -282,20 +282,20 @@ export function SettingsMenu({ installedCount, placementCount }: SettingsMenuPro
                 </label>
 
                 <p className="lattice-account-hint">
-                  只保存在这台电脑上，不会上传，也不需要密码。清空平台数据时会一并删掉。
+                  Stored on this computer only. Nothing is uploaded, no password needed, and it is removed with the rest of the platform data.
                 </p>
               </div>
 
               <footer className="lattice-account-form-foot">
                 <button type="button" className="lattice-btn is-small" onClick={() => setView("menu")}>
-                  取消
+                  Cancel
                 </button>
                 <button
                   type="submit"
                   className="lattice-btn is-small is-primary"
                   disabled={!draftName.trim()}
                 >
-                  {view === "profile" ? "保存" : "登录"}
+                  {view === "profile" ? "Save" : "Sign in"}
                 </button>
               </footer>
             </form>

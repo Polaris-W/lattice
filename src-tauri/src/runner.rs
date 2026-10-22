@@ -255,7 +255,7 @@ fn create(app: &AppHandle, spec: &WidgetWindowSpec, runner: &Runner) -> Result<(
         Ok(window) => window,
         Err(error) => {
             runner.forget(&label);
-            return Err(format!("创建组件窗口失败：{error}"));
+            return Err(format!("failed to create widget window: {error}"));
         }
     };
 
@@ -279,7 +279,7 @@ fn create(app: &AppHandle, spec: &WidgetWindowSpec, runner: &Runner) -> Result<(
     let _ = window.show();
     if let Err(error) = desktop::apply_to(&window, spec.layer, spec.click_through, spec.interactive) {
         // 层级失败不该让整个同步失败：窗口已经建好了，至少先让人看见
-        eprintln!("[lattice] 应用窗口层级失败（{label}）：{error}");
+        eprintln!("[lattice] failed to apply window layer ({label}): {error}");
     } else {
         runner.remember(
             &label,
@@ -357,7 +357,7 @@ pub async fn sync_widget_windows(
                             spec.click_through,
                             spec.interactive,
                         ) {
-                            eprintln!("[lattice] 更新窗口层级失败（{label}）：{error}");
+                            eprintln!("[lattice] failed to update window layer ({label}): {error}");
                         }
                     }
                 }
@@ -401,7 +401,7 @@ pub fn widget_host_config(
 ) -> Result<HostConfig, String> {
     runner
         .get(window.label())
-        .ok_or_else(|| format!("窗口 {} 没有登记组件配置", window.label()))
+        .ok_or_else(|| format!("no widget config registered for window {}", window.label()))
 }
 
 // ---------------------------------------------------------------------------
@@ -427,7 +427,7 @@ pub fn widget_report_rect(
 ) -> Result<(), String> {
     let config = runner
         .get(window.label())
-        .ok_or_else(|| "这个窗口不在组件窗口表里".to_string())?;
+        .ok_or_else(|| "this window is not a registered widget window".to_string())?;
 
     // 顺手把缓存更新掉：下一次同步就不会再拿旧坐标去 set_position
     runner.remember(
@@ -467,7 +467,7 @@ pub fn widget_set_pinned(
 ) -> Result<(), String> {
     let mut config = runner
         .get(window.label())
-        .ok_or_else(|| "这个窗口不在组件窗口表里".to_string())?;
+        .ok_or_else(|| "this window is not a registered widget window".to_string())?;
     config.pinned = pinned;
     runner.put(window.label(), config.clone());
 
@@ -492,7 +492,7 @@ pub fn widget_set_layer(
 ) -> Result<(), String> {
     let mut config = runner
         .get(window.label())
-        .ok_or_else(|| "这个窗口不在组件窗口表里".to_string())?;
+        .ok_or_else(|| "this window is not a registered widget window".to_string())?;
     config.layer = layer;
     runner.put(window.label(), config.clone());
 

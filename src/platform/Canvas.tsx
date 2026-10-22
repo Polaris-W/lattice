@@ -39,16 +39,16 @@ export function Canvas({ records, installedIds, onDropWidget }: CanvasProps) {
           <div className="lattice-empty-art" aria-hidden />
           {hasInstalled ? (
             <>
-              <p className="lattice-empty-title">桌面还是空的</p>
+              <p className="lattice-empty-title">The desktop is still empty</p>
               <p className="lattice-empty-hint">
-                从左侧组件库拖一个到画布，或者直接点击组件卡片
+                Drag one from the library, or just click a widget card
               </p>
             </>
           ) : (
             <>
-              <p className="lattice-empty-title">空的，这正是它该有的样子</p>
+              <p className="lattice-empty-title">Empty — exactly as intended</p>
               <p className="lattice-empty-hint">
-                平台本身不带任何组件。去左侧安装一个组件包，或者把你写的组件放进 widgets/ 目录。
+                The platform ships with no widgets. Install a pack on the left, or drop your own into the widgets/ folder.
               </p>
             </>
           )}
@@ -72,7 +72,7 @@ export function Canvas({ records, installedIds, onDropWidget }: CanvasProps) {
             >
               <div className="lattice-broken-body">
                 <span className="lattice-broken-title">
-                  {record ? "组件未安装" : "组件缺失"}
+                  {record ? "Widget not installed" : "Widget missing"}
                 </span>
                 <code className="lattice-mono">{placement.widgetId}</code>
               </div>

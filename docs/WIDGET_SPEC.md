@@ -285,7 +285,7 @@ call("clock.now")
   })
   .catch((error) => {
     document.getElementById("out").textContent =
-      error.code === "permission_denied" ? "需要「读取系统时间」权限" : "读取失败";
+      error.code === "permission_denied" ? "Needs clock permission" : "Could not read the time";
   });
 
 parent.postMessage({ __lattice: 1, type: "ready" }, "*");

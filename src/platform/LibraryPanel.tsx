@@ -89,14 +89,14 @@ export function LibraryPanel({
             <code className="lattice-card-id">{record.manifest.id}</code>
           </span>
           {isInstalled ? (
-            <span className="lattice-chip is-accent">已安装</span>
+            <span className="lattice-chip is-accent">Installed</span>
           ) : (
-            <span className="lattice-chip">{record.source === "bundled" ? "官方" : "本地"}</span>
+            <span className="lattice-chip">{record.source === "bundled" ? "Bundled" : "Local"}</span>
           )}
         </div>
 
         <p className="lattice-card-desc">
-          {record.manifest.description || "这个组件还没有写描述"}
+          {record.manifest.description || "No description yet"}
         </p>
 
         <div className="lattice-card-meta">
@@ -124,7 +124,7 @@ export function LibraryPanel({
                 onUninstall(record);
               }}
             >
-              卸载
+              Uninstall
             </button>
           ) : (
             <button
@@ -135,7 +135,7 @@ export function LibraryPanel({
                 onInstall(record);
               }}
             >
-              安装
+              Install
             </button>
           )}
         </div>
@@ -146,14 +146,14 @@ export function LibraryPanel({
   return (
     <aside className="lattice-panel lattice-panel-left">
       <header className="lattice-panel-head">
-        <h2 className="lattice-panel-title">组件库</h2>
+        <h2 className="lattice-panel-title">Widgets</h2>
         <span className="lattice-panel-count">{installed.length}</span>
         <button
           type="button"
           className="lattice-icon-btn"
           onClick={onOpenWidgetsDir}
-          title="在资源管理器里打开组件目录"
-          aria-label="打开组件目录"
+          title="Open the widgets folder in Explorer"
+          aria-label="Open widgets folder"
         >
           <Glyph d={ICON.folder} />
         </button>
@@ -166,7 +166,7 @@ export function LibraryPanel({
             type="button"
             className="lattice-notice-close"
             onClick={onDismissNotice}
-            aria-label="关闭提示"
+            aria-label="Dismiss notice"
           >
             ×
           </button>
@@ -174,22 +174,22 @@ export function LibraryPanel({
       )}
 
       <div className="lattice-panel-body">
-        {loading && <p className="lattice-hint">正在扫描组件…</p>}
+        {loading && <p className="lattice-hint">Scanning widgets…</p>}
 
         {!loading && widgets.length === 0 && (
           <div className="lattice-lib-note">
-            <p className="lattice-lib-note-title">一个组件都没有</p>
+            <p className="lattice-lib-note-title">No widgets at all</p>
             <p className="lattice-hint">
-              把一个组件文件夹从资源管理器拖进这个窗口就能安装。
+              Drag a widget folder from Explorer into this window to install it.
             </p>
           </div>
         )}
 
         {!loading && widgets.length > 0 && installed.length === 0 && (
           <div className="lattice-lib-note">
-            <p className="lattice-lib-note-title">平台是空的</p>
+            <p className="lattice-lib-note-title">The platform is empty</p>
             <p className="lattice-hint">
-              下面这些包还没安装。装一个，桌面上才会有东西。
+              Nothing below is installed yet. Install one and the desktop has something to show.
             </p>
             {officialPack.length > 0 && (
               <button
@@ -197,7 +197,7 @@ export function LibraryPanel({
                 className="lattice-btn is-small is-primary"
                 onClick={() => onInstallPack(officialPack)}
               >
-                安装官方组件包（{officialPack.length} 个）
+                Install the official pack ({officialPack.length})
               </button>
             )}
           </div>
@@ -206,7 +206,7 @@ export function LibraryPanel({
         {installed.length > 0 && (
           <section className="lattice-lib-section">
             <h3 className="lattice-lib-section-title">
-              已安装<span>{installed.length}</span>
+              Installed<span>{installed.length}</span>
             </h3>
             {installed.map(renderCard)}
           </section>
@@ -215,7 +215,7 @@ export function LibraryPanel({
         {available.length > 0 && (
           <section className="lattice-lib-section">
             <h3 className="lattice-lib-section-title">
-              可安装<span>{available.length}</span>
+              Available<span>{available.length}</span>
             </h3>
             {available.map(renderCard)}
           </section>
@@ -223,7 +223,7 @@ export function LibraryPanel({
 
         {errors.length > 0 && (
           <div className="lattice-errors">
-            <h3 className="lattice-errors-title">加载失败的组件</h3>
+            <h3 className="lattice-errors-title">Widgets that failed to load</h3>
             {errors.map((error) => (
               <div key={error.dir} className="lattice-error-row">
                 <code className="lattice-mono">{error.dir}</code>
@@ -234,7 +234,7 @@ export function LibraryPanel({
         )}
 
         <p className="lattice-lib-drop">
-          把一个组件文件夹从资源管理器拖进窗口，就装好了。
+          Drop a widget folder anywhere in this window to install it.
         </p>
       </div>
     </aside>

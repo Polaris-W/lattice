@@ -21,7 +21,7 @@
       setTimeout(function () {
         if (!pending.has(id)) return;
         pending.delete(id);
-        reject(new Error("桥调用超时：" + method));
+        reject(new Error("Bridge call timed out: " + method));
       }, 3000);
     });
   }
@@ -63,7 +63,7 @@
     if (data.ok) {
       entry.resolve(data.result);
     } else {
-      var error = new Error(data.error || "桥调用失败");
+      var error = new Error(data.error || "Bridge call failed");
       error.code = data.code;
       entry.reject(error);
     }
@@ -99,7 +99,7 @@
   }
 
   function updateCount() {
-    countEl.textContent = Array.from(textEl.value).length + "字";
+    countEl.textContent = Array.from(textEl.value).length + " chars";
   }
 
   function save() {
@@ -107,7 +107,7 @@
     if (saving || saved >= revision) return;
     saving = true;
     var target = revision;
-    setStatus("保存中…", "");
+    setStatus("Saving…", "");
     call("storage.set", { key: "text", value: textEl.value })
       .then(function () {
         saved = target;
@@ -116,12 +116,12 @@
           save();
           return;
         }
-        setStatus("已保存", "saved");
+        setStatus("Saved", "saved");
       })
       .catch(function (error) {
         saving = false;
         setStatus(
-          error.code === "permission_denied" ? "未授予存储权限" : "保存失败",
+          error.code === "permission_denied" ? "Storage permission not granted" : "Could not save",
           "error",
         );
       });
@@ -131,7 +131,7 @@
     revision += 1;
     updateCount();
     // 正在保存时别把"保存中…"改回"未保存"，那会让人以为存完了又退回
-    if (!saving) setStatus("未保存", "");
+    if (!saving) setStatus("Unsaved", "");
     clearTimeout(timer);
     timer = setTimeout(save, 400);
   });
@@ -159,7 +159,7 @@
         if (value === textEl.value) return;
         textEl.value = value;
         updateCount();
-        setStatus("已载入", "saved");
+        setStatus("Loaded", "saved");
       })
       .catch(function () {});
   }
@@ -181,18 +181,18 @@
       if (revision > 0) {
         // 用户在这几十毫秒里已经开始打字了：磁盘上的旧内容优先级最低
         updateCount();
-        setStatus("未保存", "");
+        setStatus("Unsaved", "");
         return;
       }
       if (typeof value === "string") textEl.value = value;
       updateCount();
-      setStatus("已载入", "saved");
+      setStatus("Loaded", "saved");
     })
     .catch(function (error) {
       if (revision > 0) return;
       updateCount();
       setStatus(
-        error.code === "permission_denied" ? "未授予存储权限" : "读取失败",
+        error.code === "permission_denied" ? "Storage permission not granted" : "Could not load",
         "error",
       );
     })

@@ -29,7 +29,7 @@ pub(crate) fn user_widgets_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf
     let base = app.path().app_data_dir().map_err(|error| error.to_string())?;
     let dir = base.join("widgets");
     if !dir.exists() {
-        fs::create_dir_all(&dir).map_err(|error| format!("创建组件目录失败：{error}"))?;
+        fs::create_dir_all(&dir).map_err(|error| format!("failed to create the widgets directory: {error}"))?;
     }
     Ok(dir)
 }
@@ -83,20 +83,20 @@ pub fn widgets_dir(app: AppHandle) -> Result<String, String> {
 pub fn install_widget(app: AppHandle, source_dir: String) -> Result<String, String> {
     let source = PathBuf::from(&source_dir);
     if !source.is_dir() {
-        return Err(format!("目录不存在：{source_dir}"));
+        return Err(format!("folder does not exist: {source_dir}"));
     }
 
     let manifest_text = fs::read_to_string(source.join("manifest.json"))
         // 「不是组件目录」这几个字前端会认：拖进来的可能只是随便一个文件夹，
         // 那种情况不该弹一屏红字
-        .map_err(|error| format!("不是组件目录：读不到 manifest.json（{error}）"))?;
+        .map_err(|error| format!("Not a widget folder: cannot read manifest.json ({error})"))?;
     let manifest: serde_json::Value =
-        serde_json::from_str(&manifest_text).map_err(|error| format!("manifest.json 不是合法 JSON：{error}"))?;
+        serde_json::from_str(&manifest_text).map_err(|error| format!("manifest.json is not valid JSON: {error}"))?;
 
     let id = manifest
         .get("id")
         .and_then(|value| value.as_str())
-        .ok_or_else(|| "manifest.json 缺少 id 字段".to_string())?;
+        .ok_or_else(|| "manifest.json is missing the id field".to_string())?;
 
     // 防目录穿越：id 只允许小写字母、数字、点、连字符
     if id.is_empty()
@@ -104,12 +104,12 @@ pub fn install_widget(app: AppHandle, source_dir: String) -> Result<String, Stri
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-')
     {
-        return Err(format!("组件 id \"{id}\" 含非法字符"));
+        return Err(format!("widget id \"{id}\" contains illegal characters"));
     }
 
     let target = user_widgets_dir(&app)?.join(id);
     if target.exists() {
-        fs::remove_dir_all(&target).map_err(|error| format!("覆盖旧版本失败：{error}"))?;
+        fs::remove_dir_all(&target).map_err(|error| format!("failed to replace the previous version: {error}"))?;
     }
     copy_dir(&source, &target)?;
 
@@ -119,19 +119,19 @@ pub fn install_widget(app: AppHandle, source_dir: String) -> Result<String, Stri
 #[tauri::command]
 pub fn uninstall_widget(app: AppHandle, id: String) -> Result<(), String> {
     if id.is_empty() || id.contains(['/', '\\', ':']) || id.contains("..") {
-        return Err("组件 id 非法".to_string());
+        return Err("invalid widget id".to_string());
     }
     let target = user_widgets_dir(&app)?.join(&id);
     if target.exists() {
-        fs::remove_dir_all(&target).map_err(|error| format!("删除失败：{error}"))?;
+        fs::remove_dir_all(&target).map_err(|error| format!("delete failed: {error}"))?;
     }
     Ok(())
 }
 
 fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
-    fs::create_dir_all(to).map_err(|error| format!("创建目录失败：{error}"))?;
+    fs::create_dir_all(to).map_err(|error| format!("failed to create a directory: {error}"))?;
     for entry in fs::read_dir(from)
-        .map_err(|error| format!("读取目录失败：{error}"))?
+        .map_err(|error| format!("failed to read a directory: {error}"))?
         .flatten()
     {
         let path = entry.path();
@@ -140,7 +140,7 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
         if path.is_dir() {
             copy_dir(&path, &target)?;
         } else {
-            fs::copy(&path, &target).map_err(|error| format!("复制 {name:?} 失败：{error}"))?;
+            fs::copy(&path, &target).map_err(|error| format!("failed to copy {name:?}: {error}"))?;
         }
     }
     Ok(())

@@ -72,7 +72,7 @@ fn empty(code: StatusCode) -> Response<Vec<u8>> {
         .status(code)
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .body(Vec::new())
-        .expect("空响应头一定合法")
+        .expect("an empty header map is always valid")
 }
 
 /// `/lattice.todo/index.html` → (`lattice.todo`, `index.html`)

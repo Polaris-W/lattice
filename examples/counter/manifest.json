@@ -1,9 +1,9 @@
 {
   "id": "demo.counter",
-  "name": "计数器",
+  "name": "Counter",
   "version": "0.1.0",
-  "description": "一个用来验证安装链路的示例组件：能读主题、能存数据、能点",
-  "author": "第三方示例",
+  "description": "A sample widget that proves the install path: reads the theme, stores data, responds to clicks",
+  "author": "Third-party sample",
   "entry": "index.html",
   "size": { "w": 220, "h": 160, "minW": 180, "minH": 130 },
   "layer": "desktop",

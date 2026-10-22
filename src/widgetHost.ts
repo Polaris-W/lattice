@@ -197,10 +197,10 @@ function buildChrome(config: HostConfig) {
   chrome.className = "lw-chrome";
   chrome.innerHTML = `
     <div class="lw-pill">
-      <button type="button" class="lw-btn lw-grip" data-act="drag">${ICON.grip}</button>
-      <button type="button" class="lw-btn" data-act="layer"></button>
-      <button type="button" class="lw-btn" data-act="pin"></button>
-      <button type="button" class="lw-btn" data-act="close">${ICON.close}</button>
+      <button type="button" class="lw-btn lw-grip" data-act="drag" title="Drag to move" aria-label="Drag to move">${ICON.grip}</button>
+      <button type="button" class="lw-btn" data-act="layer" aria-label="Toggle layer"></button>
+      <button type="button" class="lw-btn" data-act="pin" aria-label="Pin position"></button>
+      <button type="button" class="lw-btn" data-act="close" title="Close widget" aria-label="Close widget">${ICON.close}</button>
     </div>
     ${["n", "s", "w", "e", "nw", "ne", "sw", "se"]
       .map((dir) => `<div class="lw-edge" data-dir="${dir}"></div>`)
@@ -219,11 +219,13 @@ function buildChrome(config: HostConfig) {
     document.body.classList.toggle("is-pinned", pinned);
     pinBtn.innerHTML = pinned ? ICON.pinned : ICON.pin;
     pinBtn.classList.toggle("is-on", pinned);
-    pinBtn.title = pinned ? "已固定位置，点击解锁" : "固定位置（锁定拖动与缩放）";
+    pinBtn.title = pinned ? "Position locked — click to unlock" : "Lock position and size";
+    pinBtn.setAttribute("aria-label", pinned ? "Unlock position" : "Lock position");
 
     layerBtn.innerHTML = layer === "top" ? ICON.layerTop : ICON.layerDesktop;
     layerBtn.classList.toggle("is-on", layer === "top");
-    layerBtn.title = layer === "top" ? "当前置顶，点击贴回桌面" : "当前贴桌面，点击置顶";
+    layerBtn.title = layer === "top" ? "On top — click to pin to desktop" : "On desktop — click to keep on top";
+    layerBtn.setAttribute("aria-label", layer === "top" ? "Send to desktop layer" : "Keep on top");
   };
   paint();
 

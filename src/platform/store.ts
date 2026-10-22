@@ -37,7 +37,7 @@ const platformStorage: StateStorage = {
     try {
       return await invoke<string | null>("state_read");
     } catch (error) {
-      console.error("读取平台状态失败", error);
+      console.error("Failed to read platform state", error);
       return null;
     }
   },
@@ -50,7 +50,7 @@ const platformStorage: StateStorage = {
     try {
       await invoke("state_write", { json: value });
     } catch (error) {
-      console.error("保存平台状态失败", error);
+      console.error("Failed to save platform state", error);
     }
   },
   removeItem: async (name) => {
@@ -61,7 +61,7 @@ const platformStorage: StateStorage = {
     try {
       await invoke("state_clear");
     } catch (error) {
-      console.error("清除平台状态失败", error);
+      console.error("Failed to clear platform state", error);
     }
   },
 };
@@ -294,7 +294,7 @@ export const useLattice = create<LatticeState>()(
       name: STATE_FILE,
       storage: createJSONStorage(() => platformStorage),
       onRehydrateStorage: () => (_state, error) => {
-        if (error) console.error("平台状态水合失败", error);
+        if (error) console.error("Failed to hydrate platform state", error);
         hydrated = true;
       },
       partialize: (state) => ({

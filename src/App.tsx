@@ -23,9 +23,9 @@ import type { WidgetLayer } from "./runtime/manifest";
 /** 顶栏那颗按钮的循环顺序：浅色 → 深色 → 跟随系统 → 浅色 */
 const THEME_CYCLE: ThemeMode[] = ["light", "dark", "system"];
 const THEME_LABEL: Record<ThemeMode, string> = {
-  light: "浅色",
-  dark: "深色",
-  system: "跟随系统",
+  light: "Light",
+  dark: "Dark",
+  system: "System",
 };
 
 function nextTheme(current: ThemeMode): ThemeMode {
@@ -258,7 +258,7 @@ export default function App() {
           const id = await invoke<string>("install_widget", { sourceDir: path });
           if (officialIds.has(id)) {
             await invoke("uninstall_widget", { id });
-            failed.push(`「${id}」和官方组件重名，换个 id 再装`);
+            failed.push(`"${id}" collides with a bundled widget id — rename it and try again`);
             continue;
           }
           installWidget(id);
@@ -266,7 +266,7 @@ export default function App() {
         } catch (error) {
           const message = String(error);
           // 「不是组件目录」是拖错了，不是出错，不必打扰
-          if (message.includes("不是组件目录")) continue;
+          if (message.includes("Not a widget folder")) continue;
           failed.push(message);
         }
       }
@@ -274,11 +274,11 @@ export default function App() {
       if (installed.length > 0) await refresh();
 
       if (failed.length > 0) {
-        setNotice({ kind: "error", text: failed.join("；") });
+        setNotice({ kind: "error", text: failed.join("; ") });
       } else if (installed.length > 0) {
         setNotice({
           kind: "ok",
-          text: `已安装 ${installed.join("、")}，点一下卡片就能放到画布上`,
+          text: `Installed ${installed.join(", ")} — click a card to place it on the canvas`,
         });
       }
     },
@@ -314,7 +314,7 @@ export default function App() {
       const dir = await invoke<string>("widgets_dir");
       await revealItemInDir(dir);
     } catch (error) {
-      setNotice({ kind: "error", text: `打不开组件目录：${String(error)}` });
+      setNotice({ kind: "error", text: `Could not open the widgets folder: ${String(error)}` });
     }
   }, []);
 
@@ -384,14 +384,14 @@ export default function App() {
       <header className="lattice-topbar">
         <div className="lattice-brand">
           <span className="lattice-brand-mark" aria-hidden />
-          <span className="lattice-brand-name">棂</span>
-          <span className="lattice-brand-sub">Lattice</span>
+          <span className="lattice-brand-name">Lattice</span>
+          <span className="lattice-brand-sub">widgets</span>
         </div>
 
         <div className="lattice-topbar-actions">
           <span className="lattice-stat">
             <span className="lattice-stat-dot" aria-hidden />
-            <b>{placements.length}</b> 个组件 · <b>{installedSet.size}</b> 个已安装
+            <b>{placements.length}</b> on canvas · <b>{installedSet.size}</b> installed
           </span>
 
           <button
@@ -401,19 +401,19 @@ export default function App() {
             disabled={!isTauri() || desktopBusy}
             title={
               isTauri()
-                ? "把画布上的组件变成真正的桌面窗口，主窗口会最小化"
-                : "浏览器预览里不可用，请用 npm run tauri:dev 启动桌面端"
+                ? "Turn canvas widgets into real desktop windows; the main window will step aside"
+                : "Not available in browser preview — run npm run tauri:dev"
             }
           >
-            {desktopMode ? "收回组件" : "投放到桌面"}
+            {desktopMode ? "Bring back" : "Send to desktop"}
           </button>
 
           <button
             type="button"
             className="lattice-icon-btn is-large"
             onClick={() => setTheme(nextTheme(theme))}
-            title={`外观：${THEME_LABEL[theme]} · 点击切到${THEME_LABEL[nextTheme(theme)]}`}
-            aria-label={`外观：${THEME_LABEL[theme]}`}
+            title={`Theme: ${THEME_LABEL[theme]} — click for ${THEME_LABEL[nextTheme(theme)]}`}
+            aria-label={`Theme: ${THEME_LABEL[theme]}`}
           >
             <ThemeGlyph mode={theme} />
           </button>
@@ -422,8 +422,8 @@ export default function App() {
             type="button"
             className={`lattice-icon-btn is-large${loading ? " is-spinning" : ""}`}
             onClick={() => void refresh()}
-            title="重新扫描组件目录"
-            aria-label="刷新组件"
+            title="Rescan the widgets folder"
+            aria-label="Refresh widgets"
           >
             <Glyph d={ICON.refresh} />
           </button>

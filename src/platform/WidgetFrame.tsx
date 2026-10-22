@@ -215,11 +215,11 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
         onPointerDown={onDragStart}
         onPointerMove={onDragMove}
         onPointerUp={onDragEnd}
-        title="拖动移动位置"
+        title="Drag to move"
       >
         <span className="lattice-widget-title">{record.manifest.name}</span>
         <span className={`lattice-chip${placement.layer === "top" ? " is-accent" : ""}`}>
-          {placement.layer === "top" ? "置顶" : "贴桌面"}
+          {placement.layer === "top" ? "On top" : "Desktop"}
         </span>
       </div>
 
@@ -236,8 +236,8 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
         />
       ) : (
         <div className="lattice-pending">
-          <span className="lattice-pending-title">入口地址是空的</span>
-          <p className="lattice-hint">清单里的 entry 没解析出来，检查一下 manifest.json。</p>
+          <span className="lattice-pending-title">Entry URL is empty</span>
+          <p className="lattice-hint">The manifest entry could not be resolved — check manifest.json.</p>
           <code className="lattice-mono lattice-path">{record.dir}</code>
         </div>
       )}
@@ -245,8 +245,8 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
       {missing.length > 0 && missing[0] !== undefined && (
         <div className="lattice-perm-prompt">
           <span className="lattice-perm-prompt-text">
-            需要「{PERMISSION_LABELS[missing[0]]}」
-            {missing.length > 1 ? ` 等 ${missing.length} 项` : ""}
+            Needs {PERMISSION_LABELS[missing[0]]}
+            {missing.length > 1 ? ` +${missing.length - 1} more` : ""}
           </span>
           <button
             type="button"
@@ -258,7 +258,7 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
               setMissing([]);
             }}
           >
-            {missing.length > 1 ? "全部授权" : "授权"}
+            {missing.length > 1 ? "Grant all" : "Grant"}
           </button>
         </div>
       )}
@@ -269,7 +269,7 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
           onPointerDown={onResizeStart}
           onPointerMove={onResizeMove}
           onPointerUp={onResizeEnd}
-          title="拖动调整尺寸"
+          title="Drag to resize"
         />
       )}
     </div>

@@ -64,7 +64,7 @@ fn safe_id(id: &str) -> Result<String, String> {
         })
         .collect();
     if cleaned.is_empty() || cleaned.starts_with('.') {
-        return Err(format!("组件 id 不合法：{id}"));
+        return Err(format!("invalid widget id: {id}"));
     }
     Ok(cleaned)
 }
@@ -73,9 +73,9 @@ fn store_path(app: &AppHandle, widget_id: &str) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_config_dir()
-        .map_err(|error| format!("拿不到配置目录：{error}"))?
+        .map_err(|error| format!("could not resolve the config directory: {error}"))?
         .join("widget-data");
-    std::fs::create_dir_all(&dir).map_err(|error| format!("创建组件数据目录失败：{error}"))?;
+    std::fs::create_dir_all(&dir).map_err(|error| format!("failed to create the widget data directory: {error}"))?;
     Ok(dir.join(format!("{}.json", safe_id(widget_id)?)))
 }
 
@@ -85,15 +85,15 @@ pub fn widget_store_read(app: AppHandle, widget_id: String) -> Result<Option<Str
     match std::fs::read_to_string(&path) {
         Ok(text) => Ok(Some(text)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("读取组件数据失败：{error}")),
+        Err(error) => Err(format!("failed to read widget data: {error}")),
     }
 }
 
 /// 原子替换：先写临时文件再 rename，断电时不会留下半截 JSON。
 fn write_atomic(path: &std::path::Path, json: &str) -> Result<(), String> {
     let temp = path.with_extension("json.tmp");
-    std::fs::write(&temp, json.as_bytes()).map_err(|error| format!("写入组件数据失败：{error}"))?;
-    std::fs::rename(&temp, path).map_err(|error| format!("替换组件数据文件失败：{error}"))?;
+    std::fs::write(&temp, json.as_bytes()).map_err(|error| format!("failed to write widget data: {error}"))?;
+    std::fs::rename(&temp, path).map_err(|error| format!("failed to replace the widget data file: {error}"))?;
     Ok(())
 }
 
@@ -129,7 +129,7 @@ pub fn widget_store_update(
         {
             Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Default::default(),
-            Err(error) => return Err(format!("读取组件数据失败：{error}")),
+            Err(error) => return Err(format!("failed to read widget data: {error}")),
         };
 
         match value {
@@ -142,7 +142,7 @@ pub fn widget_store_update(
         }
 
         let json = serde_json::to_string(&serde_json::Value::Object(map))
-            .map_err(|error| format!("序列化组件数据失败：{error}"))?;
+            .map_err(|error| format!("failed to serialize widget data: {error}"))?;
         write_atomic(&path, &json)?;
     }
 
@@ -158,6 +158,6 @@ pub fn widget_store_clear(app: AppHandle, widget_id: String) -> Result<(), Strin
     match std::fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("删除组件数据失败：{error}")),
+        Err(error) => Err(format!("failed to delete widget data: {error}")),
     }
 }

@@ -16,8 +16,8 @@ fn state_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_config_dir()
-        .map_err(|error| format!("拿不到配置目录：{error}"))?;
-    std::fs::create_dir_all(&dir).map_err(|error| format!("创建配置目录失败：{error}"))?;
+        .map_err(|error| format!("could not resolve the config directory: {error}"))?;
+    std::fs::create_dir_all(&dir).map_err(|error| format!("failed to create the config directory: {error}"))?;
     Ok(dir.join("state.json"))
 }
 
@@ -28,7 +28,7 @@ pub fn state_read(app: AppHandle) -> Result<Option<String>, String> {
     match std::fs::read_to_string(&path) {
         Ok(text) => Ok(Some(text)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("读取状态失败：{error}")),
+        Err(error) => Err(format!("failed to read state: {error}")),
     }
 }
 
@@ -37,8 +37,8 @@ pub fn state_read(app: AppHandle) -> Result<Option<String>, String> {
 pub fn state_write(app: AppHandle, json: String) -> Result<(), String> {
     let path = state_path(&app)?;
     let temp = path.with_extension("json.tmp");
-    std::fs::write(&temp, json.as_bytes()).map_err(|error| format!("写入状态失败：{error}"))?;
-    std::fs::rename(&temp, &path).map_err(|error| format!("替换状态文件失败：{error}"))?;
+    std::fs::write(&temp, json.as_bytes()).map_err(|error| format!("failed to write state: {error}"))?;
+    std::fs::rename(&temp, &path).map_err(|error| format!("failed to replace the state file: {error}"))?;
     Ok(())
 }
 
@@ -49,6 +49,6 @@ pub fn state_clear(app: AppHandle) -> Result<(), String> {
     match std::fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("删除状态文件失败：{error}")),
+        Err(error) => Err(format!("failed to delete the state file: {error}")),
     }
 }

@@ -61,5 +61,5 @@ pub fn run() {
             runner::widget_set_theme,
         ])
         .run(tauri::generate_context!())
-        .expect("启动 Lattice 失败");
+        .expect("failed to start Lattice");
 }

@@ -77,12 +77,12 @@ export function InspectorPanel({ records }: InspectorPanelProps) {
     return (
       <aside className="lattice-panel lattice-panel-right">
         <header className="lattice-panel-head">
-          <h2 className="lattice-panel-title">属性</h2>
+          <h2 className="lattice-panel-title">Inspector</h2>
         </header>
         <div className="lattice-panel-body is-empty">
           <div className="lattice-panel-empty">
             <span className="lattice-panel-empty-art" aria-hidden />
-            <p className="lattice-hint">在画布上选中一个组件，这里会显示它的层级、尺寸和权限。</p>
+            <p className="lattice-hint">Select a widget on the canvas to see its layer, size and permissions.</p>
           </div>
         </div>
       </aside>
@@ -101,15 +101,15 @@ export function InspectorPanel({ records }: InspectorPanelProps) {
           className="lattice-btn is-danger"
           onClick={() => remove(placement.instanceId)}
         >
-          移除
+          Remove
         </button>
       </header>
 
       <div className="lattice-panel-body">
-        <p className="lattice-card-desc">{manifest.description || "无描述"}</p>
+        <p className="lattice-card-desc">{manifest.description || "No description"}</p>
 
         <section className="lattice-field">
-          <span className="lattice-label">桌面层级</span>
+          <span className="lattice-label">Layer</span>
           <div className="lattice-segmented">
             {(["desktop", "top"] as const).map((layer) => (
               <button
@@ -118,14 +118,14 @@ export function InspectorPanel({ records }: InspectorPanelProps) {
                 className={`lattice-segment${placement.layer === layer ? " is-active" : ""}`}
                 onClick={() => update(placement.instanceId, { layer })}
               >
-                {layer === "desktop" ? "贴桌面" : "置顶"}
+                {layer === "desktop" ? "Desktop" : "On top"}
               </button>
             ))}
           </div>
           <p className="lattice-hint">
             {placement.layer === "desktop"
-              ? "沉到桌面图标之上、普通窗口之下，切窗口不会挡住内容。"
-              : "浮在所有窗口之上，适合监控类组件。"}
+              ? "Sits above desktop icons and below normal windows, so switching apps never covers it."
+              : "Floats above every window — good for monitors and readouts."}
           </p>
         </section>
 
@@ -138,25 +138,25 @@ export function InspectorPanel({ records }: InspectorPanelProps) {
                 update(placement.instanceId, { clickThrough: event.target.checked })
               }
             />
-            <span>鼠标穿透</span>
+            <span>Click-through</span>
           </label>
-          <p className="lattice-hint">开启后鼠标事件穿过组件，适合纯展示的装饰类组件。</p>
+          <p className="lattice-hint">Mouse events pass straight through — useful for purely decorative widgets.</p>
         </section>
 
         <section className="lattice-field">
           <div className="lattice-field-head">
-            <span className="lattice-label">尺寸</span>
+            <span className="lattice-label">Size</span>
             <button
               type="button"
               className="lattice-link-btn"
               onClick={() => applySize(manifest.size.w, manifest.size.h)}
             >
-              恢复默认 {manifest.size.w} × {manifest.size.h}
+              Reset to {manifest.size.w} × {manifest.size.h}
             </button>
           </div>
           <div className="lattice-size-grid">
             <label className="lattice-size-input">
-              <span>宽</span>
+              <span>W</span>
               <input
                 type="number"
                 inputMode="numeric"
@@ -176,11 +176,11 @@ export function InspectorPanel({ records }: InspectorPanelProps) {
                     event.currentTarget.blur();
                   }
                 }}
-                aria-label="组件宽度"
+                aria-label="Widget width"
               />
             </label>
             <label className="lattice-size-input">
-              <span>高</span>
+              <span>H</span>
               <input
                 type="number"
                 inputMode="numeric"
@@ -200,19 +200,19 @@ export function InspectorPanel({ records }: InspectorPanelProps) {
                     event.currentTarget.blur();
                   }
                 }}
-                aria-label="组件高度"
+                aria-label="Widget height"
               />
             </label>
           </div>
           <p className="lattice-hint">
-            最小 {manifest.size.minW} × {manifest.size.minH}。画布上拖边缘也能改，这里用来输入精确值。
+            Minimum {manifest.size.minW} × {manifest.size.minH}. Drag the edges on the canvas, or type an exact value here.
           </p>
         </section>
 
         <section className="lattice-field">
-          <span className="lattice-label">权限</span>
+          <span className="lattice-label">Permissions</span>
           {manifest.permissions.length === 0 ? (
-            <p className="lattice-hint">这个组件不需要任何平台权限。</p>
+            <p className="lattice-hint">This widget needs no platform permissions.</p>
           ) : (
             manifest.permissions.map((permission: Permission) => {
               const enabled = granted.includes(permission);
@@ -233,11 +233,11 @@ export function InspectorPanel({ records }: InspectorPanelProps) {
               );
             })
           )}
-          <p className="lattice-hint">未授予的权限调用会被桥直接拒绝，组件需要自己降级处理。</p>
+          <p className="lattice-hint">Calls without a granted permission are rejected by the bridge; widgets must degrade gracefully.</p>
         </section>
 
         <section className="lattice-field">
-          <span className="lattice-label">来源</span>
+          <span className="lattice-label">Source</span>
           <code className="lattice-mono lattice-path">{record.dir}</code>
         </section>
       </div>

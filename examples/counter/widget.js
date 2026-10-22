@@ -21,7 +21,7 @@
       setTimeout(function () {
         if (!pending.has(id)) return;
         pending.delete(id);
-        reject(new Error("桥调用超时：" + method));
+        reject(new Error("Bridge call timed out: " + method));
       }, 3000);
     });
   }
@@ -56,7 +56,7 @@
       var entry = pending.get(data.id);
       if (!entry) return;
       pending.delete(data.id);
-      if (data.error) entry.reject(new Error(data.error.message || "调用失败"));
+      if (data.error) entry.reject(new Error(data.error.message || "Call failed"));
       else entry.resolve(data.result);
     }
   });

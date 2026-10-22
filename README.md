@@ -1,148 +1,150 @@
-# 棂 · Lattice
+# Lattice
 
-可扩展的 Windows 桌面小组件平台。第三方用 HTML / CSS / JS 写组件，平台负责把它们安全地放到桌面上。
+An extensible desktop widget platform for Windows. Third parties write widgets in plain HTML / CSS / JS; the platform puts them safely onto the desktop.
 
-> 棂（líng）是窗格上的木格。桌面上的每一个格子，都是一个可以自己长出来的小组件。
+> 棂 (líng) is the wooden lattice in a window pane. Every pane on your desktop is a widget that can grow there on its own.
 
-## 现状
+English · [中文](./README.zh-CN.md)
 
-v0.2 是**能真的贴到桌面上的 demo**：平台开箱是空白的，安装官方组件包后把组件摆到画布上，组件在沙箱 iframe 里真实运行，通过 RPC 桥调用平台能力，权限逐项授予。点"投放到桌面"，每个组件变成一个独立的无边框窗口，主窗口最小化退场。
+## Status
 
-落到桌面上之后，窗口能拖、能缩、能用别针锁住，布局与组件数据重启不丢。顶栏右上角是设置：明暗、网格吸附、本机档案——登录只写本地 `state.json`，不上传、不联网。
+v0.2 is a demo that **really sits on the desktop**. The platform ships empty: install the official pack, place widgets on the canvas, and each one runs for real inside a sandboxed iframe, calling platform capabilities over an RPC bridge with permissions granted one by one. Hit "Send to desktop" and every widget becomes a frameless window while the main window steps aside.
 
-第三方组件也能用：把整个文件夹拖进窗口就装好了，文件落在 `%APPDATA%`，经 `lattice-widget` 协议加载。[`examples/counter`](./examples/counter) 是一个可以直接拖进去的样本。
+Once they are out there, windows can be dragged, resized and pinned, and both the layout and the widget data survive a restart. The avatar in the top-right opens settings: appearance, snap-to-grid, and a local profile — signing in only writes to the local `state.json`, nothing is uploaded.
 
-现在的界面（设置菜单展开）：
+Third-party widgets work too: drop a folder into the window and it is installed, copied into `%APPDATA%` and served over the `lattice-widget` protocol. [`examples/counter`](./examples/counter) is a sample you can drag straight in.
 
-![平台界面](docs/screenshot-settings.png)
+The current UI, with the settings menu open:
 
-## 组件真的在桌面上
+![The platform UI](docs/screenshot-settings.png)
 
-![组件浮在桌面上](docs/screenshot-desktop.png)
+## Widgets really sit on the desktop
 
-上图是实机截图：左边被普通窗口挡住的便签是 `layer: desktop`，中间压在窗口之上的待办是 `layer: top`，右边是倒计时。
+![Widgets floating on the desktop](docs/screenshot-desktop.png)
 
-"投放到桌面"之后：
+A real screenshot: the note on the left, hidden behind a normal window, is `layer: desktop`; the to-do list in the middle, on top of that window, is `layer: top`; the countdown is on the right.
 
-- 每个 Placement 变成一个独立的 `WebviewWindow`，加载 `widget-host.html`，再由它套一层沙箱 iframe——**桌面窗口和画布预览跑的是同一套桥、同一套权限校验**，不会出现"预览能用、桌面上不能用"的分叉
-- `layer: desktop` 的组件挂到 WorkerW（拿不到时降级 `HWND_BOTTOM`），沉在普通窗口之下；`layer: top` 的走 `HWND_TOPMOST`
-- 窗口无边框、不进任务栏、`WS_EX_NOACTIVATE` 不抢焦点，形状由 `SetWindowRgn` 裁成圆角
-- 画布上继续拖动、改层级，桌面窗口跟着走（120ms 防抖增量同步）
+After "Send to desktop":
 
-## 桌面窗口能直接摆弄
+- Every Placement becomes its own `WebviewWindow` loading `widget-host.html`, which then hosts a sandboxed iframe — **the desktop window and the canvas preview run the same bridge and the same permission checks**, so there is no "works in preview, breaks on the desktop" fork
+- `layer: desktop` widgets are parented to WorkerW (falling back to `HWND_BOTTOM`), below normal windows; `layer: top` widgets use `HWND_TOPMOST`
+- Windows are frameless, stay out of the taskbar, use `WS_EX_NOACTIVATE` so they never steal focus, and are clipped to rounded corners with `SetWindowRgn`
+- Dragging or re-layering on the canvas still moves the real window (120 ms debounced incremental sync)
 
-![桌面组件与窗饰](docs/screenshot-chrome.png)
+## Desktop windows you can handle directly
 
-组件浮在桌面上之后，把鼠标移到它身上，右上角浮出一排功能图标——这些是**宿主页画的，不是组件画的**，组件完全不用操心自己怎么被搬动：
+![Desktop widget with its chrome](docs/screenshot-chrome.png)
 
-| 图标 | 做什么 |
+Hover a widget on the desktop and a row of controls fades in at its top-right corner. These are **drawn by the host page, not by the widget** — a widget never has to think about how it gets moved:
+
+| Icon | What it does |
 | --- | --- |
-| ⣿ 拖动 | 按住搬窗口。用 `setPointerCapture` 跟踪指针，拖出窗口甚至拖出屏幕都不会断线 |
-| ↓ / ↑ 层级 | 在"贴桌面"与"置顶"之间切换，立刻作用到 Win32 的 z-order |
-| ⚲ 别针 | 锁住位置与大小。锁上之后拖拽和八条缩放手柄整体禁用，光标也跟着变成默认箭头 |
-| ✕ 收回 | 关掉这个窗口，并把 placement 从画布上删掉（不是藏起来） |
+| ⣿ Drag | Hold to move the window. Pointer capture keeps the drag alive even outside the window or the screen |
+| ↓ / ↑ Layer | Toggle between "on the desktop" and "on top"; applies to the Win32 z-order immediately |
+| ⚲ Pin | Lock position and size. While pinned, dragging and all eight resize handles are disabled and the cursor turns back to an arrow |
+| ✕ Close | Close the window and remove the placement from the canvas (not just hide it) |
 
-八向缩放手柄贴着窗口边，四个角给了 18px 的余量——窗口被裁成圆角之后，圆角弧线外侧那几个像素压根不属于这个窗口，手柄得往里让一截才点得到。
+Eight resize handles hug the edges, with 18px of clearance at the corners: once the window is clipped to rounded corners, the pixels outside the arc do not belong to the window at all, so the handles have to sit inboard to be clickable.
 
-松手时窗口矩形会报回主窗口存进 `desktopRects`，**下次投放优先用它**，而不是从画布坐标重新推。
+On release the window rect is reported back to the main window and stored in `desktopRects`, which **takes priority on the next send** instead of recomputing from canvas coordinates.
 
-## 布局是真的记住了
+## The layout is genuinely remembered
 
-平台的落盘不用 `localStorage`：这台机器上的 WebView2 把它整个放在内存里，进程一退就没了。改成显式写文件：
+The platform does not persist through `localStorage`: on this machine WebView2 keeps it entirely in memory, and it is gone the moment the process exits. So state is written to files:
 
 ```
 %APPDATA%\com.iron-tom.lattice\
-  state.json                  摆放、已安装、授权、主题、桌面矩形
-  widget-data\lattice.note.json   组件私有存储，一个包一个文件
+  state.json                      placements, installed, grants, theme, desktop rects
+  widget-data\lattice.note.json   per-widget storage, one file per package
 ```
 
-写入走"临时文件 + 原子替换"，写到一半断电也不会留下半截 JSON。组件私有存储也走同一条路（`storage.get / set / remove` 三个桥方法背后是 Rust 的文件读写），所以便签里的字、待办里的勾，重启之后都还在。
+Writes go through "temp file + atomic replace", so a power cut halfway through cannot leave a truncated JSON behind. Widget storage takes the same path (the `storage.get / set / remove` bridge methods sit on top of Rust file I/O), which is why the note text and the ticked to-dos are still there after a restart.
 
-## 这个项目是怎么长出来的
+## How this project grew
 
-一天之内，从骨架到真的贴在桌面上。代码量的台阶和每次"推翻重来"都记在 [ROADMAP](./docs/ROADMAP.md) 里，这里只放结论：
+From skeleton to genuinely-on-the-desktop in a single day. The code-size steps and every "torn down and rebuilt" are in the [ROADMAP](./docs/ROADMAP.md); here are the conclusions:
 
-| 时间 | 里程碑 | 前端 / Rust / 样式（行） |
+| Time | Milestone | Frontend / Rust / CSS (lines) |
 | --- | --- | --- |
-| 02:40 | 骨架：清单、桥、权限、画布 | 1 268 / 358 / 548 |
-| 09:54 | 第一个能跑的 demo | 1 553 / 358 / 680 |
-| 11:22 | 组件真的贴到桌面 | 1 782 / 712 / 680 |
-| 12:31 | 窗饰 + 状态落盘 | 2 282 / 1 123 / 868 |
-| 现在 | 用户组件协议、可输入、存储同步、设置 | 3 216 / 1 649 / 1 757 |
+| 02:40 | Skeleton: manifest, bridge, permissions, canvas | 1,268 / 358 / 548 |
+| 09:54 | First runnable demo | 1,553 / 358 / 680 |
+| 11:22 | Widgets really on the desktop | 1,782 / 712 / 680 |
+| 12:31 | Window chrome + file-backed state | 2,282 / 1,123 / 868 |
+| Now | Third-party protocol, typing, storage sync, settings | 3,216 / 1,649 / 1,757 |
 
-比数字更有意思的是**六个被推翻的决定**：逐像素透明做不出来、`localStorage` 不落盘、`NOACTIVATE` 让便签打不了字、宿主页拼不对用户组件的路径、两个实例各持一份列表把待办吃掉、自己维护窗口表把自己锁死。每一个都写着当初为什么这么选、被什么撞翻、现在怎么补、代价是什么。
+More interesting than the numbers are the **six overturned decisions**: per-pixel transparency that could not work, a `localStorage` that never reached disk, `NOACTIVATE` making the note untypeable, the host page building the wrong URL for user widgets, two instances each holding their own list and eating the to-dos, and a self-managed window table that deadlocked itself. Each one records why it was chosen, what knocked it over, how it was fixed, and what it cost.
 
-那 27 条「踩过的坑」是同一个过程的副产品，也是这个仓库最值钱的部分——它记的是这台机器的脾气，不是通用教条。
+The 27 entries in "Pitfalls" are a by-product of the same process, and the most valuable part of this repository — they record the temper of this particular machine, not general dogma.
 
-## 平台是空白的
+## The platform is empty
 
-装好第一次打开，桌面上什么都没有——像刚装好的 VS Code 没有插件。
+Open it for the first time and the desktop has nothing on it — like a fresh VS Code with no extensions.
 
-- **核心不含任何组件**：画布、窗口层、组件宿主、权限系统、安装卸载、组件库、设置
-- **官方组件没有特权**：`public/widgets` 下的包走和第三方完全相同的 manifest、沙箱、权限桥，只是"已经在你硬盘上"，不是"编译进了内核"
-- **发现 ≠ 安装**：`bundled` 来源必须显式安装；`user` 来源（`%APPDATA%` 下的包）在磁盘上就算已装
+- **The core contains no widgets**: canvas, window layer, widget host, permission system, install/uninstall, library, settings
+- **Official widgets get no privileges**: the packages under `public/widgets` go through exactly the same manifest, sandbox and permission bridge as third-party ones. They are "already on your disk", not "compiled into the kernel"
+- **Discovery ≠ installation**: `bundled` packages must be installed explicitly; `user` packages (under `%APPDATA%`) count as installed as soon as they exist on disk
 
-这条原则的完整论述见 [ARCHITECTURE](./docs/ARCHITECTURE.md#零内置原则)。
+The full argument is in [ARCHITECTURE](./docs/ARCHITECTURE.md) (Chinese).
 
-## 权限是看得见的
+## Permissions are visible
 
-组件撞到未授权的能力时，画布上直接弹出提示，一次授予全部所需权限，组件随即重新初始化：
+When a widget hits a capability it has not been granted, the canvas shows a prompt and grants everything it needs in one go, after which the widget re-initialises:
 
-![权限提示](docs/screenshot-permission.png)
+![Permission prompt](docs/screenshot-permission.png)
 
-沙箱 iframe **不含 `allow-same-origin`**，所以组件拿到的是不透明源：读不到宿主 DOM、没有可用的 `localStorage`、发出的请求带 `Origin: null`。它除了走桥，什么都做不了。桥的鉴权用 `event.source` 比对窗口引用而非 `event.origin`——沙箱 iframe 的 origin 都是字符串 `"null"`，靠它区分不出实例。
+The sandboxed iframe **omits `allow-same-origin`**, so widgets get an opaque origin: no access to the host DOM, no usable `localStorage`, and requests go out with `Origin: null`. Apart from the bridge, it can do nothing. The bridge authenticates by comparing `event.source` against the iframe reference rather than `event.origin` — every sandboxed iframe reports the origin string `"null"`, so it cannot tell instances apart.
 
-## 技术栈
+## Stack
 
-| 层       | 选型                          | 为什么                                      |
-| ------- | --------------------------- | ---------------------------------------- |
-| 外壳 / 窗口 | Tauri 2 + `windows-sys`     | 常驻应用对内存敏感；Win32 行为要直调                    |
-| UI      | React 19 + TypeScript       | 与组件生态一致                                  |
-| 构建      | Vite 8                      | 快，且与 Tauri 官方模板对齐                        |
-| 状态      | Zustand + 自定义落盘适配器           | 平台状态很浅，不需要更重的东西；存储层换成文件，避开 WebView2 的 localStorage 内存化    |
-| 样式      | 纯 CSS + CSS 变量              | 定制工作台，变量层比工具类更可控                         |
-| 组件运行时   | 沙箱 iframe + postMessage RPC | 见 [ARCHITECTURE](./docs/ARCHITECTURE.md) |
+| Layer | Choice | Why |
+| --- | --- | --- |
+| Shell / windows | Tauri 2 + `windows-sys` | A resident app is memory-sensitive, and Win32 behaviour has to be called directly |
+| UI | React 19 + TypeScript | Matches the widget ecosystem |
+| Build | Vite 8 | Fast, and aligned with the official Tauri template |
+| State | Zustand + a custom persistence adapter | Platform state is shallow; the storage layer is swapped for files to dodge WebView2's in-memory `localStorage` |
+| Styling | Plain CSS + CSS variables | A bespoke workspace is easier to control with a variable layer than with utility classes |
+| Widget runtime | Sandboxed iframe + postMessage RPC | See [ARCHITECTURE](./docs/ARCHITECTURE.md) (Chinese) |
 
-## 快速开始
+## Getting started
 
 ```bash
 npm install
-npm run dev           # 浏览器里跑 demo：http://localhost:1420
-npm run tauri:dev     # 完整桌面应用（首次要编译 Rust）
-npm run tauri:build   # 出安装包：src-tauri/target/release/bundle/nsis
+npm run dev           # browser demo: http://localhost:1420
+npm run tauri:dev     # full desktop app (first run compiles Rust)
+npm run tauri:build   # installer: src-tauri/target/release/bundle/nsis
 ```
 
-环境要求：Node ≥ 20、Rust 工具链、WebView2（Win11 自带）。
+Requirements: Node ≥ 20, a Rust toolchain, WebView2 (bundled with Windows 11).
 
-> 只想看 demo 的话用 `npm run dev`，不需要 Rust。桌面端目前需要 `windres`（mingw binutils）或 MSVC 工具链，见 ROADMAP 的环境说明。
+> To just look at the demo, use `npm run dev` — no Rust needed. The desktop build currently needs `windres` (mingw binutils) or an MSVC toolchain; see the environment notes in the ROADMAP.
 
-接手这个仓库（或者换个模型 / 换个人接手）先读 [AGENTS.md](./AGENTS.md)：一页纸的项目地图、五条不变量、常见改动的配方、以及"别修一半"的已知缺口。
+If you are taking over this repository (or you are a different model / person), read [AGENTS.md](./AGENTS.md) first: a one-page map, five invariants, recipes for common changes, and the "do not half-fix" known gaps. It is written in Chinese, as are the design docs.
 
-## 目录
+## Layout
 
 ```
-AGENTS.md            接手文档：换模型 / 换人时先读这一页
+AGENTS.md            Onboarding: read this first
 src/
-  platform/          平台外壳：画布、组件库、属性面板、平台状态
-  runtime/           组件运行时：manifest 校验、注册表、RPC 桥
-public/widgets/      官方组件包（未安装前只是"可安装"）
-examples/counter/    第三方组件样本（拖进窗口即安装）
-tests/               自检页：桥的并发写、便签的保存竞态
-scripts/             构建辅助（生成组件索引、补工具链 PATH）
+  platform/          Platform shell: canvas, library, inspector, state
+  runtime/           Widget runtime: manifest validation, registry, RPC bridge
+public/widgets/      Official widget packages (only "available" until installed)
+examples/counter/    Third-party sample (drag it in to install)
+tests/               Self-check pages: concurrent bridge writes, note save races
+scripts/             Build helpers (widget index, toolchain PATH)
 src-tauri/
-  src/widgets.rs     组件包扫描 / 安装 / 卸载
-  src/runner.rs      运行态：Placement → 真实窗口的增量同步、窗口控件回传
-  src/protocol.rs    lattice-widget:// 静态文件服务（用户组件的 HTML/CSS/JS）
-  src/desktop.rs     窗口层级、圆角裁剪、鼠标穿透、焦点行为、底层守卫（Win32）
-  src/state.rs       平台状态落盘（state.json，原子替换）
-  src/widget_store.rs 组件私有存储落盘（widget-data/<id>.json）
+  src/widgets.rs     Widget scanning / install / uninstall
+  src/runner.rs      Runtime: Placement → real window incremental sync, chrome callbacks
+  src/protocol.rs    lattice-widget static file server (user widget HTML/CSS/JS)
+  src/desktop.rs     Layering, rounded clipping, click-through, focus, z-order guard (Win32)
+  src/state.rs       Platform state on disk (state.json, atomic replace)
+  src/widget_store.rs Per-widget storage on disk (widget-data/<id>.json)
 docs/
-  ARCHITECTURE.md    架构与取舍
-  WIDGET_SPEC.md     组件规范（写组件看这个）
-  ROADMAP.md         进度、迭代时间线、被推翻的决定、踩过的坑
+  ARCHITECTURE.md    Architecture and trade-offs
+  WIDGET_SPEC.md     Widget spec (read this to write one)
+  ROADMAP.md         Progress, iteration timeline, overturned decisions, pitfalls
 ```
 
-## 写一个组件
+## Writing a widget
 
 ```
 public/widgets/lattice.hello/
@@ -154,7 +156,7 @@ public/widgets/lattice.hello/
 ```json
 {
   "id": "lattice.hello",
-  "name": "你好",
+  "name": "Hello",
   "version": "0.1.0",
   "entry": "index.html",
   "size": { "w": 200, "h": 100, "minW": 120, "minH": 60 },
@@ -163,10 +165,10 @@ public/widgets/lattice.hello/
 }
 ```
 
-组件里用 `parent.postMessage({ __lattice: 1, type: "request", id, method, params }, "*")` 调平台能力，完整协议见 [WIDGET\_SPEC](./docs/WIDGET_SPEC.md)。改完执行 `npm run widgets:index` 让平台发现新组件。
+Widgets call platform capabilities with `parent.postMessage({ __lattice: 1, type: "request", id, method, params }, "*")`; the full protocol is in [WIDGET\_SPEC](./docs/WIDGET_SPEC.md). Run `npm run widgets:index` afterwards so the platform discovers the new widget.
 
-**不随应用分发的组件不用改仓库**：把整个目录从资源管理器拖进棂的窗口就装好了，文件会复制到 `%APPDATA%\com.iron-tom.lattice\widgets\<id>\`，由自定义协议 `lattice-widget://` 直接加载。[`examples/counter`](./examples/counter) 是一个可以直接拖进去的样本。
+**Widgets that are not shipped with the app need no repository change**: drag the whole folder from Explorer into a Lattice window and it is installed — files are copied to `%APPDATA%\com.iron-tom.lattice\widgets\<id>\` and loaded over the `lattice-widget` protocol. [`examples/counter`](./examples/counter) is a sample you can drag straight in.
 
-## 许可
+## License
 
 MIT

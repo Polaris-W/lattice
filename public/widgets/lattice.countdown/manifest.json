@@ -1,8 +1,8 @@
 {
   "id": "lattice.countdown",
-  "name": "倒计时",
+  "name": "Countdown",
   "version": "0.1.0",
-  "description": "倒数到指定日期，显示剩余天数与时分秒",
+  "description": "Counts down to a date, showing days, hours, minutes and seconds",
   "author": "Lattice",
   "entry": "index.html",
   "size": { "w": 240, "h": 156, "minW": 180, "minH": 130 },

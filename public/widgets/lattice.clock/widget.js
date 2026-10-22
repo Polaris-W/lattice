@@ -20,7 +20,7 @@
       setTimeout(function () {
         if (!pending.has(id)) return;
         pending.delete(id);
-        reject(new Error("桥调用超时：" + method));
+        reject(new Error("Bridge call timed out: " + method));
       }, 3000);
     });
   }
@@ -57,7 +57,7 @@
     if (data.ok) {
       entry.resolve(data.result);
     } else {
-      var error = new Error(data.error || "桥调用失败");
+      var error = new Error(data.error || "Bridge call failed");
       error.code = data.code;
       entry.reject(error);
     }
@@ -70,7 +70,8 @@
 
   var use24Hour = true;
 
-  var WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+  var WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
   function pad(value) {
     return value < 10 ? "0" + value : String(value);
@@ -87,21 +88,21 @@
           hours = hours % 12 || 12;
         }
         timeEl.textContent = (use24Hour ? pad(hours) : hours) + ":" + pad(date.getMinutes()) + suffix;
-        // 中文的日期单位不跟数字隔空格："10月22日"，不是"10 月 22 日"。
+        // 日期写成 "Oct 22, Thu"：月份缩写 + 日 + 星期。
         // 时区 ID（Asia/Shanghai）是给程序看的，桌面时钟上没人想读它，
         // 换成星期几，这块空间才算有用。
         dateEl.textContent =
-          (date.getMonth() + 1) + "月" + date.getDate() + "日 " + WEEKDAYS[date.getDay()];
+          MONTHS[date.getMonth()] + " " + date.getDate() + ", " + WEEKDAYS[date.getDay()];
       })
       .catch(function (error) {
         timeEl.textContent = "--:--";
-        dateEl.textContent = error.code === "permission_denied" ? "需要「读取系统时间」权限" : "读取失败";
+        dateEl.textContent = error.code === "permission_denied" ? "Needs clock permission" : "Could not read the time";
       });
   }
 
   toggleEl.addEventListener("click", function () {
     use24Hour = !use24Hour;
-    toggleEl.textContent = use24Hour ? "24小时制" : "12小时制";
+    toggleEl.textContent = use24Hour ? "24-hour" : "12-hour";
     render();
     call("storage.set", { key: "use24Hour", value: use24Hour }).catch(function () {
       /* 存储权限被拒时只是不记忆偏好，不打断使用 */
@@ -112,7 +113,7 @@
     .then(function (value) {
       if (typeof value === "boolean") {
         use24Hour = value;
-        toggleEl.textContent = use24Hour ? "24小时制" : "12小时制";
+        toggleEl.textContent = use24Hour ? "24-hour" : "12-hour";
       }
     })
     .catch(function () {})

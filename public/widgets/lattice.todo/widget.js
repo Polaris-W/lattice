@@ -19,7 +19,7 @@
       setTimeout(function () {
         if (!pending.has(id)) return;
         pending.delete(id);
-        reject(new Error("桥调用超时：" + method));
+        reject(new Error("Bridge call timed out: " + method));
       }, 3000);
     });
   }
@@ -66,7 +66,7 @@
     if (data.ok) {
       entry.resolve(data.result);
     } else {
-      var error = new Error(data.error || "桥调用失败");
+      var error = new Error(data.error || "Bridge call failed");
       error.code = data.code;
       entry.reject(error);
     }
@@ -94,7 +94,7 @@
     call("storage.set", { key: STORAGE_KEY, value: items })
       .catch(function (error) {
         inputEl.placeholder =
-          error.code === "permission_denied" ? "需要「组件私有存储」权限才能保存" : "保存失败";
+          error.code === "permission_denied" ? "Storage permission required to save" : "Could not save";
       })
       .then(function () {
         writing -= 1;
@@ -152,7 +152,7 @@
       check.type = "checkbox";
       check.className = "todo-check";
       check.checked = item.done;
-      check.title = item.done ? "标记为未完成" : "标记为已完成";
+      check.title = item.done ? "Mark as not done" : "Mark as done";
       check.setAttribute("aria-label", item.text);
       check.addEventListener("change", function () {
         item.done = check.checked;
@@ -168,8 +168,8 @@
       remove.type = "button";
       remove.className = "todo-remove";
       remove.textContent = "×";
-      remove.title = "删除";
-      remove.setAttribute("aria-label", "删除「" + item.text + "」");
+      remove.title = "Delete";
+      remove.setAttribute("aria-label", "Delete \"" + item.text + "\"");
       remove.addEventListener("click", function (event) {
         event.stopPropagation();
         items = items.filter(function (candidate) {

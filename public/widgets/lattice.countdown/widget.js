@@ -20,7 +20,7 @@
       setTimeout(function () {
         if (!pending.has(id)) return;
         pending.delete(id);
-        reject(new Error("桥调用超时：" + method));
+        reject(new Error("Bridge call timed out: " + method));
       }, 3000);
     });
   }
@@ -77,7 +77,7 @@
     if (data.ok) {
       entry.resolve(data.result);
     } else {
-      var error = new Error(data.error || "桥调用失败");
+      var error = new Error(data.error || "Bridge call failed");
       error.code = data.code;
       entry.reject(error);
     }
@@ -89,6 +89,8 @@
   var daysEl = document.getElementById("days");
   var clockEl = document.getElementById("clock");
   var inputEl = document.getElementById("target");
+
+  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
   function pad(value) {
     return value < 10 ? "0" + value : String(value);
@@ -141,10 +143,9 @@
         var seconds = Math.floor(rest / 1000);
 
         root.classList.toggle("is-done", done);
-        // 中文的日期单位贴着数字："2027年1月1日"。数字和前面的汉字之间留一个
-        // 空格是中日韩混排的规矩，但 年/月/日 是单位，加了空格就散架了。
-        labelEl.textContent = (done ? "已到达 · " : "距离 ") + target.getFullYear() + "年" +
-          (target.getMonth() + 1) + "月" + target.getDate() + "日";
+        // 日期写成 "Jan 1, 2027"：英文习惯是月在前、日和年之间加逗号。
+        labelEl.textContent = (done ? "Arrived · " : "Until ") + MONTHS[target.getMonth()] + " " +
+          target.getDate() + ", " + target.getFullYear();
         daysEl.textContent = String(days);
         clockEl.textContent = pad(hours) + ":" + pad(minutes) + ":" + pad(seconds);
       })
@@ -152,7 +153,7 @@
         daysEl.textContent = "--";
         clockEl.textContent = "";
         labelEl.textContent =
-          error.code === "permission_denied" ? "需要「读取系统时间」权限" : "读取失败";
+          error.code === "permission_denied" ? "Needs clock permission" : "Could not read the time";
       });
   }
 
