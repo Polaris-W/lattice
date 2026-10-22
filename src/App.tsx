@@ -68,6 +68,9 @@ export default function App() {
   const desktopMode = useLattice((state) => state.desktopMode);
   const setDesktopMode = useLattice((state) => state.setDesktopMode);
   const desktopRects = useLattice((state) => state.desktopRects);
+  const libraryOpen = useLattice((state) => state.libraryOpen);
+  const inspectorOpen = useLattice((state) => state.inspectorOpen);
+  const setPanelOpen = useLattice((state) => state.setPanelOpen);
   const setDesktopRect = useLattice((state) => state.setDesktopRect);
   const updatePlacement = useLattice((state) => state.updatePlacement);
   const removePlacement = useLattice((state) => state.removePlacement);
@@ -432,7 +435,15 @@ export default function App() {
         </div>
       </header>
 
-      <main className="lattice-main">
+      <main
+        className={[
+          "lattice-main",
+          libraryOpen ? "" : "is-left-collapsed",
+          inspectorOpen ? "" : "is-right-collapsed",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+      >
         <LibraryPanel
           widgets={widgets}
           installedIds={installedSet}
@@ -445,9 +456,15 @@ export default function App() {
           onInstall={install}
           onInstallPack={installPack}
           onUninstall={(record) => void uninstall(record)}
+          open={libraryOpen}
+          onToggle={() => setPanelOpen("library", !libraryOpen)}
         />
         <Canvas records={records} installedIds={installedSet} onDropWidget={onDropWidget} />
-        <InspectorPanel records={records} />
+        <InspectorPanel
+          records={records}
+          open={inspectorOpen}
+          onToggle={() => setPanelOpen("inspector", !inspectorOpen)}
+        />
       </main>
     </div>
   );

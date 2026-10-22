@@ -60,6 +60,29 @@ export function ThemeGlyph({
   );
 }
 
+/**
+ * 面板开合图标：一个圆角方框，内侧贴一条竖杠。
+ *
+ * 竖杠在左 = 左侧面板，在右 = 右侧面板。两侧用**镜像**而不是旋转：
+ * 旋转 180° 会连圆角一起转过去，看起来像另一个图标。
+ */
+export function PanelGlyph({ side, size = 16 }: { side: "left" | "right"; size?: number }) {
+  return (
+    <Glyph size={size}>
+      <rect x="2.2" y="3" width="11.6" height="10" rx="2.4" />
+      <rect
+        x={side === "left" ? 4.6 : 10}
+        y="5.2"
+        width="1.4"
+        height="5.6"
+        rx="0.7"
+        fill="currentColor"
+        stroke="none"
+      />
+    </Glyph>
+  );
+}
+
 export const ICON = {
   /** 太阳：浅色 */
   sun: "M8 10.4a2.4 2.4 0 1 0 0-4.8 2.4 2.4 0 0 0 0 4.8ZM8 1.8v1.3M8 12.9v1.3M1.8 8h1.3M12.9 8h1.3M3.6 3.6l.9.9M11.5 11.5l.9.9M12.4 3.6l-.9.9M4.5 11.5l-.9.9",

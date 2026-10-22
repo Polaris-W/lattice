@@ -9,10 +9,14 @@
 import { useEffect, useRef, useState } from "react";
 import { PERMISSION_LABELS, type Permission } from "../runtime/manifest";
 import type { WidgetRecord } from "../runtime/registry";
+import { PanelGlyph } from "./icons";
 import { useLattice } from "./store";
 
 interface InspectorPanelProps {
   records: Map<string, WidgetRecord>;
+  /** 面板是否展开；收起后退成一条竖条，只留开合按钮 */
+  open: boolean;
+  onToggle: () => void;
 }
 
 /** 输入框的尺寸上限。再大就不是"小组件"了，也没必要让它盖满屏 */
@@ -25,7 +29,7 @@ function clampSize(raw: string, min: number, fallback: number): number {
   return Math.max(min, Math.min(MAX_SIZE, Math.round(value)));
 }
 
-export function InspectorPanel({ records }: InspectorPanelProps) {
+export function InspectorPanel({ records, open, onToggle }: InspectorPanelProps) {
   const selectedId = useLattice((state) => state.selectedInstanceId);
   const placements = useLattice((state) => state.placements);
   const grants = useLattice((state) => state.grants);
@@ -73,11 +77,41 @@ export function InspectorPanel({ records }: InspectorPanelProps) {
     applySize(clampSize(draft.w, minW, placement.w), clampSize(draft.h, minH, placement.h));
   };
 
+  if (!open) {
+    return (
+      <aside className="lattice-panel lattice-panel-right is-collapsed">
+        <button
+          type="button"
+          className="lattice-icon-btn is-large"
+          onClick={onToggle}
+          title="Show the inspector"
+          aria-label="Show the inspector"
+          aria-expanded={false}
+        >
+          <PanelGlyph side="right" />
+        </button>
+        <span className="lattice-panel-rail-label">Inspector</span>
+      </aside>
+    );
+  }
+
   if (!placement || !record) {
     return (
       <aside className="lattice-panel lattice-panel-right">
         <header className="lattice-panel-head">
           <h2 className="lattice-panel-title">Inspector</h2>
+          <div className="lattice-panel-actions">
+            <button
+              type="button"
+              className="lattice-icon-btn"
+              onClick={onToggle}
+              title="Collapse the inspector"
+              aria-label="Collapse the inspector"
+              aria-expanded
+            >
+              <PanelGlyph side="right" />
+            </button>
+          </div>
         </header>
         <div className="lattice-panel-body is-empty">
           <div className="lattice-panel-empty">
@@ -96,13 +130,25 @@ export function InspectorPanel({ records }: InspectorPanelProps) {
     <aside className="lattice-panel lattice-panel-right">
       <header className="lattice-panel-head">
         <h2 className="lattice-panel-title">{manifest.name}</h2>
-        <button
-          type="button"
-          className="lattice-btn is-danger"
-          onClick={() => remove(placement.instanceId)}
-        >
-          Remove
-        </button>
+        <div className="lattice-panel-actions">
+          <button
+            type="button"
+            className="lattice-btn is-danger"
+            onClick={() => remove(placement.instanceId)}
+          >
+            Remove
+          </button>
+          <button
+            type="button"
+            className="lattice-icon-btn"
+            onClick={onToggle}
+            title="Collapse the inspector"
+            aria-label="Collapse the inspector"
+            aria-expanded
+          >
+            <PanelGlyph side="right" />
+          </button>
+        </div>
       </header>
 
       <div className="lattice-panel-body">

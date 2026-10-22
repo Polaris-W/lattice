@@ -11,7 +11,7 @@
 
 import type { WidgetLoadError, WidgetRecord } from "../runtime/registry";
 import { PERMISSION_LABELS } from "../runtime/manifest";
-import { Glyph, ICON } from "./icons";
+import { Glyph, ICON, PanelGlyph } from "./icons";
 
 /** 安装结果提示。成功的会自己消失，失败的留着等用户处理 */
 export interface InstallNotice {
@@ -32,6 +32,9 @@ interface LibraryPanelProps {
   onInstall: (record: WidgetRecord) => void;
   onInstallPack: (records: WidgetRecord[]) => void;
   onUninstall: (record: WidgetRecord) => void;
+  /** 面板是否展开；收起后退成一条竖条，只留开合按钮 */
+  open: boolean;
+  onToggle: () => void;
 }
 
 export function LibraryPanel({
@@ -46,6 +49,8 @@ export function LibraryPanel({
   onInstall,
   onInstallPack,
   onUninstall,
+  open,
+  onToggle,
 }: LibraryPanelProps) {
   const installed = widgets.filter((record) => installedIds.has(record.manifest.id));
   const available = widgets.filter((record) => !installedIds.has(record.manifest.id));
@@ -143,20 +148,50 @@ export function LibraryPanel({
     );
   };
 
+  if (!open) {
+    return (
+      <aside className="lattice-panel lattice-panel-left is-collapsed">
+        <button
+          type="button"
+          className="lattice-icon-btn is-large"
+          onClick={onToggle}
+          title="Show the widget library"
+          aria-label="Show the widget library"
+          aria-expanded={false}
+        >
+          <PanelGlyph side="left" />
+        </button>
+        <span className="lattice-panel-rail-label">Widgets</span>
+      </aside>
+    );
+  }
+
   return (
     <aside className="lattice-panel lattice-panel-left">
       <header className="lattice-panel-head">
         <h2 className="lattice-panel-title">Widgets</h2>
         <span className="lattice-panel-count">{installed.length}</span>
-        <button
-          type="button"
-          className="lattice-icon-btn"
-          onClick={onOpenWidgetsDir}
-          title="Open the widgets folder in Explorer"
-          aria-label="Open widgets folder"
-        >
-          <Glyph d={ICON.folder} />
-        </button>
+        <div className="lattice-panel-actions">
+          <button
+            type="button"
+            className="lattice-icon-btn"
+            onClick={onOpenWidgetsDir}
+            title="Open the widgets folder in Explorer"
+            aria-label="Open widgets folder"
+          >
+            <Glyph d={ICON.folder} />
+          </button>
+          <button
+            type="button"
+            className="lattice-icon-btn"
+            onClick={onToggle}
+            title="Collapse the widget library"
+            aria-label="Collapse the widget library"
+            aria-expanded
+          >
+            <PanelGlyph side="left" />
+          </button>
+        </div>
       </header>
 
       {notice && (

@@ -141,6 +141,17 @@ interface LatticeState {
    * 优先用它，否则才从画布坐标推。
    */
   desktopRects: Record<string, DesktopRect>;
+  /**
+   * 左右两栏是不是展开的。
+   *
+   * 收起之后面板退成一条 40px 的竖条（按钮还在，随时能拉开），画布拿走剩下的
+   * 全部宽度 —— 摆组件的时候经常需要这个视野。状态要持久化：用户把它收起来，
+   * 就是不想每次开应用再收一次。
+   */
+  libraryOpen: boolean;
+  inspectorOpen: boolean;
+
+  setPanelOpen: (panel: "library" | "inspector", open: boolean) => void;
 
   addPlacement: (placement: Placement) => void;
   removePlacement: (instanceId: string) => void;
@@ -178,6 +189,11 @@ export const useLattice = create<LatticeState>()(
       selectedInstanceId: null,
       desktopMode: false,
       desktopRects: {},
+      libraryOpen: true,
+      inspectorOpen: true,
+
+      setPanelOpen: (panel, open) =>
+        set(panel === "library" ? { libraryOpen: open } : { inspectorOpen: open }),
 
       addPlacement: (placement) =>
         set((state) => ({
@@ -305,6 +321,8 @@ export const useLattice = create<LatticeState>()(
         snapToGrid: state.snapToGrid,
         profile: state.profile,
         desktopRects: state.desktopRects,
+        libraryOpen: state.libraryOpen,
+        inspectorOpen: state.inspectorOpen,
       }),
     },
   ),
