@@ -68,6 +68,11 @@ body {
 
 .todo-title {
   margin: 0;
+  /* 拉到最窄（200px）时，标题栏只剩 80px：标题该让位给计数，被省略号截掉 */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.04em;
