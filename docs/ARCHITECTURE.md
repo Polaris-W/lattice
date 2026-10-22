@@ -25,9 +25,19 @@
 
 这个区分是产品定义的一部分。如果内置包自动算已安装，平台就退化成一个"内置了几个组件的桌面工具"，扩展体系变成装饰。
 
+### 安装是复制，不是记账
+
+v0.1 的"安装内置包"只在 `installedIds` 里记个 id，文件仍留在应用资源里。v0.2 改成 VS Code 处理内置扩展的做法：**把包目录复制进用户扩展目录再注册**（`install_widget` 先删旧目录再递归拷贝），这样安装 / 卸载 / 覆盖升级对官方包和第三方包完全同构，只有一条代码路径。
+
 ### 已知缺口
 
-v0.1 的"安装内置包"只是在 `installedIds` 里记个 id，并没有真的把文件复制到用户目录。正式做法应该像 VS Code 处理内置扩展那样：**把内置包复制进扩展目录再注册**，这样安装/卸载/升级和第三方包完全同构。这件事放在 v0.2，和 `lattice-widget://` 协议一起做。
+| 缺口 | 影响 |
+| --- | --- |
+| 撤销授权不同步到已打开的窗口 | 宿主页的 `granted` 在 `boot()` 时固定，要重开窗口才生效 |
+| 没有每实例配置 | 组件想加"字号 / 显示日期"只能自己画设置 UI、自己存 |
+| 加载失败没有兜底页 | 白屏，分不清 404 和组件自己的 JS 崩了 |
+
+三条都在 ROADMAP v0.3。
 
 ## 三层
 
@@ -46,22 +56,29 @@ v0.1 的"安装内置包"只是在 `installedIds` 里记个 id，并没有真的
 ┌─────────────────────────────────────────────────────┐
 │  Rust 侧                                             │
 │  widgets.rs：组件包扫描 / 安装 / 卸载                  │
-│  desktop.rs：层级、穿透、焦点（WorkerW / SetWindowPos）│
+│  protocol.rs：lattice-widget 协议（用户组件的静态文件） │
+│  runner.rs：Placement → 窗口的增量同步、宿主页配置     │
+│  desktop.rs：层级、穿透、焦点、圆角、底层守卫（Win32） │
+│  state.rs / widget_store.rs：状态与组件数据落盘        │
 └─────────────────────────────────────────────────────┘
 ```
+
+Rust 只做"窗口与文件"，不碰 UI。判断标准很简单：**需要 Win32 句柄或磁盘路径的，才下到 Rust**；其余（布局、主题、权限 UI）都在前端，改起来不用重编译。
 
 ## 两个状态：设计态与运行态
 
 这是最容易混淆的地方，先定清楚：
 
-| | 设计态（v0.1 已实现） | 运行态（v0.2） |
+| | 设计态 | 运行态 |
 | --- | --- | --- |
 | 宿主 | 主窗口里的一块画布 | 每个组件一个独立 WebviewWindow |
 | 用途 | 摆位置、调尺寸、配层级、授权限 | 真正贴在桌面上常驻 |
-| 组件渲染 | iframe | WebviewWindow 的 webview |
+| 组件渲染 | `WidgetFrame.tsx` 里的 iframe | 宿主页 `widget-host.html` 里再套一层 iframe |
 | 生命周期 | 跟着主窗口 | 跟着平台进程 |
 
-v0.1 先把**运行时协议、权限模型、组件包格式**这三件事定死，因为它们改起来最贵。窗口形态换掉时这三样完全不用动。
+**两个宿主，一套桥。** 设计态和运行态的 iframe 都走 `runtime/bridge.ts` 的同一张方法表、同一套权限校验，所以不会出现"预览能用、桌面上不能用"的分叉——这也是加新能力时唯一需要守住的对称性。
+
+v0.1 先把**运行时协议、权限模型、组件包格式**这三件事定死，因为它们改起来最贵。窗口形态换掉时（iframe → 独立窗口）这三样一行没动，这就是当初先做协议的价值。
 
 ## 组件沙箱
 
@@ -112,19 +129,25 @@ lattice.clock/
 
 | 数据 | 位置 | 说明 |
 | --- | --- | --- |
-| 组件摆放、层级、授权、主题 | 前端 `localStorage`（key `lattice.platform.v1`） | Zustand persist |
-| 组件私有数据 | 前端 `localStorage`（key `lattice.widget.store.<widgetId>:<key>`） | 由宿主代存，组件自己碰不到 localStorage |
-| 用户安装的组件 | `%APPDATA%\com.iron-tom.lattice\widgets\` | Rust 管理 |
+| 组件摆放、层级、授权、主题、网格吸附、本机档案、桌面矩形 | `%APPDATA%\com.iron-tom.lattice\state.json` | Zustand persist 的自定义 `StateStorage` → `state_write` |
+| 组件私有数据 | `%APPDATA%\com.iron-tom.lattice\widget-data\<widgetId>.json` | 由宿主代存，组件自己碰不到 localStorage |
+| 用户安装的组件 | `%APPDATA%\com.iron-tom.lattice\widgets\<id>\` | Rust 管理，经 `lattice-widget` 协议加载 |
 
-组件数据放宿主而不是组件里，是为了将来换存储后端（SQLite）时组件不用改，也避免组件之间互相看到数据。
+**不用 `localStorage`**，原因见 ROADMAP「被推翻的决定」第 2 条：这台机器的 WebView2 把它整个放在内存里，进程一退就没了。文件写入走"临时文件 + 原子替换"，写到一半断电也不会留下半截 JSON。
+
+组件数据放宿主而不是组件里，有三个好处：将来换后端（SQLite）组件不用改；组件之间互相看不到数据；同一组件的多个实例能通过广播收敛成同一份视图。
 
 ## 窗口行为（Win32）
 
-三层需求，逐层加码：
+窗口属性按"这个组件要不要打字"分流，由清单的 `interactive` 决定，不按组件名硬编码：
 
-1. **不抢焦点** —— `WS_EX_NOACTIVATE`，点组件不打断你正在打字的窗口。
-2. **不进 Alt+Tab** —— `WS_EX_TOOLWINDOW`。
-3. **鼠标穿透** —— `WS_EX_LAYERED | WS_EX_TRANSPARENT`，纯展示型组件开启。
+| 需求 | 纯展示（`interactive: false`） | 可输入（`interactive: true`，默认） |
+| --- | --- | --- |
+| 抢不抢焦点 | `WS_EX_NOACTIVATE`，点了不打断你 | 不设，能拿键盘焦点 |
+| 进不进 Alt+Tab | `WS_EX_TOOLWINDOW` 排除 | 同样排除 |
+| 鼠标穿透 | `WS_EX_LAYERED \| WS_EX_TRANSPARENT`（按实例开关） | 同左 |
+| 挂哪 | WorkerW（拿不到降级 `HWND_BOTTOM`） | 不挂 WorkerW，压 `HWND_BOTTOM` |
+| z 序守卫 | 不需要 | 子类化拦 `WM_WINDOWPOSCHANGING`，给"往上提"补 `SWP_NOZORDER` |
 
 层级有两种：
 
@@ -132,6 +155,8 @@ lattice.clock/
 - `top`：先 `SetParent(null)` 脱离，再 `HWND_TOPMOST`。
 
 拿不到 WorkerW 时降级为 `HWND_BOTTOM`，至少不会浮在最上层挡住内容。
+
+z 序守卫是 v0.2 补的：可激活的窗口被点中时，Windows 会顺手把它提到最前，切走又掉回底层——用户看到的是"闪来闪去"。拦掉"往上提"不影响激活，键盘照样进得来。
 
 ## 性能预算
 
@@ -149,7 +174,9 @@ lattice.clock/
 
 | 决定 | 代价 | 为什么接受 |
 | --- | --- | --- |
-| iframe 而非独立窗口（v0.1） | 组件不能真正贴桌面 | 先把协议和权限模型定死，窗口形态是后置的机械替换 |
-| 不引入 Tailwind | 手写 CSS 更长 | 定制工作台用变量层更可控，少一个构建依赖 |
-| `csp: null` | 没有 CSP 兜底 | 待组件协议接入后一并锁定，避免现在就锁死导致 dev 环境难调 |
-| 用户组件暂不可渲染 | 有"待接入"状态 | 需要 `lattice-widget://` 协议，见 ROADMAP 第 1 项 |
+| 窗口不透明，圆角靠 `SetWindowRgn` 裁 | 做不了异形窗口、投影、模糊背景；圆角外侧像素是死区 | 逐像素透明要求 DirectComposition，这台机器拿不到（见 ROADMAP 第 1 条） |
+| 每个组件一个 WebView | 内存随组件数线性涨 | 崩溃隔离、独立 DPI、独立输入焦点都靠它；同一 WebView 装多组件的方案留到性能告急时再评估 |
+| 用户组件走自定义协议，不走 `file://` | 多一层协议代码、Windows 上 URL 形式特殊 | `file://` 没有源隔离，组件能直接读整个磁盘 |
+| `csp: null` | 没有 CSP 兜底 | 组件源不统一（应用源 + 协议源），先让两套都能跑，等 SDK 定型再一起锁 |
+| 不引入 Tailwind | 手写 CSS 更长（1 757 行） | 定制工作台用变量层更可控，少一个构建依赖，组件也只认 `--lattice-*` |
+| 本机档案不是账号系统 | "登录"只写本地 `state.json` | 没有服务端。文案上明说"只保存在这台电脑"，免得被当成云端账号；真做同步时换 `signIn/signOut` 即可 |
