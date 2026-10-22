@@ -26,5 +26,10 @@ dist-ssr
 # 构建产物
 src-tauri/target
 
+# 调试时的临时截图 / 日志
+.shot-*.png
+.crop-*.png
+.run*.log
+
 # 由 scripts/widget-index.mjs 生成
 public/widgets/index.json

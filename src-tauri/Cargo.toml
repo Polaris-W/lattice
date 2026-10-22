@@ -12,7 +12,11 @@ edition = "2024"
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "lattice_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# 只做桌面端，所以不需要 staticlib / cdylib。
+# 留着 cdylib 会让 windows-gnu 去导出一个巨大的符号表，
+# ld 会报 "export ordinal too large"（见 docs/ROADMAP.md）。
+# 将来要做移动端再把 staticlib / cdylib 加回来。
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -34,4 +38,4 @@ panic = "abort"
 strip = true
 
 [target."cfg(windows)".dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }

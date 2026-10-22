@@ -9,8 +9,22 @@
 //!
 //! 两种层级都会顺手加上 `WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`：
 //! 点组件不该抢走当前窗口的焦点，也不该出现在 Alt+Tab 里。
+//!
+//! # 关于圆角
+//!
+//! 组件窗口是**不透明**的，圆角靠 `SetWindowRgn` 把窗口本身裁成圆角矩形，
+//! 而不是靠 `border-radius` + 透明窗口。原因是逐像素透明要求
+//! WebView2 走 DirectComposition 合成，在混合显卡 / 虚拟显示适配器环境下
+//! 直接建不出 webview（`HRESULT(0x8007139F)`）；就算建出来了，
+//! 一旦软件渲染，透明背景也会退回成白底。
+//!
+//! 裁剪方案没有这些前提：窗口照常渲染，形状由系统负责，
+//! 代价是圆角边缘没有抗锯齿。对一个贴桌面的小组件来说这笔交易很划算。
 
 use serde::Deserialize;
+
+/// 组件窗口的圆角半径（逻辑像素），与画布里 `.lattice-widget` 的 12px 对齐
+pub const CORNER_RADIUS: f64 = 12.0;
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -32,9 +46,9 @@ pub fn apply_layer(hwnd: isize, layer: WindowLayer, click_through: bool) -> Resu
     }
 }
 
-#[tauri::command]
-pub fn apply_window_layer(
-    window: tauri::WebviewWindow,
+/// 把层级与穿透设置应用到某个 Tauri 窗口
+pub fn apply_to(
+    window: &tauri::WebviewWindow,
     layer: WindowLayer,
     click_through: bool,
 ) -> Result<(), String> {
@@ -42,24 +56,43 @@ pub fn apply_window_layer(
 
     let handle = window.window_handle().map_err(|error| error.to_string())?;
 
+    // 裁剪区域用的是物理像素，先把逻辑尺寸按 DPI 放缩
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let size = window
+        .inner_size()
+        .map_err(|error| error.to_string())?;
+
     #[cfg(windows)]
     {
         if let RawWindowHandle::Win32(win32) = handle.as_raw() {
-            return apply_layer(win32.hwnd.get(), layer, click_through);
+            let hwnd = win32.hwnd.get();
+            apply_layer(hwnd, layer, click_through)?;
+            imp::clip_rounded(hwnd, size.width, size.height, CORNER_RADIUS * scale)?;
+            return Ok(());
         }
         Err("拿不到 Win32 窗口句柄".to_string())
     }
     #[cfg(not(windows))]
     {
-        let _ = handle;
+        let _ = (handle, scale, size);
         Err("窗口层级控制目前只实现了 Windows".to_string())
     }
+}
+
+#[tauri::command]
+pub fn apply_window_layer(
+    window: tauri::WebviewWindow,
+    layer: WindowLayer,
+    click_through: bool,
+) -> Result<(), String> {
+    apply_to(&window, layer, click_through)
 }
 
 #[cfg(windows)]
 mod imp {
     use super::WindowLayer;
     use windows_sys::Win32::Foundation::{HWND, LPARAM};
+    use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         EnumWindows, FindWindowExW, FindWindowW, GWL_EXSTYLE, GetWindowLongPtrW, HWND_BOTTOM,
         HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SendMessageTimeoutW, SetParent,
@@ -69,6 +102,40 @@ mod imp {
 
     /// Progman 收到这条未公开消息后会派生出承载壁纸的 WorkerW
     const SPAWN_WORKER_W: u32 = 0x052C;
+
+    /// 把窗口裁成圆角矩形。区域坐标是物理像素，宽高要 +1：
+    /// GDI 的区域是右开区间，少 1px 会吃掉最后一行/列。
+    pub fn clip_rounded(hwnd: isize, width: u32, height: u32, radius: f64) -> Result<(), String> {
+        if hwnd == 0 {
+            return Err("窗口句柄为空".to_string());
+        }
+        if width == 0 || height == 0 {
+            return Ok(());
+        }
+        let diameter = (radius * 2.0).round().max(2.0) as i32;
+        let region = unsafe {
+            CreateRoundRectRgn(
+                0,
+                0,
+                width as i32 + 1,
+                height as i32 + 1,
+                diameter,
+                diameter,
+            )
+        };
+        if region.is_null() {
+            return Err("创建圆角裁剪区域失败".to_string());
+        }
+        // 成功后区域归系统所有，不能再删；失败才需要自己释放
+        let ok = unsafe { SetWindowRgn(hwnd as HWND, region, 1) };
+        if ok == 0 {
+            unsafe {
+                DeleteObject(region);
+            }
+            return Err("设置窗口裁剪区域失败".to_string());
+        }
+        Ok(())
+    }
 
     fn wide(value: &str) -> Vec<u16> {
         value.encode_utf16().chain(std::iter::once(0)).collect()

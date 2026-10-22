@@ -40,6 +40,8 @@ interface LatticeState {
   theme: ThemeMode;
   snapToGrid: boolean;
   selectedInstanceId: string | null;
+  /** 是否已把组件投放到真实桌面（运行态）。不持久化，重启回到设计态 */
+  desktopMode: boolean;
 
   addPlacement: (placement: Placement) => void;
   removePlacement: (instanceId: string) => void;
@@ -48,6 +50,7 @@ interface LatticeState {
   select: (instanceId: string | null) => void;
   setTheme: (theme: ThemeMode) => void;
   toggleSnap: () => void;
+  setDesktopMode: (enabled: boolean) => void;
   installWidget: (widgetId: string) => void;
   /** 卸载时连带清掉这个组件在画布上的所有实例，避免留下"组件缺失" */
   uninstallWidget: (widgetId: string) => void;
@@ -70,6 +73,7 @@ export const useLattice = create<LatticeState>()(
       theme: "system",
       snapToGrid: true,
       selectedInstanceId: null,
+      desktopMode: false,
 
       addPlacement: (placement) =>
         set((state) => ({
@@ -105,6 +109,8 @@ export const useLattice = create<LatticeState>()(
       setTheme: (theme) => set({ theme }),
 
       toggleSnap: () => set((state) => ({ snapToGrid: !state.snapToGrid })),
+
+      setDesktopMode: (enabled) => set({ desktopMode: enabled }),
 
       installWidget: (widgetId) =>
         set((state) =>

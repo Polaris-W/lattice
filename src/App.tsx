@@ -10,6 +10,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Canvas } from "./platform/Canvas";
 import { InspectorPanel } from "./platform/InspectorPanel";
 import { LibraryPanel } from "./platform/LibraryPanel";
+import { buildSpecs, closeDesktop, minimizeMain, syncDesktop } from "./platform/desktop";
 import { nextFreeSlot, useLattice, type ThemeMode } from "./platform/store";
 import { isTauri, loadRegistry, type WidgetLoadError, type WidgetRecord } from "./runtime/registry";
 
@@ -27,6 +28,10 @@ export default function App() {
   const setTheme = useLattice((state) => state.setTheme);
   const snapToGrid = useLattice((state) => state.snapToGrid);
   const toggleSnap = useLattice((state) => state.toggleSnap);
+  const grants = useLattice((state) => state.grants);
+  const desktopMode = useLattice((state) => state.desktopMode);
+  const setDesktopMode = useLattice((state) => state.setDesktopMode);
+  const [desktopBusy, setDesktopBusy] = useState(false);
 
   const records = useMemo(() => new Map(widgets.map((item) => [item.manifest.id, item])), [widgets]);
 
@@ -126,6 +131,38 @@ export default function App() {
     [refresh, uninstallWidget],
   );
 
+  const toggleDesktop = useCallback(async () => {
+    if (!isTauri()) return;
+    setDesktopBusy(true);
+    try {
+      if (desktopMode) {
+        await closeDesktop();
+        setDesktopMode(false);
+      } else {
+        const state = useLattice.getState();
+        await syncDesktop(buildSpecs(state.placements, records, state.grants));
+        setDesktopMode(true);
+        // 主窗口让位，否则组件全被它挡在后面
+        await minimizeMain();
+      }
+    } catch (error) {
+      setErrors((prev) => [...prev, { dir: "(desktop)", message: String(error) }]);
+    } finally {
+      setDesktopBusy(false);
+    }
+  }, [desktopMode, records, setDesktopMode]);
+
+  // 运行态下改画布要同步到真窗口；拖动是高频的，攒一下再发
+  useEffect(() => {
+    if (!desktopMode) return;
+    const timer = setTimeout(() => {
+      void syncDesktop(buildSpecs(placements, records, grants)).catch((error) => {
+        setErrors((prev) => [...prev, { dir: "(desktop)", message: String(error) }]);
+      });
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [desktopMode, placements, records, grants]);
+
   const onDropWidget = useCallback(
     (event: React.DragEvent) => {
       const widgetId = event.dataTransfer.getData("application/x-lattice-widget");
@@ -187,6 +224,20 @@ export default function App() {
               </button>
             ))}
           </div>
+
+          <button
+            type="button"
+            className={`lattice-btn${desktopMode ? " is-active" : ""}`}
+            onClick={() => void toggleDesktop()}
+            disabled={!isTauri() || desktopBusy}
+            title={
+              isTauri()
+                ? "把画布上的组件变成真正的桌面窗口，主窗口会最小化"
+                : "浏览器预览里不可用，请用 npm run tauri:dev 启动桌面端"
+            }
+          >
+            {desktopMode ? "收回组件" : "投放到桌面"}
+          </button>
 
           <button type="button" className="lattice-btn" onClick={() => void refresh()}>
             刷新组件

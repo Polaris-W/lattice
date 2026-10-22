@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Lattice Widget</title>
+    <style>
+      /*
+       * 桌面窗口里的"卡片"由这一页负责画：背景、描边。
+       * 组件只管内容，跟画布里 .lattice-widget 的分工一致。
+       *
+       * 圆角不用 border-radius —— 窗口不是逐像素透明的，
+       * border-radius 只会把方角变成"白角"。真正的圆角由 Rust 侧
+       * 用 SetWindowRgn 把窗口裁成圆角矩形，所以这里必须画满整块矩形，
+       * 形状交给裁剪决定。
+       */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: var(--lattice-surface, #1d1d21);
+      }
+
+      body {
+        /* 裁剪边缘有 1px 抗锯齿落差，用内描边压一下，看起来更像一块玻璃 */
+        box-shadow: inset 0 0 0 1px var(--lattice-border, rgb(255 255 255 / 10%));
+      }
+    </style>
+  </head>
+  <body>
+    <script type="module" src="/src/widgetHost.ts"></script>
+  </body>
+</html>

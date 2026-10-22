@@ -6,11 +6,18 @@
 
 ## 现状
 
-v0.1 是**可运行的 demo**：平台开箱是空白的，安装官方组件包后把组件摆到画布上，组件在沙箱 iframe 里真实运行，通过 RPC 桥调用平台能力，权限逐项授予。
+v0.2 是**能真的贴到桌面上的 demo**：平台开箱是空白的，安装官方组件包后把组件摆到画布上，组件在沙箱 iframe 里真实运行，通过 RPC 桥调用平台能力，权限逐项授予。点"投放到桌面"，每个组件变成一个独立的无边框窗口，主窗口最小化退场。
 
 ![安装官方组件包后](docs/screenshot.png)
 
-还没做的：把画布上的组件变成真正的独立桌面窗口（见 [ROADMAP](./docs/ROADMAP.md)）。
+## 组件真的在桌面上
+
+"投放到桌面"之后：
+
+- 每个 Placement 变成一个独立的 `WebviewWindow`，加载 `widget-host.html`，再由它套一层沙箱 iframe——**桌面窗口和画布预览跑的是同一套桥、同一套权限校验**，不会出现"预览能用、桌面上不能用"的分叉
+- `layer: desktop` 的组件挂到 WorkerW（拿不到时降级 `HWND_BOTTOM`），沉在普通窗口之下；`layer: top` 的走 `HWND_TOPMOST`
+- 窗口无边框、不进任务栏、`WS_EX_NOACTIVATE` 不抢焦点，形状由 `SetWindowRgn` 裁成圆角
+- 画布上继续拖动、改层级，桌面窗口跟着走（120ms 防抖增量同步）
 
 ## 平台是空白的
 
@@ -64,11 +71,12 @@ public/widgets/      官方组件包（未安装前只是"可安装"）
 scripts/             构建辅助（生成组件索引）
 src-tauri/
   src/widgets.rs     组件包扫描 / 安装 / 卸载
-  src/desktop.rs     窗口层级、鼠标穿透、焦点行为（Win32）
+  src/runner.rs      运行态：Placement → 真实窗口的增量同步
+  src/desktop.rs     窗口层级、圆角裁剪、鼠标穿透、焦点行为（Win32）
 docs/
   ARCHITECTURE.md    架构与取舍
   WIDGET_SPEC.md     组件规范（写组件看这个）
-  ROADMAP.md         路线图与已知缺口
+  ROADMAP.md         路线图、踩过的坑、构建环境说明
 ```
 
 ## 写一个组件
