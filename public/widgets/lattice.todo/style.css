@@ -1,3 +1,14 @@
+/*
+ * 待办清单
+ *
+ * 两条约束决定了这里的写法：
+ *   1. 勾选框不能用原生 checkbox —— 沙箱 iframe 里 color-scheme 被强制成
+ *      normal，原生控件会按浅色主题画成一个几乎看不见的小白块，跟深色卡片
+ *      完全对不上。所以 appearance: none，方框和勾都自己画。
+ *   2. 字号 13px + 行高 1.45。12px 的中文在这个尺寸里笔画会粘在一起，
+ *      桌面组件是"扫一眼"的阅读场景，宁可少放一行字。
+ */
+
 :root {
   --fg: #ecebe6;
   --muted: #97978f;
@@ -5,7 +16,8 @@
   --accent: #5dcaa5;
   --border: rgba(255, 255, 255, 0.12);
   --radius: 10px;
-  --font: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  --font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI",
+    "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif;
 }
 
 * {
@@ -19,17 +31,25 @@ body {
   background: transparent;
   color: var(--fg);
   font-family: var(--font);
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.45;
   overflow: hidden;
+  /*
+   * 这里刻意不写 -webkit-font-smoothing: antialiased。
+   * 在 Windows 上它会关掉 ClearType 次像素渲染，中文小字立刻变细、发灰、
+   * 像没对上焦 —— macOS 上这个属性是"让字更细腻"，Windows 上恰好相反。
+   */
 }
 
 .todo {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 10px;
-  gap: 8px;
+  padding: 12px;
+  gap: 10px;
 }
+
+/* ---------- 输入 ---------- */
 
 .todo-form {
   flex: none;
@@ -37,14 +57,22 @@ body {
 
 .todo-input {
   width: 100%;
-  padding: 6px 9px;
+  padding: 7px 10px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 8px;
   background: transparent;
   color: var(--fg);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.4;
   outline: none;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease;
+}
+
+.todo-input:hover {
+  border-color: color-mix(in srgb, var(--fg) 22%, transparent);
 }
 
 .todo-input:focus {
@@ -55,73 +83,157 @@ body {
   color: var(--muted);
 }
 
-.todo-list {
+/* ---------- 列表 ---------- */
+
+.todo-body {
+  position: relative;
   flex: 1;
   min-height: 0;
+}
+
+.todo-list {
+  height: 100%;
   margin: 0;
-  padding: 0;
+  padding: 0 2px 0 0;
   list-style: none;
   overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
+}
+
+.todo-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.todo-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.todo-list::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: var(--border);
+  background: color-mix(in srgb, var(--fg) 16%, transparent);
 }
 
 .todo-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 6px;
-  border-radius: 6px;
+  gap: 9px;
+  min-height: 30px;
+  padding: 5px 7px;
+  border-radius: 7px;
+  cursor: default;
+  transition: background 0.12s ease;
 }
 
 .todo-item:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
+
+/* ---------- 勾选框（自绘） ---------- */
 
 .todo-check {
   flex: none;
-  width: 14px;
-  height: 14px;
-  accent-color: var(--accent);
+  position: relative;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1.5px solid color-mix(in srgb, var(--fg) 34%, transparent);
+  border-radius: 5px;
+  background: transparent;
   cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
+
+.todo-check:hover {
+  border-color: var(--accent);
+}
+
+.todo-check:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+/*
+ * 勾用 --surface 上色：深色主题里 accent 是浅绿，勾该是深的；
+ * 浅色主题里 accent 是深绿，勾该是白的。surface 恰好两边都对。
+ */
+.todo-check:checked::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 0.5px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--surface);
+  border-width: 0 2px 2px 0;
+  transform: rotate(42deg);
+}
+
+.todo-check:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 1px;
+}
+
+/* ---------- 文字 ---------- */
 
 .todo-text {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.45;
+  letter-spacing: 0.01em;
   cursor: pointer;
+  user-select: none;
 }
 
 .todo-item.is-done .todo-text {
   color: var(--muted);
   text-decoration: line-through;
+  text-decoration-thickness: 1px;
 }
+
+/* ---------- 删除 ---------- */
 
 .todo-remove {
   flex: none;
+  display: grid;
+  place-items: center;
   width: 18px;
   height: 18px;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: 5px;
   background: transparent;
   color: var(--muted);
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
   opacity: 0;
+  transition:
+    opacity 0.12s ease,
+    color 0.12s ease;
 }
 
-.todo-item:hover .todo-remove {
+.todo-item:hover .todo-remove,
+.todo-remove:focus-visible {
   opacity: 1;
 }
 
 .todo-remove:hover {
   color: #f09595;
 }
+
+/* ---------- 空状态 ---------- */
 
 .todo-empty {
   position: absolute;

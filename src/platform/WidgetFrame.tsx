@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   BRIDGE_TAG,
   handleBridgeRequest,
@@ -17,7 +18,7 @@ import {
   type BridgeResponseMessage,
 } from "../runtime/bridge";
 import { PERMISSION_LABELS, type Permission } from "../runtime/manifest";
-import type { WidgetRecord } from "../runtime/registry";
+import { isTauri, type WidgetRecord } from "../runtime/registry";
 import { snap, useLattice, type Placement } from "./store";
 
 interface WidgetFrameProps {
@@ -96,6 +97,36 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
   useEffect(() => {
     post({ [BRIDGE_TAG]: 1, type: "theme", payload: readThemeTokens() });
   }, [theme, post]);
+
+  /*
+   * 组件存储被**别的实例**改了，转告这个 iframe。
+   *
+   * 同一个组件在画布上和桌面上各有一份内存副本，不转发的话两边各写各的：
+   * 桌面那边加了两条，画布这边还是旧列表，随便动一下就把那两条写没了。
+   * 事件由 Rust 在每次落盘后广播（见 widget_store.rs）。
+   */
+  useEffect(() => {
+    if (!isTauri()) return;
+    let dispose: (() => void) | undefined;
+    let disposed = false;
+
+    void listen<{ widgetId: string; key: string }>("lattice:widget-store", (event) => {
+      if (event.payload.widgetId !== record.manifest.id) return;
+      post({
+        [BRIDGE_TAG]: 1,
+        type: "store-changed",
+        payload: { key: event.payload.key },
+      });
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else dispose = unlisten;
+    });
+
+    return () => {
+      disposed = true;
+      dispose?.();
+    };
+  }, [post, record.manifest.id]);
 
   // ---- 拖动 ----
   const dragState = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(
@@ -205,11 +236,8 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
         />
       ) : (
         <div className="lattice-pending">
-          <span className="lattice-pending-title">已安装，但还加载不了</span>
-          <p className="lattice-hint">
-            用户组件的文件在磁盘上，需要 <code className="lattice-mono">lattice-widget://</code>{" "}
-            自定义协议才能渲染，见 ROADMAP 第 1 项。
-          </p>
+          <span className="lattice-pending-title">入口地址是空的</span>
+          <p className="lattice-hint">清单里的 entry 没解析出来，检查一下 manifest.json。</p>
           <code className="lattice-mono lattice-path">{record.dir}</code>
         </div>
       )}

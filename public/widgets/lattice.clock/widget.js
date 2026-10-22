@@ -70,6 +70,8 @@
 
   var use24Hour = true;
 
+  var WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+
   function pad(value) {
     return value < 10 ? "0" + value : String(value);
   }
@@ -85,8 +87,11 @@
           hours = hours % 12 || 12;
         }
         timeEl.textContent = (use24Hour ? pad(hours) : hours) + ":" + pad(date.getMinutes()) + suffix;
+        // 中文的日期单位不跟数字隔空格："10月22日"，不是"10 月 22 日"。
+        // 时区 ID（Asia/Shanghai）是给程序看的，桌面时钟上没人想读它，
+        // 换成星期几，这块空间才算有用。
         dateEl.textContent =
-          date.getMonth() + 1 + " 月 " + date.getDate() + " 日 · " + info.timeZone;
+          (date.getMonth() + 1) + "月" + date.getDate() + "日 " + WEEKDAYS[date.getDay()];
       })
       .catch(function (error) {
         timeEl.textContent = "--:--";
@@ -96,7 +101,7 @@
 
   toggleEl.addEventListener("click", function () {
     use24Hour = !use24Hour;
-    toggleEl.textContent = use24Hour ? "24 小时制" : "12 小时制";
+    toggleEl.textContent = use24Hour ? "24小时制" : "12小时制";
     render();
     call("storage.set", { key: "use24Hour", value: use24Hour }).catch(function () {
       /* 存储权限被拒时只是不记忆偏好，不打断使用 */
@@ -107,7 +112,7 @@
     .then(function (value) {
       if (typeof value === "boolean") {
         use24Hour = value;
-        toggleEl.textContent = use24Hour ? "24 小时制" : "12 小时制";
+        toggleEl.textContent = use24Hour ? "24小时制" : "12小时制";
       }
     })
     .catch(function () {})

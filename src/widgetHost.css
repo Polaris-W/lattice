@@ -48,8 +48,8 @@ iframe {
   opacity: 0;
   transform: translateY(-3px) scale(0.97);
   transition:
-    opacity 0.15s ease,
-    transform 0.15s ease;
+    opacity 0.1s ease,
+    transform 0.1s ease;
   pointer-events: none;
 }
 

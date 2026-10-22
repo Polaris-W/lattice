@@ -10,6 +10,7 @@
 //! 主窗口最小化退场，组件就留在桌面上。
 
 pub mod desktop;
+pub mod protocol;
 pub mod runner;
 pub mod state;
 pub mod widget_store;
@@ -35,6 +36,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(runner::Runner::default())
+        // 用户组件不在前端资源里，得靠自定义协议把 %APPDATA% 下的文件发给 iframe
+        .register_uri_scheme_protocol(protocol::SCHEME, protocol::handle)
         .invoke_handler(tauri::generate_handler![
             widgets::list_widgets,
             widgets::widgets_dir,
@@ -46,6 +49,7 @@ pub fn run() {
             state::state_clear,
             widget_store::widget_store_read,
             widget_store::widget_store_write,
+            widget_store::widget_store_update,
             widget_store::widget_store_clear,
             runner::sync_widget_windows,
             runner::close_widget_windows,

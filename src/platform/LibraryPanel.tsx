@@ -11,6 +11,13 @@
 
 import type { WidgetLoadError, WidgetRecord } from "../runtime/registry";
 import { PERMISSION_LABELS } from "../runtime/manifest";
+import { Glyph, ICON } from "./icons";
+
+/** 安装结果提示。成功的会自己消失，失败的留着等用户处理 */
+export interface InstallNotice {
+  kind: "ok" | "error";
+  text: string;
+}
 
 interface LibraryPanelProps {
   widgets: WidgetRecord[];
@@ -18,6 +25,9 @@ interface LibraryPanelProps {
   installedIds: Set<string>;
   errors: WidgetLoadError[];
   loading: boolean;
+  notice: InstallNotice | null;
+  onDismissNotice: () => void;
+  onOpenWidgetsDir: () => void;
   onAdd: (record: WidgetRecord) => void;
   onInstall: (record: WidgetRecord) => void;
   onInstallPack: (records: WidgetRecord[]) => void;
@@ -29,6 +39,9 @@ export function LibraryPanel({
   installedIds,
   errors,
   loading,
+  notice,
+  onDismissNotice,
+  onOpenWidgetsDir,
   onAdd,
   onInstall,
   onInstallPack,
@@ -43,12 +56,11 @@ export function LibraryPanel({
       onInstall(record);
       return;
     }
-    if (record.entryUrl) onAdd(record);
+    onAdd(record);
   };
 
   const renderCard = (record: WidgetRecord) => {
     const isInstalled = installedIds.has(record.manifest.id);
-    const canRender = record.entryUrl !== null;
 
     return (
       <div
@@ -56,7 +68,7 @@ export function LibraryPanel({
         className={`lattice-card${isInstalled ? "" : " is-available"}`}
         role="button"
         tabIndex={0}
-        draggable={isInstalled && canRender}
+        draggable={isInstalled}
         onDragStart={(event) => {
           event.dataTransfer.setData("application/x-lattice-widget", record.manifest.id);
           event.dataTransfer.effectAllowed = "copy";
@@ -69,7 +81,13 @@ export function LibraryPanel({
         }}
       >
         <div className="lattice-card-top">
-          <span className="lattice-card-name">{record.manifest.name}</span>
+          <span className="lattice-card-glyph" aria-hidden>
+            {record.manifest.name.trim().slice(0, 1)}
+          </span>
+          <span className="lattice-card-heading">
+            <span className="lattice-card-name">{record.manifest.name}</span>
+            <code className="lattice-card-id">{record.manifest.id}</code>
+          </span>
           {isInstalled ? (
             <span className="lattice-chip is-accent">已安装</span>
           ) : (
@@ -82,8 +100,8 @@ export function LibraryPanel({
         </p>
 
         <div className="lattice-card-meta">
-          <code className="lattice-mono">{record.manifest.id}</code>
           <span className="lattice-mono">v{record.manifest.version}</span>
+          <span className="lattice-mono">{record.manifest.author}</span>
         </div>
 
         {record.manifest.permissions.length > 0 && (
@@ -98,19 +116,16 @@ export function LibraryPanel({
 
         <div className="lattice-card-actions">
           {isInstalled ? (
-            <>
-              {!canRender && <span className="lattice-chip is-warn">待接入</span>}
-              <button
-                type="button"
-                className="lattice-link-btn"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onUninstall(record);
-                }}
-              >
-                卸载
-              </button>
-            </>
+            <button
+              type="button"
+              className="lattice-link-btn"
+              onClick={(event) => {
+                event.stopPropagation();
+                onUninstall(record);
+              }}
+            >
+              卸载
+            </button>
           ) : (
             <button
               type="button"
@@ -133,7 +148,30 @@ export function LibraryPanel({
       <header className="lattice-panel-head">
         <h2 className="lattice-panel-title">组件库</h2>
         <span className="lattice-panel-count">{installed.length}</span>
+        <button
+          type="button"
+          className="lattice-icon-btn"
+          onClick={onOpenWidgetsDir}
+          title="在资源管理器里打开组件目录"
+          aria-label="打开组件目录"
+        >
+          <Glyph d={ICON.folder} />
+        </button>
       </header>
+
+      {notice && (
+        <div className={`lattice-notice is-${notice.kind}`} role="status">
+          <span className="lattice-notice-text">{notice.text}</span>
+          <button
+            type="button"
+            className="lattice-notice-close"
+            onClick={onDismissNotice}
+            aria-label="关闭提示"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       <div className="lattice-panel-body">
         {loading && <p className="lattice-hint">正在扫描组件…</p>}
@@ -142,7 +180,7 @@ export function LibraryPanel({
           <div className="lattice-lib-note">
             <p className="lattice-lib-note-title">一个组件都没有</p>
             <p className="lattice-hint">
-              把组件包目录放进 widgets/，或者从磁盘安装一个，然后刷新。
+              把一个组件文件夹从资源管理器拖进这个窗口就能安装。
             </p>
           </div>
         )}
@@ -194,6 +232,10 @@ export function LibraryPanel({
             ))}
           </div>
         )}
+
+        <p className="lattice-lib-drop">
+          把一个组件文件夹从资源管理器拖进窗口，就装好了。
+        </p>
       </div>
     </aside>
   );

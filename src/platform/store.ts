@@ -97,6 +97,23 @@ export interface DesktopRect {
 
 export type ThemeMode = "light" | "dark" | "system";
 
+/**
+ * 本机档案。
+ *
+ * 平台没有账号体系：这是一个纯本地应用，布局、授权、组件数据全部落在
+ * 这台机器的 `%APPDATA%\lattice` 里。所以这里的"登录"只是给这台机器
+ * 起一个名字，用来在界面上区分"谁在用"，不会上传任何东西。
+ *
+ * 真要做多设备同步，得有一个后端（账号 + 布局快照），那时把
+ * `signIn` / `signOut` 换成走网络的实现即可，其余界面不用动。
+ */
+export interface Profile {
+  name: string;
+  email: string;
+  /** 首次登录时间，ISO 字符串 */
+  since: string;
+}
+
 interface LatticeState {
   placements: Placement[];
   /**
@@ -111,6 +128,8 @@ interface LatticeState {
   grants: Record<string, Permission[]>;
   theme: ThemeMode;
   snapToGrid: boolean;
+  /** 本机档案，未登录为 null */
+  profile: Profile | null;
   selectedInstanceId: string | null;
   /** 是否已把组件投放到真实桌面（运行态）。不持久化，重启回到设计态 */
   desktopMode: boolean;
@@ -130,6 +149,8 @@ interface LatticeState {
   select: (instanceId: string | null) => void;
   setTheme: (theme: ThemeMode) => void;
   toggleSnap: () => void;
+  signIn: (name: string, email: string) => void;
+  signOut: () => void;
   setDesktopMode: (enabled: boolean) => void;
   setDesktopRect: (instanceId: string, rect: DesktopRect) => void;
   installWidget: (widgetId: string) => void;
@@ -153,6 +174,7 @@ export const useLattice = create<LatticeState>()(
       grants: {},
       theme: "system",
       snapToGrid: true,
+      profile: null,
       selectedInstanceId: null,
       desktopMode: false,
       desktopRects: {},
@@ -196,6 +218,18 @@ export const useLattice = create<LatticeState>()(
       setTheme: (theme) => set({ theme }),
 
       toggleSnap: () => set((state) => ({ snapToGrid: !state.snapToGrid })),
+
+      signIn: (name, email) =>
+        set((state) => ({
+          // 重复登录只改资料，保留最早的 since —— 那是"这台机器用多久了"的记号
+          profile: {
+            name: name.trim(),
+            email: email.trim(),
+            since: state.profile?.since ?? new Date().toISOString(),
+          },
+        })),
+
+      signOut: () => set({ profile: null }),
 
       setDesktopMode: (enabled) => set({ desktopMode: enabled }),
 
@@ -269,6 +303,7 @@ export const useLattice = create<LatticeState>()(
         grants: state.grants,
         theme: state.theme,
         snapToGrid: state.snapToGrid,
+        profile: state.profile,
         desktopRects: state.desktopRects,
       }),
     },
@@ -278,6 +313,14 @@ export const useLattice = create<LatticeState>()(
 /** 默认把新组件放在画布左上角附近的空位，避免叠在一起 */
 export function nextFreeSlot(placements: Placement[], w: number, h: number): { x: number; y: number } {
   const gap = 16;
+  /*
+   * 换行的位置按画布**实际**宽度算。
+   * 以前写死 1600：窄窗口下第三个组件会被摆到可视区右边，
+   * 用户点完「安装」什么都没发生 —— 其实它在，只是要横向滚才看得见。
+   */
+  const canvas = typeof document === "undefined" ? null : document.querySelector(".lattice-canvas");
+  const rightEdge = Math.max(w + 48, (canvas?.clientWidth ?? 1600) - 24);
+
   let x = 24;
   let y = 24;
   for (let guard = 0; guard < 200; guard += 1) {
@@ -290,7 +333,7 @@ export function nextFreeSlot(placements: Placement[], w: number, h: number): { x
     );
     if (!collides) return { x, y };
     x += w + gap;
-    if (x + w > 1600) {
+    if (x + w > rightEdge) {
       x = 24;
       y += h + gap;
     }

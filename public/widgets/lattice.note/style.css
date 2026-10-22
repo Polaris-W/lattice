@@ -5,7 +5,8 @@
   --accent: #5dcaa5;
   --border: rgba(255, 255, 255, 0.12);
   --radius: 10px;
-  --font: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  --font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI",
+    "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif;
 }
 
 * {
@@ -41,7 +42,9 @@ body {
   color: var(--fg);
   font-family: inherit;
   font-size: 13px;
-  line-height: 1.6;
+  /* 中文正文的行距要比西文松一点，1.6 在高 DPI 上仍然显得挤，1.7 才是"能读" */
+  line-height: 1.7;
+  letter-spacing: 0.01em;
 }
 
 .note textarea::placeholder {
@@ -55,8 +58,11 @@ body {
   justify-content: space-between;
   gap: 8px;
   padding-top: 6px;
-  font-size: 10px;
+  font-size: 11px;
+  line-height: 1.4;
   color: var(--muted);
+  /* 字数会跳动，用等宽数字免得整行左右晃 */
+  font-variant-numeric: tabular-nums;
 }
 
 #status.is-saved {

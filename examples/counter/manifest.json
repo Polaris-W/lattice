@@ -1,0 +1,12 @@
+{
+  "id": "demo.counter",
+  "name": "计数器",
+  "version": "0.1.0",
+  "description": "一个用来验证安装链路的示例组件：能读主题、能存数据、能点",
+  "author": "第三方示例",
+  "entry": "index.html",
+  "size": { "w": 220, "h": 160, "minW": 180, "minH": 130 },
+  "layer": "desktop",
+  "permissions": ["storage"],
+  "sdk": "^0.1"
+}

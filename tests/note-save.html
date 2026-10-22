@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>note save ordering test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+      iframe {
+        position: absolute;
+        left: -9999px;
+        width: 260px;
+        height: 170px;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      /**
+       * 造一个便签实例，桥的响应延迟故意随机（50–300ms），
+       * 用来复现"先发的后到"这种乱序。
+       */
+      function mountNote({ getDelay = 0, initial = "" } = {}) {
+        const state = { stored: initial, setCalls: 0 };
+        const frame = document.createElement("iframe");
+        // 测试里要直接操作 iframe 里的 textarea，所以额外开 allow-same-origin。
+        // 组件本身不依赖它，生产环境仍然是 allow-scripts。
+        frame.setAttribute("sandbox", "allow-scripts allow-same-origin");
+        frame.src = "/widgets/lattice.note/index.html";
+        document.body.appendChild(frame);
+
+        const ready = new Promise((resolve) => {
+          window.addEventListener("message", function handler(event) {
+            if (event.source !== frame.contentWindow) return;
+            const data = event.data;
+            if (!data || data.__lattice !== 1) return;
+            if (data.type === "ready") {
+              resolve();
+              return;
+            }
+            if (data.type !== "request") return;
+
+            const reply = (payload) =>
+              frame.contentWindow.postMessage(
+                Object.assign({ __lattice: 1, type: "response", id: data.id }, payload),
+                "*",
+              );
+
+            if (data.method === "storage.get") {
+              setTimeout(() => reply({ ok: true, result: state.stored }), getDelay);
+              return;
+            }
+            if (data.method === "storage.set") {
+              state.setCalls += 1;
+              const delay = 50 + Math.random() * 250;
+              setTimeout(() => {
+                state.stored = data.params.value;
+                reply({ ok: true, result: { ok: true } });
+              }, delay);
+              return;
+            }
+            reply({ ok: false, error: "unknown" });
+          });
+        });
+
+        return { frame, state, ready };
+      }
+
+      // ---- 场景 1：连续快速输入，最后一次必须赢 ----
+      {
+        const note = mountNote({ initial: "旧内容" });
+        await note.ready;
+        await sleep(100);
+
+        const doc = note.frame.contentDocument;
+        const text = doc.getElementById("text");
+        const final = "第一版";
+
+        for (let i = 0; i < 5; i += 1) {
+          text.value = final + "·" + i;
+          text.dispatchEvent(new Event("input", { bubbles: true }));
+          await sleep(40);
+        }
+        const last = text.value;
+        await sleep(1600);
+
+        log(note.state.stored === last, `连续输入后盘上是最后一次的内容（「${note.state.stored}」）`);
+        log(note.state.setCalls <= 3, `只发了 ${note.state.setCalls} 次写（串行，不排队堆积）`);
+        const status = doc.getElementById("status").textContent;
+        log(status === "已保存", `状态停在「${status}」`);
+        note.frame.remove();
+      }
+
+      // ---- 场景 2：载入很慢，用户先开始打字，磁盘内容不能覆盖他 ----
+      {
+        const note = mountNote({ initial: "磁盘上的旧便签", getDelay: 600 });
+        await sleep(150); // 此时 storage.get 还没回来
+
+        const doc = note.frame.contentDocument;
+        const text = doc.getElementById("text");
+        text.value = "我刚敲的";
+        text.dispatchEvent(new Event("input", { bubbles: true }));
+
+        await sleep(2000);
+
+        log(text.value === "我刚敲的", `载入回包后输入框仍是「${text.value}」`);
+        log(note.state.stored === "我刚敲的", `盘上落的是「${note.state.stored}」`);
+        note.frame.remove();
+      }
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+    </script>
+  </body>
+</html>

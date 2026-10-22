@@ -12,13 +12,15 @@
           class="todo-input"
           id="input"
           type="text"
-          placeholder="加一件要做的事，回车确认"
+          placeholder="添加待办，回车确认"
           autocomplete="off"
           maxlength="120"
         />
       </form>
-      <ul class="todo-list" id="list"></ul>
-      <p class="todo-empty" id="empty">还没有待办</p>
+      <div class="todo-body">
+        <ul class="todo-list" id="list"></ul>
+        <p class="todo-empty" id="empty">还没有待办</p>
+      </div>
     </main>
     <script src="widget.js"></script>
   </body>

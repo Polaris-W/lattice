@@ -51,6 +51,9 @@ pub struct WidgetWindowSpec {
     pub min_h: f64,
     pub layer: WindowLayer,
     pub click_through: bool,
+    /// 组件要不要键盘焦点。false 的窗口带 `WS_EX_NOACTIVATE`，点了不抢焦点；
+    /// true 的窗口可以激活，便签/待办才打得进字
+    pub interactive: bool,
     /// 别针：锁住位置与大小，宿主页把拖拽/缩放手柄收掉
     pub pinned: bool,
     /// 平台当前解析出来的明暗，桌面窗口据此上色，
@@ -71,6 +74,7 @@ pub struct HostConfig {
     pub min_h: f64,
     pub layer: WindowLayer,
     pub click_through: bool,
+    pub interactive: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -121,6 +125,7 @@ struct Applied {
     h: f64,
     layer: WindowLayer,
     click_through: bool,
+    interactive: bool,
 }
 
 /// 这次同步相对上次真正写进 Win32 的状态，哪些维度变了
@@ -184,7 +189,9 @@ impl Runner {
                 let change = Change {
                     pos: prev.x != next.x || prev.y != next.y,
                     size: prev.w != next.w || prev.h != next.h,
-                    layer: prev.layer != next.layer || prev.click_through != next.click_through,
+                    layer: prev.layer != next.layer
+                        || prev.click_through != next.click_through
+                        || prev.interactive != next.interactive,
                 };
                 map.insert(label.to_string(), next);
                 Some(change)
@@ -227,6 +234,7 @@ fn create(app: &AppHandle, spec: &WidgetWindowSpec, runner: &Runner) -> Result<(
             min_h: spec.min_h,
             layer: spec.layer,
             click_through: spec.click_through,
+            interactive: spec.interactive,
         },
     );
 
@@ -257,6 +265,7 @@ fn create(app: &AppHandle, spec: &WidgetWindowSpec, runner: &Runner) -> Result<(
         if let RawWindowHandle::Win32(win32) = handle.as_raw() {
             let hwnd = win32.hwnd.get();
             let radius = desktop::CORNER_RADIUS * window.scale_factor().unwrap_or(1.0);
+
             window.on_window_event(move |event| {
                 if let tauri::WindowEvent::Resized(size) = event {
                     let _ = desktop::clip_rounded(hwnd, size.width, size.height, radius);
@@ -268,7 +277,7 @@ fn create(app: &AppHandle, spec: &WidgetWindowSpec, runner: &Runner) -> Result<(
     // 先显示再落到层级：ShowWindow 会把窗口提到最前，
     // 顺序反过来的话，刚压到 HWND_BOTTOM / WorkerW 的窗口又被顶上去了
     let _ = window.show();
-    if let Err(error) = desktop::apply_to(&window, spec.layer, spec.click_through) {
+    if let Err(error) = desktop::apply_to(&window, spec.layer, spec.click_through, spec.interactive) {
         // 层级失败不该让整个同步失败：窗口已经建好了，至少先让人看见
         eprintln!("[lattice] 应用窗口层级失败（{label}）：{error}");
     } else {
@@ -281,6 +290,7 @@ fn create(app: &AppHandle, spec: &WidgetWindowSpec, runner: &Runner) -> Result<(
                 h: spec.h,
                 layer: spec.layer,
                 click_through: spec.click_through,
+                interactive: spec.interactive,
             },
         );
     }
@@ -311,6 +321,8 @@ pub async fn sync_widget_windows(
     // 关掉已经不在画布上的组件窗口
     for (label, window) in app.webview_windows() {
         if label.starts_with(LABEL_PREFIX) && !wanted.contains(&label) {
+            // 先藏再关：close() 要等 WebView2 把渲染进程拆完，窗口会定格几百毫秒
+            let _ = window.hide();
             let _ = window.close();
             runner.forget(&label);
         }
@@ -329,6 +341,7 @@ pub async fn sync_widget_windows(
                     h: spec.h,
                     layer: spec.layer,
                     click_through: spec.click_through,
+                    interactive: spec.interactive,
                 };
                 if let Some(change) = runner.diff(&label, next) {
                     if change.pos {
@@ -338,9 +351,12 @@ pub async fn sync_widget_windows(
                         let _ = window.set_size(LogicalSize::new(spec.w, spec.h));
                     }
                     if change.layer {
-                        if let Err(error) =
-                            desktop::apply_to(&window, spec.layer, spec.click_through)
-                        {
+                        if let Err(error) = desktop::apply_to(
+                            &window,
+                            spec.layer,
+                            spec.click_through,
+                            spec.interactive,
+                        ) {
                             eprintln!("[lattice] 更新窗口层级失败（{label}）：{error}");
                         }
                     }
@@ -369,6 +385,7 @@ pub async fn close_widget_windows(
 ) -> Result<(), String> {
     for (label, window) in app.webview_windows() {
         if label.starts_with(LABEL_PREFIX) {
+            let _ = window.hide();
             let _ = window.close();
             runner.forget(&label);
         }
@@ -422,6 +439,7 @@ pub fn widget_report_rect(
             h,
             layer: config.layer,
             click_through: config.click_through,
+            interactive: config.interactive,
         },
     );
 
@@ -479,7 +497,7 @@ pub fn widget_set_layer(
     runner.put(window.label(), config.clone());
 
     // 立即落到 Win32，不等主窗口那一圈同步，点完马上就能看到效果
-    desktop::apply_to(&window, layer, config.click_through)?;
+    desktop::apply_to(&window, layer, config.click_through, config.interactive)?;
     runner.patch_layer(window.label(), layer, config.click_through);
 
     let _ = app.emit_to(
@@ -510,6 +528,8 @@ pub async fn widget_close(
         );
     }
     runner.forget(window.label());
+    // 先藏再关：close() 要等 WebView2 把渲染进程拆完，窗口会定格几百毫秒
+    let _ = window.hide();
     let _ = window.close();
     Ok(())
 }

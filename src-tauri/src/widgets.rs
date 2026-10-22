@@ -9,7 +9,7 @@
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,8 +20,12 @@ pub struct InstalledWidget {
     pub source: &'static str,
 }
 
-/// 用户组件目录，不存在时按需创建
-fn user_widgets_dir(app: &AppHandle) -> Result<PathBuf, String> {
+/// 用户组件目录，不存在时按需创建。
+///
+/// `protocol.rs` 也从这里取根目录 —— 组件的静态文件由它负责发出去，
+/// 两边必须是同一个路径，否则「装了但打不开」。
+/// 泛型是为了让协议回调（拿到的是 `AppHandle<R>`）也能直接调。
+pub(crate) fn user_widgets_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let base = app.path().app_data_dir().map_err(|error| error.to_string())?;
     let dir = base.join("widgets");
     if !dir.exists() {
@@ -83,7 +87,9 @@ pub fn install_widget(app: AppHandle, source_dir: String) -> Result<String, Stri
     }
 
     let manifest_text = fs::read_to_string(source.join("manifest.json"))
-        .map_err(|error| format!("读不到 manifest.json：{error}"))?;
+        // 「不是组件目录」这几个字前端会认：拖进来的可能只是随便一个文件夹，
+        // 那种情况不该弹一屏红字
+        .map_err(|error| format!("不是组件目录：读不到 manifest.json（{error}）"))?;
     let manifest: serde_json::Value =
         serde_json::from_str(&manifest_text).map_err(|error| format!("manifest.json 不是合法 JSON：{error}"))?;
 

@@ -14,7 +14,12 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow, LogicalPosition, LogicalSize } from "@tauri-apps/api/window";
+import {
+  availableMonitors,
+  getCurrentWindow,
+  LogicalPosition,
+  LogicalSize,
+} from "@tauri-apps/api/window";
 import "./styles.css";
 import "./widgetHost.css";
 import {
@@ -117,6 +122,76 @@ async function reportRect() {
   });
 }
 
+/*
+ * 拖动按钮在窗口右上角的落点：距右边 30px、距顶边 20px。
+ * 窗口没有窗饰，用户唯一能抓的地方就是那颗按钮 —— 所以"别让它出界"
+ * 就等于"别让组件拖出去回不来"。
+ */
+const ANCHOR_X = 30;
+const ANCHOR_Y = 20;
+/** 锚点至少要留在屏幕内这么多像素，否则点不准 */
+const SCREEN_MARGIN = 24;
+
+interface ScreenBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** 所有显示器的**工作区**矩形，坐标跟 `outerPosition()` 同一套（逻辑像素） */
+async function screenBoxes(scale: number): Promise<ScreenBox[]> {
+  try {
+    const monitors = await availableMonitors();
+    return monitors.map((monitor) => {
+      // 用 workArea 而不是 size：否则组件能停在任务栏底下，按钮被任务栏压住
+      const area = monitor.workArea;
+      const origin = (area?.position ?? monitor.position).toLogical(scale);
+      const size = (area?.size ?? monitor.size).toLogical(scale);
+      return { x: origin.x, y: origin.y, w: size.width, h: size.height };
+    });
+  } catch {
+    // 拿不到显示器信息就别夹了：宁可能拖出去，也不要整个拖不动
+    return [];
+  }
+}
+
+/**
+ * 把窗口夹回"右上角那颗按钮还点得到"的范围。
+ *
+ * 之前完全没有夹：组件拖到屏幕边缘外面，按钮跟着窗口一起出界，
+ * 之后就再也拖不回来，只能手改 state.json。
+ *
+ * 两个刻意的取舍：
+ *   - 只保证锚点在某块屏幕里，不要求窗口完整可见。半截悬在边上是很常见的用法。
+ *   - 按锚点选屏幕，不按窗口矩形。跨屏拖动时窗口大部分还在出发屏上，
+ *     按矩形算会在接缝处把窗口拽回来，手感像卡住。
+ */
+function clampAnchor(x: number, y: number, w: number, screens: ScreenBox[]): { x: number; y: number } {
+  if (screens.length === 0) return { x, y };
+
+  const anchorX = x + w - ANCHOR_X;
+  const anchorY = y + ANCHOR_Y;
+
+  let best = screens[0];
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const screen of screens) {
+    // 锚点到这块屏幕矩形的最短距离（在里面就是 0）
+    const dx = Math.max(screen.x - anchorX, 0, anchorX - (screen.x + screen.w));
+    const dy = Math.max(screen.y - anchorY, 0, anchorY - (screen.y + screen.h));
+    const distance = dx * dx + dy * dy;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = screen;
+    }
+  }
+
+  const targetX = Math.min(Math.max(anchorX, best.x + SCREEN_MARGIN), best.x + best.w - SCREEN_MARGIN);
+  const targetY = Math.min(Math.max(anchorY, best.y + SCREEN_MARGIN), best.y + best.h - SCREEN_MARGIN);
+
+  return { x: x + (targetX - anchorX), y: y + (targetY - anchorY) };
+}
+
 function buildChrome(config: HostConfig) {
   const chrome = document.createElement("div");
   chrome.className = "lw-chrome";
@@ -161,6 +236,9 @@ function buildChrome(config: HostConfig) {
     void (async () => {
       const scale = await win.scaleFactor();
       const start = (await win.outerPosition()).toLogical(scale);
+      const size = (await win.innerSize()).toLogical(scale);
+      // 显示器信息拖一次只取一次：拖拽期间显示器不会变
+      const screens = await screenBoxes(scale);
 
       // 指针事件比 IPC 快，攒到下一帧再发，避免把窗口位置请求堆成队列
       let pending: { dx: number; dy: number } | null = null;
@@ -171,8 +249,9 @@ function buildChrome(config: HostConfig) {
         while (pending) {
           const step = pending;
           pending = null;
+          const target = clampAnchor(start.x + step.dx, start.y + step.dy, size.width, screens);
           await win.setPosition(
-            new LogicalPosition(Math.round(start.x + step.dx), Math.round(start.y + step.dy)),
+            new LogicalPosition(Math.round(target.x), Math.round(target.y)),
           );
         }
         busy = false;
@@ -202,6 +281,7 @@ function buildChrome(config: HostConfig) {
         const scale = await win.scaleFactor();
         const startPos = (await win.outerPosition()).toLogical(scale);
         const startSize = (await win.innerSize()).toLogical(scale);
+        const screens = await screenBoxes(scale);
 
         const apply = async (dx: number, dy: number) => {
           let { x, y } = startPos;
@@ -219,9 +299,18 @@ function buildChrome(config: HostConfig) {
             y = startPos.y + (startSize.height - h);
           }
 
+          // 往右/往下拉大时按钮也会被推出屏幕，同样要夹回来
+          const clamped = clampAnchor(x, y, w, screens);
+
           await win.setSize(new LogicalSize(Math.round(w), Math.round(h)));
-          if (dir.includes("w") || dir.includes("n")) {
-            await win.setPosition(new LogicalPosition(Math.round(x), Math.round(y)));
+          // 只有真的动了位置才 setPosition：从东/南边拉大时不该挪窗口
+          const moved =
+            dir.includes("w") ||
+            dir.includes("n") ||
+            Math.round(clamped.x) !== Math.round(x) ||
+            Math.round(clamped.y) !== Math.round(y);
+          if (moved) {
+            await win.setPosition(new LogicalPosition(Math.round(clamped.x), Math.round(clamped.y)));
           }
         };
 
@@ -265,7 +354,16 @@ function buildChrome(config: HostConfig) {
   });
 
   closeBtn.addEventListener("click", () => {
-    void invoke("widget_close");
+    // 先让窗口自己消失，再走 IPC 去真正销毁。
+    // 只调 window.close() 的话，要等 WebView2 把渲染进程拆完（几百毫秒），
+    // 这段时间窗口还完整地挂在屏幕上 —— 用户感受到的就是"点了没反应"。
+    closeBtn.disabled = true;
+    void win.hide().catch(() => {});
+    void invoke("widget_close").catch(() => {
+      // 真失败了就把窗口放回来，不然它会变成一个看不见又关不掉的幽灵
+      closeBtn.disabled = false;
+      void win.show().catch(() => {});
+    });
   });
 
   document.body.appendChild(chrome);
@@ -292,9 +390,12 @@ async function boot() {
     "display:block;width:100vw;height:100vh;border:0;background:transparent;",
   );
 
-  // 相对应用根解析，dev 下是 http://localhost:1420/，打包后是 tauri://localhost/
+  // entry 是主窗口算好的绝对地址：内置组件走应用源（dev 下是 vite，
+  // 打包后是 tauri 协议），用户组件走 lattice-widget://。
+  // 只有拿到老格式的相对路径时才退回按应用根解析。
   const base = window.location.href.replace(/[^/]*$/, "");
-  iframe.src = base + config.entry;
+  const absolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(config.entry);
+  iframe.src = absolute ? config.entry : base + config.entry;
   document.body.appendChild(iframe);
 
   buildChrome(config);
@@ -331,6 +432,40 @@ async function boot() {
     applyTheme(event.payload === "light" ? "light" : "dark");
     post({ [BRIDGE_TAG]: 1, type: "theme", payload: readThemeTokens() });
   });
+
+  /*
+   * 组件存储被别的实例改了（画布上还有一份同款组件），转告 iframe 去重读。
+   * 不转的话两边各持一份列表，谁后写谁把对方的新增抹掉。
+   */
+  void listen<{ widgetId: string; key: string }>("lattice:widget-store", (event) => {
+    if (event.payload.widgetId !== config.widgetId) return;
+    post({ [BRIDGE_TAG]: 1, type: "store-changed", payload: { key: event.payload.key } });
+  });
+
+  /*
+   * 开机自我纠正。
+   *
+   * 老版本没有夹边界，可能已经把窗口摆到屏幕外了 —— 那种窗口拖不动，
+   * 也没法点按钮收回。这里建窗口时校正一次，顺手把新位置报回去，
+   * 用户升级之后不用手改 state.json 就能把它拉回视野。
+   *
+   * 位置本来就正常时什么也不做，不会看到跳动。
+   */
+  void (async () => {
+    try {
+      const scale = await win.scaleFactor();
+      const position = (await win.outerPosition()).toLogical(scale);
+      const size = (await win.innerSize()).toLogical(scale);
+      const target = clampAnchor(position.x, position.y, size.width, await screenBoxes(scale));
+      if (Math.round(target.x) === Math.round(position.x) && Math.round(target.y) === Math.round(position.y)) {
+        return;
+      }
+      await win.setPosition(new LogicalPosition(Math.round(target.x), Math.round(target.y)));
+      await reportRect();
+    } catch {
+      // 校正失败不影响正常使用，下次投放还会再试
+    }
+  })();
 }
 
 void boot();

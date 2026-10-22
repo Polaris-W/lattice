@@ -41,6 +41,26 @@
       var value = tokens[source];
       if (value) document.documentElement.style.setProperty(THEME_MAP[source], value);
     });
+    syncInputScheme(tokens["--lattice-surface"]);
+  }
+
+  /**
+   * 让原生日期控件的配色跟卡片一致。
+   *
+   * 平台推下来的颜色可能是 hex、rgb() 或者 oklch()，直接解析字符串迟早出错，
+   * 所以丢进一个探针元素，交给 getComputedStyle 归一化成 rgb() 再算亮度。
+   */
+  function syncInputScheme(surface) {
+    var input = document.getElementById("target");
+    if (!surface || !input) return;
+    var probe = document.createElement("span");
+    probe.style.color = surface;
+    document.body.appendChild(probe);
+    var parts = (getComputedStyle(probe).color.match(/[\d.]+/g) || []).map(Number);
+    probe.remove();
+    if (parts.length < 3) return;
+    var luma = 0.299 * parts[0] + 0.587 * parts[1] + 0.114 * parts[2];
+    input.style.colorScheme = luma < 128 ? "dark" : "light";
   }
 
   window.addEventListener("message", function (event) {
@@ -74,7 +94,7 @@
     return value < 10 ? "0" + value : String(value);
   }
 
-  /** 默认目标：下一个 1 月 1 日 */
+  /** 默认目标：下一个 1 月 1 日（含今天） */
   function defaultTarget() {
     var now = new Date();
     return now.getFullYear() + "-01-01" > toDateString(now)
@@ -121,8 +141,10 @@
         var seconds = Math.floor(rest / 1000);
 
         root.classList.toggle("is-done", done);
-        labelEl.textContent = (done ? "已到达 · " : "距离 ") + target.getFullYear() + " 年 " +
-          (target.getMonth() + 1) + " 月 " + target.getDate() + " 日";
+        // 中文的日期单位贴着数字："2027年1月1日"。数字和前面的汉字之间留一个
+        // 空格是中日韩混排的规矩，但 年/月/日 是单位，加了空格就散架了。
+        labelEl.textContent = (done ? "已到达 · " : "距离 ") + target.getFullYear() + "年" +
+          (target.getMonth() + 1) + "月" + target.getDate() + "日";
         daysEl.textContent = String(days);
         clockEl.textContent = pad(hours) + ":" + pad(minutes) + ":" + pad(seconds);
       })

@@ -36,6 +36,7 @@ export function Canvas({ records, installedIds, onDropWidget }: CanvasProps) {
     >
       {placements.length === 0 && (
         <div className="lattice-empty">
+          <div className="lattice-empty-art" aria-hidden />
           {hasInstalled ? (
             <>
               <p className="lattice-empty-title">桌面还是空的</p>

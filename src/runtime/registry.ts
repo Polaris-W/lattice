@@ -6,9 +6,11 @@
  *              构建时由 scripts/widget-index.mjs 生成 index.json
  *   - user   ：用户安装的组件，位于 %APPDATA%/<identifier>/widgets，由 Rust 扫描
  *
- * 已知限制（v0.1）：用户组件的文件在磁盘上、不在前端资源里，
- * 需要 lattice-widget:// 自定义协议才能加载。协议接好之前这类组件
- * 会以 entryUrl = null 返回，UI 会显示"待接入"，而不是白屏。
+ * 两者入口地址的协议不一样，这是这一层最需要注意的地方：
+ *   - bundled 在前端资源里，走应用自己的源（dev 是 vite，打包后是 tauri 协议）
+ *   - user 是运行期出现在磁盘上的文件，走自定义协议 lattice-widget://
+ *     （见 src-tauri/src/protocol.rs）
+ * 两条路都解析成**绝对地址**，下游（画布 iframe、桌面宿主页）直接用，不再拼接。
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -21,8 +23,8 @@ export interface WidgetRecord {
   source: WidgetSource;
   /** 磁盘目录，用于展示与排错 */
   dir: string;
-  /** iframe 可直接加载的地址；null 表示当前还加载不了 */
-  entryUrl: string | null;
+  /** iframe 可直接加载的绝对地址 */
+  entryUrl: string;
 }
 
 export interface WidgetLoadError {
@@ -51,6 +53,31 @@ function assetBase(): string {
   return base.endsWith("/") ? base : `${base}/`;
 }
 
+/**
+ * 应用自己的源。
+ *
+ * 主窗口和桌面宿主页同源（宿主页是 `WebviewUrl::App("widget-host.html")`），
+ * 所以这里算出来的地址在两边都能用。极端情况下 `origin` 是字符串 `"null"`
+ * （比如以 file:// 打开），那就退回相对路径。
+ */
+function appOrigin(): string {
+  if (typeof window === "undefined") return "";
+  const { origin } = window.location;
+  return origin === "null" ? "" : origin;
+}
+
+/**
+ * 自定义协议的前缀。
+ *
+ * Windows / Android 上 Tauri 把自定义 scheme 挂在 `http://<scheme>.localhost/`，
+ * 其它平台才是 `<scheme>://localhost/`。写错了的后果不是报错，是 iframe 白屏。
+ */
+export function widgetSchemeBase(): string {
+  const windows =
+    typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
+  return windows ? `http://lattice-widget.localhost/` : `lattice-widget://localhost/`;
+}
+
 export async function loadRegistry(): Promise<RegistrySnapshot> {
   const [bundled, user] = await Promise.all([loadBundled(), loadUser()]);
 
@@ -64,7 +91,7 @@ export async function loadRegistry(): Promise<RegistrySnapshot> {
         manifest,
         source: raw.source,
         dir: raw.dir,
-        entryUrl: raw.source === "bundled" ? resolveEntryUrl(manifest) : null,
+        entryUrl: resolveEntryUrl(manifest, raw.source),
       });
     } catch (error) {
       errors.push({
@@ -78,9 +105,20 @@ export async function loadRegistry(): Promise<RegistrySnapshot> {
   return { widgets, errors };
 }
 
-/** 内置组件的入口地址 */
-export function resolveEntryUrl(manifest: WidgetManifest): string {
-  return `${assetBase()}widgets/${manifest.id}/${manifest.entry.replace(/^\/+/, "")}`;
+/**
+ * 组件的入口地址（绝对地址，可以直接塞进 iframe.src）。
+ *
+ * - bundled：`<应用源>/widgets/<id>/<entry>`
+ * - user   ：`<协议前缀><id>/<entry>` —— 第一段是组件 id，
+ *            协议处理器据此定位目录（见 protocol.rs 的 split_path）
+ *
+ * 注意组件内部的相对引用：`./style.css` 会解析成 `/<id>/style.css`，
+ * 仍然落在自己的目录里，所以组件作者只管用相对路径就行。
+ */
+export function resolveEntryUrl(manifest: WidgetManifest, source: WidgetSource): string {
+  const entry = manifest.entry.replace(/^\/+/, "");
+  if (source === "user") return `${widgetSchemeBase()}${manifest.id}/${entry}`;
+  return `${appOrigin()}${assetBase()}widgets/${manifest.id}/${entry}`;
 }
 
 async function loadBundled(): Promise<RawInstalledWidget[]> {

@@ -1,0 +1,74 @@
+:root {
+  --surface: #fbfaf8;
+  --fg: #1c1c1a;
+  --muted: #6a6a63;
+  --accent: #0f6e56;
+  --border: rgba(0, 0, 0, 0.09);
+  --radius: 10px;
+  --font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--font);
+  -webkit-font-smoothing: auto;
+}
+
+.counter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 100%;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.counter-label {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.counter-value {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.counter-btn {
+  margin-top: 8px;
+  padding: 5px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.counter-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.counter-btn:active {
+  transform: scale(0.97);
+}

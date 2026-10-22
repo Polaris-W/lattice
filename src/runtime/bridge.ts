@@ -126,21 +126,21 @@ export async function handleBridgeRequest(
 const STORAGE_PREFIX = "lattice.widget.store.";
 
 /**
- * 组件私有存储：一个包一个 JSON 文件，整块读整块写。
+ * 组件私有存储：一个包一个 JSON 文件。
  *
- * 浏览器预览里退回 localStorage（按包存一份 map），桌面端走 Rust 落盘。
- * 加一层内存缓存，免得组件每次 set 都往返一次 IPC。
+ * 这里刻意**不留内存缓存**。早先有一份模块级 Map，看起来省了几次 IPC，
+ * 代价是每个 webview 各持一份、永不失效：在桌面窗口里写完便签，回主窗口
+ * 看到的还是旧内容；更糟的是主窗口再存一次，会拿那份旧 map 把桌面刚写进去
+ * 的内容整块盖掉 —— 旧值赢了新值。
+ *
+ * 现在读一律读盘（文件只有几 KB），写一律走 `widget_store_update` 的键级
+ * 原子修改，让"谁后写谁生效"由文件系统的完成顺序决定，而不是由缓存决定。
  */
-const storeCache = new Map<string, Record<string, unknown>>();
-
 function bridgeInTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-async function loadStore(widgetId: string): Promise<Record<string, unknown>> {
-  const cached = storeCache.get(widgetId);
-  if (cached) return cached;
-
+async function readStore(widgetId: string): Promise<Record<string, unknown>> {
   let raw: string | null = null;
   if (bridgeInTauri()) {
     raw = await invoke<string | null>("widget_store_read", { widgetId });
@@ -148,29 +148,51 @@ async function loadStore(widgetId: string): Promise<Record<string, unknown>> {
     raw = localStorage.getItem(`${STORAGE_PREFIX}${widgetId}`);
   }
 
-  let map: Record<string, unknown> = {};
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        map = parsed as Record<string, unknown>;
-      }
-    } catch {
-      map = {};
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
     }
+  } catch {
+    /* 文件被外部改坏了就当空的，别让组件白屏 */
   }
-  storeCache.set(widgetId, map);
-  return map;
+  return {};
 }
 
-async function saveStore(widgetId: string, map: Record<string, unknown>): Promise<void> {
-  storeCache.set(widgetId, map);
-  const json = JSON.stringify(map);
+/**
+ * 改一个键。`value === null` 表示删除。
+ *
+ * 桌面端交给 Rust 在锁里做读-改-写，所以主窗口和桌面窗口同时保存时，
+ * 两边改的是不同键也不会互相抹掉。浏览器预览没有这个原语，只能自己
+ * 读-改-写 —— 单窗口内够用。
+ */
+async function patchStore(widgetId: string, key: string, value: unknown): Promise<void> {
   if (bridgeInTauri()) {
-    await invoke("widget_store_write", { widgetId, json });
-  } else {
-    localStorage.setItem(`${STORAGE_PREFIX}${widgetId}`, json);
+    await invoke("widget_store_update", { widgetId, key, value });
+    return;
   }
+  await patchLocal(widgetId, key, value);
+}
+
+/**
+ * 浏览器预览下的读-改-写。
+ *
+ * localStorage 没有原子合并，两个并发写照样会丢键，所以按 widgetId 串一条
+ * Promise 链。桌面端不需要这段 —— 那边由 Rust 的锁负责。
+ */
+const localPatchQueue = new Map<string, Promise<void>>();
+
+function patchLocal(widgetId: string, key: string, value: unknown): Promise<void> {
+  const previous = localPatchQueue.get(widgetId) ?? Promise.resolve();
+  const next = previous.then(async () => {
+    const map = await readStore(widgetId);
+    if (value === null) delete map[key];
+    else map[key] = value;
+    localStorage.setItem(`${STORAGE_PREFIX}${widgetId}`, JSON.stringify(map));
+  });
+  localPatchQueue.set(widgetId, next.catch(() => undefined));
+  return next;
 }
 
 defineMethod("clock.now", "clock", () => ({
@@ -182,25 +204,21 @@ defineMethod("clock.now", "clock", () => ({
 
 defineMethod("storage.get", "storage", async (params, ctx) => {
   const key = readKey(params);
-  const map = await loadStore(ctx.widgetId);
+  const map = await readStore(ctx.widgetId);
   return key in map ? map[key] : null;
 });
 
 defineMethod("storage.set", "storage", async (params, ctx) => {
   const key = readKey(params);
+  // 存 null 等于删掉这个键：组件读回来同样是 null，但文件里不会留下空壳
   const value = (params as { value?: unknown }).value ?? null;
-  const map = await loadStore(ctx.widgetId);
-  await saveStore(ctx.widgetId, { ...map, [key]: value });
+  await patchStore(ctx.widgetId, key, value);
   return { ok: true };
 });
 
 defineMethod("storage.remove", "storage", async (params, ctx) => {
   const key = readKey(params);
-  const map = await loadStore(ctx.widgetId);
-  if (!(key in map)) return { ok: true };
-  const next = { ...map };
-  delete next[key];
-  await saveStore(ctx.widgetId, next);
+  await patchStore(ctx.widgetId, key, null);
   return { ok: true };
 });
 

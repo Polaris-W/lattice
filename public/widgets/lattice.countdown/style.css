@@ -5,7 +5,8 @@
   --accent: #5dcaa5;
   --border: rgba(255, 255, 255, 0.12);
   --radius: 10px;
-  --font: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  --font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI",
+    "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif;
 }
 
 * {
@@ -34,7 +35,8 @@ body {
 }
 
 .cd-label {
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.4;
   color: var(--muted);
   max-width: 100%;
   overflow: hidden;
@@ -45,47 +47,56 @@ body {
 .cd-days {
   display: flex;
   align-items: baseline;
-  gap: 4px;
+  gap: 3px;
   line-height: 1;
 }
 
 .cd-days span {
   font-size: 44px;
   font-weight: 500;
-  letter-spacing: 0.01em;
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
 }
 
+/* "天" 是单位不是正文，贴着数字站，字号压到 13px 才不像标题 */
 .cd-days small {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
 }
 
 .cd-clock {
   font-size: 13px;
+  line-height: 1.3;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.02em;
 }
 
 .cd-pick {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-  font-size: 10px;
+  gap: 7px;
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.3;
   color: var(--muted);
 }
 
+/*
+ * 原生日期控件的外观由 color-scheme 决定：深色卡片上不声明 dark，
+ * 日历图标和日期文字就是黑的，几乎看不见；浅色卡片上声明 dark 又会
+ * 反过来变成一块深色药丸。所以这个值不写在 CSS 里，由 widget.js
+ * 按平台推下来的 --surface 亮度动态设置。
+ */
 .cd-pick input {
-  padding: 1px 6px;
+  padding: 3px 7px;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: transparent;
   color: var(--fg);
   font-family: inherit;
-  font-size: 10px;
-  color-scheme: dark;
+  font-size: 11px;
+  line-height: 1.3;
 }
 
 .cd.is-done .cd-days span {

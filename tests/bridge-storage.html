@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>bridge storage test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      import { handleBridgeRequest } from "/src/runtime/bridge.ts";
+
+      const WIDGET = "lattice.__test";
+      const KEY = "lattice.widget.store." + WIDGET;
+      localStorage.removeItem(KEY);
+
+      function call(method, params) {
+        return new Promise((resolve) => {
+          handleBridgeRequest(
+            { __lattice: 1, type: "request", id: 1, method, params },
+            {
+              instanceId: "test",
+              widgetId: WIDGET,
+              granted: new Set(["storage"]),
+              reply: (payload) => resolve(payload),
+              close: () => {},
+            },
+          );
+        });
+      }
+
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+
+      // 1. 20 个并发写不同键，一个都不能丢
+      await Promise.all(
+        Array.from({ length: 20 }, (_, index) =>
+          call("storage.set", { key: "k" + index, value: index }),
+        ),
+      );
+      const map = JSON.parse(localStorage.getItem(KEY) || "{}");
+      const missing = Array.from({ length: 20 }, (_, i) => "k" + i).filter((k) => !(k in map));
+      log(missing.length === 0, `并发写 20 个键，丢失 ${missing.length} 个`);
+
+      // 2. 同一个键连写两次，后写的必须赢
+      await call("storage.set", { key: "text", value: "旧内容" });
+      await call("storage.set", { key: "text", value: "新内容" });
+      const read = await call("storage.get", { key: "text" });
+      log(read.result === "新内容", `同键后写覆盖前写，读到「${read.result}」`);
+
+      // 3. 模拟"另一个窗口"直接改盘：读必须看到新值（没有进程内缓存）
+      localStorage.setItem(
+        KEY,
+        JSON.stringify({ ...JSON.parse(localStorage.getItem(KEY) || "{}"), text: "别处写的" }),
+      );
+      const fresh = await call("storage.get", { key: "text" });
+      log(fresh.result === "别处写的", `跨窗口读到最新值，读到「${fresh.result}」`);
+
+      // 4. storage.remove 要真的把键删掉
+      await call("storage.remove", { key: "k0" });
+      const afterRemove = await call("storage.get", { key: "k0" });
+      log(afterRemove.result === null, `remove 之后读到 ${JSON.stringify(afterRemove.result)}`);
+
+      // 5. 存 null 等于删除，且不影响别的键
+      await call("storage.set", { key: "k1", value: null });
+      const left = JSON.parse(localStorage.getItem(KEY) || "{}");
+      log(!("k1" in left) && "k2" in left, `存 null 删键，其余键还在（k2=${left.k2}）`);
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+
+      localStorage.removeItem(KEY);
+    </script>
+  </body>
+</html>

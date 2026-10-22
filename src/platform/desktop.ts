@@ -24,6 +24,8 @@ export interface WidgetWindowSpec {
   minW: number;
   minH: number;
   layer: "desktop" | "top";
+  /** 组件要不要键盘焦点，见 manifest.interactive */
+  interactive: boolean;
   clickThrough: boolean;
   pinned: boolean;
   /** 平台当前解析出的明暗，桌面窗口据此上色 */
@@ -67,14 +69,16 @@ export function buildSpecs(
   for (const placement of placements) {
     const record = records.get(placement.widgetId);
     if (!record) continue;
-    const entry = record.manifest.entry.replace(/^\/+/, "");
+    // 入口是绝对地址：内置组件走应用源，用户组件走 lattice-widget://。
+    // 宿主页拿到什么就加载什么，不再自己拼前缀（拼错就是白屏，且很难查）
+    const entry = record.entryUrl;
     // 桌面上摆过就以那次为准 —— 用户拖到哪儿就该待在哪儿，
     // 画布坐标只在第一次投放时用来给个初始位置
     const placed = desktopRects[placement.instanceId];
     specs.push({
       instanceId: placement.instanceId,
       widgetId: placement.widgetId,
-      entry: `widgets/${placement.widgetId}/${entry}`,
+      entry,
       permissions: grants[placement.widgetId] ?? [],
       x: Math.round(placed ? placed.x : origin.x + placement.x),
       y: Math.round(placed ? placed.y : origin.y + placement.y),
@@ -83,6 +87,7 @@ export function buildSpecs(
       minW: record.manifest.size.minW,
       minH: record.manifest.size.minH,
       layer: placement.layer,
+      interactive: record.manifest.interactive,
       clickThrough: placement.clickThrough,
       pinned: placement.pinned ?? false,
       theme,

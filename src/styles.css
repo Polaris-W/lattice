@@ -1,42 +1,66 @@
 /*
  * 棂 / Lattice —— 平台样式层
  *
- * 刻意不引入 Tailwind：平台 UI 是定制的三栏工作台，用一套 CSS 变量 + 少量语义类
- * 更可控，也少一个构建期依赖。组件（第三方）不应该依赖平台的类名，
- * 它们只通过 theme.get 拿到下面这些变量。
+ * 刻意不引入 Tailwind，也不引入 UI 组件库：平台 UI 是一块定制的三栏工作台，
+ * 用一套 CSS 变量 + 少量语义类更可控，也少一个构建期依赖。
+ * 组件（第三方）不应该依赖平台的类名，它们只通过 theme.get 拿到 --lattice-* 变量。
+ *
+ * 层次约定（改样式前先看这个）：
+ *   1. 三层表面：bg（画布） < surface（面板） < surface-2 / surface-3（卡片、控件）。
+ *      相邻两层至少差一档明度，否则整屏会糊成一片。
+ *   2. 圆角只有四档：6 / 10 / 14 / 999。不要出现第五种。
+ *   3. 阴影只给"浮起来的东西"：卡片 hover、选中的组件、弹出的提示。
+ *      面板和按钮靠边框分层，不靠阴影。
+ *   4. 字号只有五档：18 / 14 / 13 / 12 / 11。提示文字用 11，正文 13。
  */
 
 :root,
 :root[data-theme="light"] {
-  --lattice-bg: #f4f3ef;
-  --lattice-surface: #ffffff;
-  --lattice-surface-2: #eceae4;
-  --lattice-text: #1d1d1b;
-  --lattice-text-muted: #6d6d66;
-  --lattice-border: rgba(0, 0, 0, 0.12);
-  --lattice-border-strong: rgba(0, 0, 0, 0.24);
+  --lattice-bg: #e8e6e0;
+  --lattice-surface: #fbfaf8;
+  --lattice-surface-2: #f4f2ec;
+  --lattice-surface-3: #eae7df;
+  --lattice-text: #1c1c1a;
+  --lattice-text-muted: #6a6a63;
+  --lattice-text-faint: #94948c;
+  --lattice-border: rgba(0, 0, 0, 0.09);
+  --lattice-border-strong: rgba(0, 0, 0, 0.18);
+  --lattice-grid-dot: rgba(0, 0, 0, 0.13);
   --lattice-accent: #0f6e56;
   --lattice-accent-soft: rgba(15, 110, 86, 0.1);
+  --lattice-accent-contrast: #ffffff;
   --lattice-danger: #a32d2d;
+  --lattice-danger-soft: rgba(163, 45, 45, 0.08);
+  --lattice-shadow-1: 0 1px 2px rgba(24, 22, 16, 0.06), 0 1px 1px rgba(24, 22, 16, 0.04);
+  --lattice-shadow-2: 0 10px 26px rgba(24, 22, 16, 0.1), 0 2px 6px rgba(24, 22, 16, 0.06);
   --lattice-radius: 10px;
-  --lattice-font: system-ui, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  --lattice-font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI",
+    "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif;
   --lattice-mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
   color-scheme: light;
 }
 
 :root[data-theme="dark"] {
-  --lattice-bg: #141417;
-  --lattice-surface: #1d1d21;
-  --lattice-surface-2: #26262b;
-  --lattice-text: #ecebe6;
-  --lattice-text-muted: #97978f;
-  --lattice-border: rgba(255, 255, 255, 0.1);
-  --lattice-border-strong: rgba(255, 255, 255, 0.2);
+  --lattice-bg: #0d0d10;
+  --lattice-surface: #15151a;
+  --lattice-surface-2: #1c1c22;
+  --lattice-surface-3: #26262e;
+  --lattice-text: #e9e8e3;
+  --lattice-text-muted: #9a9a92;
+  --lattice-text-faint: #6d6d67;
+  --lattice-border: rgba(255, 255, 255, 0.07);
+  --lattice-border-strong: rgba(255, 255, 255, 0.16);
+  --lattice-grid-dot: rgba(255, 255, 255, 0.085);
   --lattice-accent: #5dcaa5;
-  --lattice-accent-soft: rgba(93, 202, 165, 0.14);
+  --lattice-accent-soft: rgba(93, 202, 165, 0.13);
+  --lattice-accent-contrast: #06231b;
   --lattice-danger: #f09595;
+  --lattice-danger-soft: rgba(240, 149, 149, 0.1);
+  --lattice-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --lattice-shadow-2: 0 12px 30px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.3);
   --lattice-radius: 10px;
-  --lattice-font: system-ui, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  --lattice-font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI",
+    "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif;
   --lattice-mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
   color-scheme: dark;
 }
@@ -68,65 +92,139 @@ button {
   color: inherit;
 }
 
+:focus-visible {
+  outline: 2px solid var(--lattice-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
 .lattice-mono {
   font-family: var(--lattice-mono);
   font-size: 11px;
+  letter-spacing: -0.01em;
+}
+
+/* 细滚动条：默认那条在深色里像一块补丁 */
+.lattice-panel-body,
+.lattice-canvas {
+  scrollbar-width: thin;
+  scrollbar-color: var(--lattice-border-strong) transparent;
+}
+
+.lattice-panel-body::-webkit-scrollbar,
+.lattice-canvas::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.lattice-panel-body::-webkit-scrollbar-thumb,
+.lattice-canvas::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--lattice-border-strong);
+  background-clip: content-box;
+}
+
+.lattice-panel-body::-webkit-scrollbar-track,
+.lattice-canvas::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* ---------- 外壳 ---------- */
 
 .lattice-shell {
   display: grid;
-  grid-template-rows: 48px 1fr;
+  grid-template-rows: 56px 1fr;
   height: 100%;
 }
 
 .lattice-topbar {
+  position: relative;
+  z-index: 5;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 0 16px;
+  gap: 20px;
+  padding: 0 18px;
   border-bottom: 1px solid var(--lattice-border);
   background: var(--lattice-surface);
 }
 
 .lattice-brand {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 
+/* 品牌标记：2×2 的"窗格"，就是产品名里那个棂 */
 .lattice-brand-mark {
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-  background: var(--lattice-accent);
-  transform: translateY(-1px);
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background-color: var(--lattice-accent-soft);
+  background-image:
+    radial-gradient(circle at 29% 29%, var(--lattice-accent) 2.2px, transparent 2.8px),
+    radial-gradient(circle at 71% 29%, var(--lattice-accent) 2.2px, transparent 2.8px),
+    radial-gradient(circle at 29% 71%, var(--lattice-accent) 2.2px, transparent 2.8px),
+    radial-gradient(circle at 71% 71%, var(--lattice-accent) 2.2px, transparent 2.8px);
+  box-shadow: inset 0 0 0 1px var(--lattice-border);
 }
 
 .lattice-brand-name {
   font-size: 15px;
   font-weight: 500;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
 }
 
 .lattice-brand-sub {
-  font-size: 11px;
-  color: var(--lattice-text-muted);
-  letter-spacing: 0.14em;
+  padding-top: 1px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
+  color: var(--lattice-text-faint);
+  line-height: 1.2;
 }
 
 .lattice-topbar-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+}
+
+/* 计数是一块"读数"，不是文案，所以用等宽 + 胶囊底 */
+.lattice-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--lattice-border);
+  border-radius: 999px;
+  background: var(--lattice-surface-2);
+  color: var(--lattice-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.lattice-stat b {
+  font-weight: 500;
+  color: var(--lattice-text);
+}
+
+.lattice-stat-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--lattice-accent);
 }
 
 .lattice-main {
   display: grid;
-  grid-template-columns: 268px minmax(0, 1fr) 296px;
+  grid-template-columns: 280px minmax(0, 1fr) 320px;
   min-height: 0;
 }
 
@@ -152,30 +250,37 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--lattice-border);
+  flex: none;
+  padding: 14px 16px 12px;
 }
 
 .lattice-panel-title {
   margin: 0;
   font-size: 13px;
   font-weight: 500;
+  letter-spacing: 0.02em;
 }
 
 .lattice-panel-count {
-  font-family: var(--lattice-mono);
-  font-size: 11px;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--lattice-surface-2);
   color: var(--lattice-text-muted);
+  font-family: var(--lattice-mono);
+  font-size: 10px;
+  line-height: 18px;
+  text-align: center;
 }
 
 .lattice-panel-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 12px;
+  padding: 0 12px 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 /* ---------- 组件卡片 ---------- */
@@ -183,61 +288,105 @@ button {
 .lattice-card {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 9px;
   width: 100%;
-  padding: 10px 12px;
+  padding: 12px;
   text-align: left;
   cursor: grab;
   user-select: none;
   border: 1px solid var(--lattice-border);
-  border-radius: var(--lattice-radius);
+  border-radius: 14px;
   background: var(--lattice-surface-2);
-  transition: border-color 0.12s ease, background 0.12s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
 }
 
 .lattice-card:hover {
   border-color: var(--lattice-border-strong);
-  background: var(--lattice-surface);
+  background: var(--lattice-surface-3);
+  box-shadow: var(--lattice-shadow-2);
+  transform: translateY(-1px);
 }
 
 .lattice-card:active {
   cursor: grabbing;
+  transform: none;
 }
 
 .lattice-card-top {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+/* 没有图标就造一个：名字首字放在色块里，卡片立刻有了视觉锚点 */
+.lattice-card-glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--lattice-accent-soft);
+  color: var(--lattice-accent);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.lattice-card.is-available .lattice-card-glyph {
+  background: var(--lattice-surface-3);
+  color: var(--lattice-text-muted);
+}
+
+.lattice-card-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
 }
 
 .lattice-card-name {
   font-size: 13px;
   font-weight: 500;
+  line-height: 1.35;
+}
+
+.lattice-card-id {
+  overflow: hidden;
+  color: var(--lattice-text-faint);
+  font-family: var(--lattice-mono);
+  font-size: 10px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lattice-card-desc {
   margin: 0;
   font-size: 12px;
   color: var(--lattice-text-muted);
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .lattice-card-meta {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  color: var(--lattice-text-muted);
+  color: var(--lattice-text-faint);
 }
 
 .lattice-chip {
   flex: none;
-  padding: 1px 6px;
+  padding: 1px 7px;
   border: 1px solid var(--lattice-border);
   border-radius: 999px;
   font-size: 10px;
-  line-height: 1.6;
+  line-height: 16px;
   color: var(--lattice-text-muted);
   white-space: nowrap;
 }
@@ -249,7 +398,8 @@ button {
 }
 
 .lattice-chip.is-warn {
-  border-color: var(--lattice-danger);
+  border-color: transparent;
+  background: var(--lattice-danger-soft);
   color: var(--lattice-danger);
 }
 
@@ -261,10 +411,11 @@ button {
 
 .lattice-perm {
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: 6px;
   background: var(--lattice-accent-soft);
   color: var(--lattice-accent);
   font-size: 10px;
+  line-height: 16px;
 }
 
 /* 未安装的包：虚线边、无底色，视觉上明确"还不在你的桌面里" */
@@ -272,10 +423,12 @@ button {
   cursor: pointer;
   border-style: dashed;
   background: transparent;
+  box-shadow: none;
 }
 
-.lattice-card.is-available:active {
-  cursor: pointer;
+.lattice-card.is-available:hover {
+  border-color: var(--lattice-accent);
+  background: var(--lattice-accent-soft);
 }
 
 .lattice-card-actions {
@@ -283,22 +436,23 @@ button {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 .lattice-link-btn {
-  padding: 0;
+  padding: 2px 4px;
   border: none;
+  border-radius: 6px;
   background: none;
   color: var(--lattice-text-muted);
   font: inherit;
   font-size: 11px;
   cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  transition: color 0.12s ease, background 0.12s ease;
 }
 
 .lattice-link-btn:hover {
+  background: var(--lattice-danger-soft);
   color: var(--lattice-danger);
 }
 
@@ -309,8 +463,8 @@ button {
 }
 
 .lattice-lib-section + .lattice-lib-section {
-  margin-top: 4px;
-  padding-top: 12px;
+  margin-top: 2px;
+  padding-top: 14px;
   border-top: 1px solid var(--lattice-border);
 }
 
@@ -319,33 +473,108 @@ button {
   align-items: center;
   gap: 6px;
   margin: 0;
+  padding: 0 2px;
   font-size: 11px;
   font-weight: 500;
-  color: var(--lattice-text-muted);
+  letter-spacing: 0.06em;
+  color: var(--lattice-text-faint);
 }
 
 .lattice-lib-section-title span {
   padding: 0 5px;
   border-radius: 999px;
   background: var(--lattice-surface-2);
+  font-family: var(--lattice-mono);
   font-size: 10px;
+  line-height: 15px;
+  color: var(--lattice-text-muted);
 }
 
 .lattice-lib-note {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
-  padding: 10px 12px;
-  border: 1px dashed var(--lattice-border);
-  border-radius: var(--lattice-radius);
+  gap: 8px;
+  padding: 14px;
+  border: 1px dashed var(--lattice-border-strong);
+  border-radius: 14px;
+  background: var(--lattice-surface-2);
 }
 
 .lattice-lib-note-title {
-  margin: 0 0 4px;
-  font-size: 12px;
+  margin: 0;
+  font-size: 13px;
   font-weight: 500;
   color: var(--lattice-text);
+}
+
+/*
+ * 组件库头部多了一颗「打开目录」按钮。
+ * 三件东西不能用 space-between：那样计数会飘到正中间。
+ * 改成标题 + 计数贴左，按钮靠右（计数 margin-right:auto 把它顶过去）。
+ */
+.lattice-panel-left .lattice-panel-head {
+  justify-content: flex-start;
+}
+
+.lattice-panel-left .lattice-panel-head .lattice-panel-count {
+  margin-right: auto;
+}
+
+/* 安装结果提示：成功是绿的一闪就过，失败留着让人读完 */
+.lattice-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex: none;
+  margin: 0 16px 10px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.lattice-notice.is-ok {
+  background: var(--lattice-accent-soft);
+  color: var(--lattice-text);
+}
+
+.lattice-notice.is-error {
+  background: var(--lattice-danger-soft);
+  color: var(--lattice-danger);
+}
+
+.lattice-notice-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 组件的报错里常带长路径，别把面板撑破 */
+  overflow-wrap: anywhere;
+}
+
+.lattice-notice-close {
+  flex: none;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.lattice-notice-close:hover {
+  opacity: 1;
+}
+
+/* 面板底部常驻的一行提示：告诉用户还有拖放这条路 */
+.lattice-lib-drop {
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px dashed var(--lattice-border);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--lattice-text-faint);
 }
 
 /* ---------- 画布 ---------- */
@@ -353,14 +582,17 @@ button {
 .lattice-canvas {
   position: relative;
   overflow: auto;
-  background-color: var(--lattice-bg);
-  background-image: radial-gradient(var(--lattice-border) 1px, transparent 1px);
-  background-size: 8px 8px;
   min-height: 0;
+  background-color: var(--lattice-bg);
+  /* 16px 的点阵比 8px 安静得多，8px 那版远看像一层噪点 */
+  background-image: radial-gradient(var(--lattice-grid-dot) 1px, transparent 1px);
+  background-size: 16px 16px;
+  background-position: 0 0;
+  box-shadow: inset 0 1px 0 var(--lattice-border);
 }
 
-.lattice-canvas.has-grid {
-  background-size: 8px 8px;
+.lattice-canvas:not(.has-grid) {
+  background-image: none;
 }
 
 .lattice-empty {
@@ -370,21 +602,62 @@ button {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
+  padding: 24px;
+  text-align: center;
   pointer-events: none;
+}
+
+/* 一块空着的"窗格"：十字把画布分成四格，就是产品名里那个棂 */
+.lattice-empty-art {
+  position: relative;
+  width: 132px;
+  height: 92px;
+  margin-bottom: 22px;
+  border: 1px dashed var(--lattice-border-strong);
+  border-radius: 16px;
+  background-image:
+    linear-gradient(
+      90deg,
+      transparent calc(50% - 0.5px),
+      var(--lattice-border-strong) calc(50% - 0.5px),
+      var(--lattice-border-strong) calc(50% + 0.5px),
+      transparent calc(50% + 0.5px)
+    ),
+    linear-gradient(
+      0deg,
+      transparent calc(50% - 0.5px),
+      var(--lattice-border-strong) calc(50% - 0.5px),
+      var(--lattice-border-strong) calc(50% + 0.5px),
+      transparent calc(50% + 0.5px)
+    );
+}
+
+/* 四格里亮一格，暗示"这里还缺一个组件" */
+.lattice-empty-art::after {
+  content: "";
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: calc(50% - 2px);
+  height: calc(50% - 2px);
+  border-radius: 0 0 14px 0;
+  background: var(--lattice-accent-soft);
 }
 
 .lattice-empty-title {
   margin: 0;
   font-size: 14px;
-  color: var(--lattice-text-muted);
+  font-weight: 500;
+  color: var(--lattice-text);
 }
 
 .lattice-empty-hint {
+  max-width: 320px;
   margin: 0;
   font-size: 12px;
+  line-height: 1.65;
   color: var(--lattice-text-muted);
-  opacity: 0.75;
 }
 
 /* ---------- 组件实例 ---------- */
@@ -396,49 +669,25 @@ button {
   border: 1px solid var(--lattice-border);
   border-radius: 12px;
   background: var(--lattice-surface);
+  box-shadow: var(--lattice-shadow-1);
   overflow: hidden;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.lattice-widget:hover {
+  border-color: var(--lattice-border-strong);
 }
 
 .lattice-widget.is-selected {
   border-color: var(--lattice-accent);
-  box-shadow: 0 0 0 1px var(--lattice-accent);
+  box-shadow:
+    0 0 0 2px var(--lattice-accent-soft),
+    0 0 0 1px var(--lattice-accent),
+    var(--lattice-shadow-2);
 }
 
 .lattice-widget.is-top {
   z-index: 20;
-}
-
-/* 组件撞到未授权权限时的就地提示 —— 比让用户去右边面板找开关更直接 */
-.lattice-perm-prompt {
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: 8px;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 5px 6px 5px 9px;
-  border: 1px solid var(--lattice-accent);
-  border-radius: 8px;
-  background: var(--lattice-surface);
-  box-shadow: 0 4px 14px rgb(0 0 0 / 18%);
-}
-
-.lattice-perm-prompt-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  font-size: 11px;
-  color: var(--lattice-text);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.lattice-perm-prompt .lattice-btn {
-  flex: none;
-  white-space: nowrap;
 }
 
 .lattice-widget-bar {
@@ -446,30 +695,31 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  height: 22px;
-  padding: 0 8px;
   flex: none;
+  height: 26px;
+  padding: 0 9px;
   cursor: move;
+  user-select: none;
   background: var(--lattice-surface-2);
   border-bottom: 1px solid var(--lattice-border);
-  user-select: none;
 }
 
 .lattice-widget-title {
-  font-size: 11px;
-  color: var(--lattice-text-muted);
   overflow: hidden;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--lattice-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .lattice-widget-frame {
+  display: block;
   flex: 1;
   width: 100%;
+  min-height: 0;
   border: 0;
   background: transparent;
-  display: block;
-  min-height: 0;
   /* 同 widgetHost.css：不重置的话，平台的 color-scheme 会继承进 iframe，
      让组件文档的画布变成不透明底色，卡片底色和深色主题全都透不出来 */
   color-scheme: normal;
@@ -492,9 +742,36 @@ button {
   );
 }
 
+.lattice-widget.is-selected .lattice-resize-handle {
+  background: linear-gradient(
+    135deg,
+    transparent 0 45%,
+    var(--lattice-accent) 45% 55%,
+    transparent 55% 70%,
+    var(--lattice-accent) 70% 80%,
+    transparent 80%
+  );
+}
+
 .lattice-widget.is-broken {
   border-style: dashed;
   border-color: var(--lattice-danger);
+  box-shadow: none;
+}
+
+.lattice-broken-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--lattice-danger);
+}
+
+.lattice-broken-title {
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .lattice-pending {
@@ -514,161 +791,370 @@ button {
   color: var(--lattice-danger);
 }
 
-.lattice-broken-body {
+/* 组件撞到未授权权限时的就地提示 —— 比让用户去右边面板找开关更直接 */
+.lattice-perm-prompt {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  z-index: 5;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
   align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: var(--lattice-danger);
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 6px 6px 10px;
+  border: 1px solid var(--lattice-accent);
+  border-radius: 10px;
+  background: var(--lattice-surface-3);
+  box-shadow: var(--lattice-shadow-2);
 }
 
-.lattice-broken-title {
-  font-size: 12px;
+.lattice-perm-prompt-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--lattice-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lattice-perm-prompt .lattice-btn {
+  flex: none;
+  white-space: nowrap;
 }
 
 /* ---------- 表单控件 ---------- */
 
 .lattice-btn {
-  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
   border: 1px solid var(--lattice-border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--lattice-surface-2);
+  box-shadow: var(--lattice-shadow-1);
   cursor: pointer;
-  transition: border-color 0.12s ease;
+  font-size: 12px;
+  white-space: nowrap;
+  transition:
+    background 0.13s ease,
+    border-color 0.13s ease,
+    color 0.13s ease,
+    transform 0.06s ease;
 }
 
-.lattice-btn:hover {
+.lattice-btn:hover:not(:disabled) {
   border-color: var(--lattice-border-strong);
+  background: var(--lattice-surface-3);
+}
+
+.lattice-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.lattice-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .lattice-btn.is-active {
   border-color: var(--lattice-accent);
-  color: var(--lattice-accent);
   background: var(--lattice-accent-soft);
+  color: var(--lattice-accent);
 }
 
 .lattice-btn.is-danger {
   color: var(--lattice-danger);
 }
 
+.lattice-btn.is-danger:hover:not(:disabled) {
+  border-color: var(--lattice-danger);
+  background: var(--lattice-danger-soft);
+}
+
 .lattice-btn.is-small {
-  padding: 3px 10px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
   font-size: 11px;
 }
 
 .lattice-btn.is-primary {
   border-color: transparent;
   background: var(--lattice-accent);
-  color: var(--lattice-accent-contrast, #0b1f19);
+  color: var(--lattice-accent-contrast);
   font-weight: 500;
 }
 
-.lattice-btn.is-primary:hover {
+.lattice-btn.is-primary:hover:not(:disabled) {
   border-color: transparent;
-  filter: brightness(1.06);
+  background: var(--lattice-accent);
+  filter: brightness(1.08);
 }
 
 .lattice-segmented {
   display: inline-flex;
-  padding: 2px;
   gap: 2px;
+  padding: 3px;
   border: 1px solid var(--lattice-border);
-  border-radius: 7px;
+  border-radius: 9px;
   background: var(--lattice-surface-2);
 }
 
 .lattice-segment {
-  padding: 2px 9px;
+  height: 24px;
+  padding: 0 10px;
   border: 0;
-  border-radius: 5px;
+  border-radius: 6px;
   background: transparent;
   cursor: pointer;
   font-size: 12px;
   color: var(--lattice-text-muted);
+  white-space: nowrap;
+  transition: background 0.13s ease, color 0.13s ease;
+}
+
+.lattice-segment:hover {
+  color: var(--lattice-text);
 }
 
 .lattice-segment.is-active {
-  background: var(--lattice-surface);
+  background: var(--lattice-surface-3);
   color: var(--lattice-text);
-  box-shadow: 0 0 0 1px var(--lattice-border);
+  box-shadow: var(--lattice-shadow-1);
+}
+
+/* ---------- 属性面板 ---------- */
+
+.lattice-panel-body.is-empty {
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+}
+
+.lattice-panel-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 190px;
+}
+
+.lattice-panel-empty-art {
+  width: 36px;
+  height: 36px;
+  border: 1px dashed var(--lattice-border-strong);
+  border-radius: 11px;
+  background-image:
+    linear-gradient(
+      90deg,
+      transparent calc(50% - 0.5px),
+      var(--lattice-border-strong) calc(50% - 0.5px),
+      var(--lattice-border-strong) calc(50% + 0.5px),
+      transparent calc(50% + 0.5px)
+    ),
+    linear-gradient(
+      0deg,
+      transparent calc(50% - 0.5px),
+      var(--lattice-border-strong) calc(50% - 0.5px),
+      var(--lattice-border-strong) calc(50% + 0.5px),
+      transparent calc(50% + 0.5px)
+    );
 }
 
 .lattice-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-top: 10px;
-  border-top: 1px solid var(--lattice-border);
-}
-
-.lattice-field:first-of-type {
-  border-top: 0;
-  padding-top: 0;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--lattice-border);
+  border-radius: 14px;
+  background: var(--lattice-surface-2);
 }
 
 .lattice-label {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--lattice-text-faint);
 }
 
 .lattice-hint {
   margin: 0;
   font-size: 11px;
-  line-height: 1.5;
-  color: var(--lattice-text-muted);
+  line-height: 1.6;
+  color: var(--lattice-text-faint);
 }
 
 .lattice-inline-hint {
   white-space: nowrap;
 }
 
+/* 开关：自绘。原生 checkbox 在深色里是一块系统控件，跟这套视觉格格不入 */
 .lattice-switch {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   cursor: pointer;
   font-size: 12px;
+  color: var(--lattice-text);
 }
 
 .lattice-switch.is-row {
   justify-content: flex-start;
+  gap: 9px;
+}
+
+.lattice-switch input[type="checkbox"] {
+  position: relative;
+  flex: none;
+  width: 30px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--lattice-border-strong);
+  border-radius: 999px;
+  background: var(--lattice-surface-3);
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease;
+}
+
+.lattice-switch input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--lattice-text-faint);
+  transition: transform 0.16s ease, background 0.16s ease;
+}
+
+.lattice-switch input[type="checkbox"]:checked {
+  border-color: var(--lattice-accent);
+  background: var(--lattice-accent);
+}
+
+.lattice-switch input[type="checkbox"]:checked::after {
+  background: var(--lattice-accent-contrast);
+  transform: translateX(12px);
+}
+
+.lattice-switch:hover input[type="checkbox"]:not(:checked) {
+  border-color: var(--lattice-text-faint);
 }
 
 .lattice-perm-name {
   flex: 1;
+  min-width: 0;
 }
 
 .lattice-perm-code {
-  color: var(--lattice-text-muted);
+  color: var(--lattice-text-faint);
+  font-size: 10px;
 }
 
-.lattice-size-row {
+/* 尺寸编辑：标签一行，宽高两个数字框并排 */
+.lattice-field-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
 }
 
+/* 这里的链接是"恢复默认"，不是危险操作，别继承 .lattice-link-btn 的红色 hover */
+.lattice-field-head .lattice-link-btn:hover {
+  background: var(--lattice-surface-3);
+  color: var(--lattice-text);
+}
+
+.lattice-size-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.lattice-size-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--lattice-border-strong);
+  border-radius: 9px;
+  background: var(--lattice-bg);
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.lattice-size-input:focus-within {
+  border-color: var(--lattice-accent);
+  box-shadow: 0 0 0 3px var(--lattice-accent-soft);
+}
+
+.lattice-size-input > span {
+  flex: none;
+  font-size: 11px;
+  color: var(--lattice-text-faint);
+}
+
+.lattice-size-input input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--lattice-text);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+
+/* 数字框的上下箭头在 32px 高的胶囊里太挤，去掉；键盘上下键照样能加减 */
+.lattice-size-input input::-webkit-outer-spin-button,
+.lattice-size-input input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.lattice-size-input input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
 .lattice-path {
   display: block;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: var(--lattice-surface-2);
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--lattice-bg);
   color: var(--lattice-text-muted);
+  font-family: var(--lattice-mono);
+  font-size: 10px;
+  line-height: 1.5;
   word-break: break-all;
 }
 
 .lattice-errors {
-  margin-top: 6px;
-  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
   border: 1px dashed var(--lattice-danger);
-  border-radius: var(--lattice-radius);
+  border-radius: 14px;
+  background: var(--lattice-danger-soft);
 }
 
 .lattice-errors-title {
-  margin: 0 0 6px;
+  margin: 0;
   font-size: 11px;
   font-weight: 500;
   color: var(--lattice-danger);
@@ -680,4 +1166,407 @@ button {
   gap: 2px;
   font-size: 11px;
   color: var(--lattice-text-muted);
+}
+
+/* ---------- 设置菜单 ---------- */
+
+.lattice-settings {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+/* 触发器就是一颗头像：登录后显示首字，未登录是一枚虚线圆 */
+.lattice-settings-trigger {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--lattice-border);
+  border-radius: 50%;
+  background: var(--lattice-surface-2);
+  cursor: pointer;
+  transition:
+    border-color 0.13s ease,
+    background 0.13s ease,
+    box-shadow 0.13s ease;
+}
+
+.lattice-settings-trigger:hover {
+  border-color: var(--lattice-border-strong);
+  background: var(--lattice-surface-3);
+}
+
+.lattice-settings-trigger.is-open {
+  border-color: var(--lattice-accent);
+  box-shadow: 0 0 0 3px var(--lattice-accent-soft);
+}
+
+.lattice-avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: 50%;
+  background: linear-gradient(
+    145deg,
+    var(--lattice-accent),
+    color-mix(in srgb, var(--lattice-accent) 68%, var(--lattice-surface-3))
+  );
+  color: var(--lattice-accent-contrast);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+  user-select: none;
+}
+
+.lattice-avatar.is-empty {
+  border: 1px dashed var(--lattice-border-strong);
+  background: transparent;
+  color: var(--lattice-text-faint);
+}
+
+/* 浮层：从触发器右下方展开，原点在右上角，缩放时不会往左飘 */
+.lattice-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 60;
+  width: 300px;
+  padding: 4px;
+  border: 1px solid var(--lattice-border-strong);
+  border-radius: 14px;
+  background: var(--lattice-surface-2);
+  box-shadow: var(--lattice-shadow-2);
+  transform-origin: top right;
+  animation: lattice-menu-in 0.13s ease-out;
+}
+
+@keyframes lattice-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.lattice-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 10px 10px;
+}
+
+.lattice-account-text {
+  min-width: 0;
+}
+
+.lattice-account-name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lattice-account-sub {
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--lattice-text-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 账号卡片：参考"套餐 / 余额"那种两列读数 + 一个动作 */
+.lattice-account-card {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  margin: 0 6px 6px;
+  padding: 11px 12px 12px;
+  border: 1px solid var(--lattice-border);
+  border-radius: 12px;
+  background: var(--lattice-surface-3);
+}
+
+.lattice-account-stats {
+  display: flex;
+  gap: 22px;
+}
+
+.lattice-account-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lattice-account-stats span {
+  font-size: 11px;
+  color: var(--lattice-text-faint);
+}
+
+.lattice-account-stats b {
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.lattice-account-card .lattice-btn {
+  width: 100%;
+}
+
+.lattice-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.lattice-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 34px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--lattice-text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.lattice-menu-row.is-static {
+  cursor: default;
+}
+
+.lattice-menu-row:not(.is-static):hover {
+  background: var(--lattice-surface-3);
+}
+
+.lattice-menu-row.is-danger {
+  color: var(--lattice-danger);
+}
+
+.lattice-menu-row.is-danger:hover {
+  background: var(--lattice-danger-soft);
+}
+
+.lattice-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lattice-menu-note {
+  font-size: 11px;
+  color: var(--lattice-text-faint);
+  white-space: nowrap;
+}
+
+.lattice-glyph {
+  flex: none;
+  color: var(--lattice-text-muted);
+}
+
+.lattice-menu-row.is-danger .lattice-glyph {
+  color: inherit;
+}
+
+.lattice-menu-divider {
+  height: 1px;
+  margin: 5px 7px;
+  background: var(--lattice-border);
+}
+
+/* 菜单里的分段控件要比顶栏那版矮一档，否则一行放不下 */
+.lattice-segmented.is-compact {
+  gap: 1px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--lattice-surface-3);
+}
+
+.lattice-segmented.is-compact .lattice-segment {
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.lattice-segmented.is-compact .lattice-segment.is-active {
+  background: var(--lattice-surface);
+}
+
+/* ---------- 登录 / 个人信息 ---------- */
+
+.lattice-account-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.lattice-account-form-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 6px;
+  font-size: 12px;
+  color: var(--lattice-text-muted);
+}
+
+.lattice-account-form-head > span {
+  color: var(--lattice-text);
+  font-weight: 500;
+}
+
+.lattice-icon-btn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--lattice-text-muted);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.lattice-icon-btn:hover {
+  background: var(--lattice-surface-3);
+  color: var(--lattice-text);
+}
+
+/* 顶栏里的图标按钮：和 .lattice-btn 同高同圆角，只是宽度收成正方形 */
+.lattice-icon-btn.is-large {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--lattice-border);
+  border-radius: 8px;
+  background: var(--lattice-surface-2);
+  box-shadow: var(--lattice-shadow-1);
+  color: var(--lattice-text-muted);
+  transition:
+    background 0.13s ease,
+    border-color 0.13s ease,
+    color 0.13s ease,
+    transform 0.06s ease;
+}
+
+.lattice-icon-btn.is-large:hover {
+  border-color: var(--lattice-border-strong);
+  background: var(--lattice-surface-3);
+  color: var(--lattice-text);
+}
+
+.lattice-icon-btn.is-large:active {
+  transform: translateY(1px);
+}
+
+/* 图标跟着按钮的颜色走，别被 .lattice-glyph 的默认灰盖住 */
+.lattice-icon-btn .lattice-glyph {
+  color: inherit;
+}
+
+/* 刷新时转一圈，让"点了"和"正在扫目录"区分得开 */
+.lattice-icon-btn.is-spinning .lattice-glyph {
+  animation: lattice-spin 0.9s linear infinite;
+}
+
+@keyframes lattice-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 分段控件只放图标时收成方格子，高度跟着 is-compact 走 */
+.lattice-segmented.is-icons .lattice-segment {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  padding: 0;
+}
+
+.lattice-account-form-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 10px 10px;
+}
+
+.lattice-account-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--lattice-surface-3);
+}
+
+.lattice-textfield {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--lattice-text-faint);
+}
+
+.lattice-textfield input {
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--lattice-border);
+  border-radius: 8px;
+  background: var(--lattice-surface);
+  color: var(--lattice-text);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.13s ease, box-shadow 0.13s ease;
+}
+
+.lattice-textfield input::placeholder {
+  color: var(--lattice-text-faint);
+}
+
+.lattice-textfield input:focus {
+  border-color: var(--lattice-accent);
+  box-shadow: 0 0 0 3px var(--lattice-accent-soft);
+}
+
+.lattice-account-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--lattice-text-faint);
+}
+
+.lattice-account-form-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 9px 10px 10px;
+  border-top: 1px solid var(--lattice-border);
+}
+
+.lattice-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }

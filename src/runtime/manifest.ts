@@ -39,6 +39,17 @@ export interface WidgetManifest {
   entry: string;
   size: WidgetSize;
   layer: WidgetLayer;
+  /**
+   * 组件要不要键盘焦点。
+   *
+   * 桌面窗口默认带 `WS_EX_NOACTIVATE`（点了不抢焦点），这对时钟、倒计时这类
+   * 只看不摸的组件是对的。但便签、待办这种要打字的不行：窗口拿不到焦点，
+   * 光标会闪，按键却全进了后面那个窗口。
+   *
+   * 所以默认 `true`（能输入），纯展示组件在清单里写 `"interactive": false`
+   * 换回"点了不打扰你"的行为。
+   */
+  interactive: boolean;
   permissions: Permission[];
   /** 声明所依赖的 SDK 版本区间，便于将来做兼容性拦截 */
   sdk: string;
@@ -84,6 +95,9 @@ export function normalizeManifest(raw: unknown, dirName: string): WidgetManifest
   size.h = Math.max(size.h, size.minH);
 
   const layer: WidgetLayer = input.layer === "top" ? "top" : "desktop";
+  // 只有显式写 false 才关掉：第三方组件忘了声明时，宁可抢一次焦点，
+  // 也不要让人对着输入框敲半天没反应
+  const interactive = input.interactive !== false;
 
   return {
     id,
@@ -94,6 +108,7 @@ export function normalizeManifest(raw: unknown, dirName: string): WidgetManifest
     entry: optionalString(input.entry) || "index.html",
     size,
     layer,
+    interactive,
     permissions: normalizePermissions(input.permissions),
     sdk: optionalString(input.sdk) || SUPPORTED_SDK,
   };

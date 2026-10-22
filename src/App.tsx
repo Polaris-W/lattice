@@ -8,13 +8,29 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Canvas } from "./platform/Canvas";
 import { InspectorPanel } from "./platform/InspectorPanel";
-import { LibraryPanel } from "./platform/LibraryPanel";
+import { LibraryPanel, type InstallNotice } from "./platform/LibraryPanel";
 import { buildSpecs, closeDesktop, minimizeMain, syncDesktop } from "./platform/desktop";
+import { Glyph, ICON, ThemeGlyph } from "./platform/icons";
+import { SettingsMenu } from "./platform/SettingsMenu";
 import { nextFreeSlot, useLattice, type ThemeMode } from "./platform/store";
 import { isTauri, loadRegistry, type WidgetLoadError, type WidgetRecord } from "./runtime/registry";
 import type { WidgetLayer } from "./runtime/manifest";
+
+/** 顶栏那颗按钮的循环顺序：浅色 → 深色 → 跟随系统 → 浅色 */
+const THEME_CYCLE: ThemeMode[] = ["light", "dark", "system"];
+const THEME_LABEL: Record<ThemeMode, string> = {
+  light: "浅色",
+  dark: "深色",
+  system: "跟随系统",
+};
+
+function nextTheme(current: ThemeMode): ThemeMode {
+  return THEME_CYCLE[(THEME_CYCLE.indexOf(current) + 1) % THEME_CYCLE.length];
+}
 
 /** 桌面窗口回传的事件载荷 */
 interface RectEvent {
@@ -48,8 +64,6 @@ export default function App() {
   const uninstallWidget = useLattice((state) => state.uninstallWidget);
   const theme = useLattice((state) => state.theme);
   const setTheme = useLattice((state) => state.setTheme);
-  const snapToGrid = useLattice((state) => state.snapToGrid);
-  const toggleSnap = useLattice((state) => state.toggleSnap);
   const grants = useLattice((state) => state.grants);
   const desktopMode = useLattice((state) => state.desktopMode);
   const setDesktopMode = useLattice((state) => state.setDesktopMode);
@@ -58,6 +72,14 @@ export default function App() {
   const updatePlacement = useLattice((state) => state.updatePlacement);
   const removePlacement = useLattice((state) => state.removePlacement);
   const [desktopBusy, setDesktopBusy] = useState(false);
+  /** 安装结果提示：成功会自己消失，失败留着让人看清 */
+  const [notice, setNotice] = useState<InstallNotice | null>(null);
+
+  useEffect(() => {
+    if (notice?.kind !== "ok") return;
+    const timer = setTimeout(() => setNotice(null), 6000);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   const records = useMemo(() => new Map(widgets.map((item) => [item.manifest.id, item])), [widgets]);
 
@@ -197,10 +219,104 @@ export default function App() {
         }
         await refresh();
       }
+      /*
+       * 连同画布上的实例一起撤掉。
+       * 只删 id 不删 placement 的话，会留下一个指向不存在组件的幽灵：
+       * 它还在 placements 里（顶栏计数多一个），但 records 里查不到，
+       * 于是既画不出来也点不到 —— 只能清状态文件才能收拾。
+       */
+      const { placements: current, removePlacement } = useLattice.getState();
+      for (const placement of current) {
+        if (placement.widgetId === record.manifest.id) removePlacement(placement.instanceId);
+      }
       uninstallWidget(record.manifest.id);
     },
     [refresh, uninstallWidget],
   );
+
+  /**
+   * 从磁盘装组件。
+   *
+   * 没有文件选择框：直接把组件文件夹从资源管理器拖进窗口就行。
+   * Tauri 的拖放事件给的是真实路径，正好是 `install_widget` 要的入参。
+   * 顺手把拖进来的非组件目录（随便一个文件夹、一个文件）挡掉，
+   * 只留一句"不是组件目录"，不往错误列表里灌红字。
+   */
+  const installFromPaths = useCallback(
+    async (paths: string[]) => {
+      if (!isTauri() || paths.length === 0) return;
+      const installed: string[] = [];
+      const failed: string[] = [];
+      // 官方组件的 id 不能被用户包顶掉：records 是按 id 索引的，
+      // 重名会让官方那个悄悄消失，而且没有任何提示
+      const officialIds = new Set(
+        widgets.filter((item) => item.source === "bundled").map((item) => item.manifest.id),
+      );
+
+      for (const path of paths) {
+        try {
+          const id = await invoke<string>("install_widget", { sourceDir: path });
+          if (officialIds.has(id)) {
+            await invoke("uninstall_widget", { id });
+            failed.push(`「${id}」和官方组件重名，换个 id 再装`);
+            continue;
+          }
+          installWidget(id);
+          installed.push(id);
+        } catch (error) {
+          const message = String(error);
+          // 「不是组件目录」是拖错了，不是出错，不必打扰
+          if (message.includes("不是组件目录")) continue;
+          failed.push(message);
+        }
+      }
+
+      if (installed.length > 0) await refresh();
+
+      if (failed.length > 0) {
+        setNotice({ kind: "error", text: failed.join("；") });
+      } else if (installed.length > 0) {
+        setNotice({
+          kind: "ok",
+          text: `已安装 ${installed.join("、")}，点一下卡片就能放到画布上`,
+        });
+      }
+    },
+    [installWidget, refresh, widgets],
+  );
+
+  // 拖放由 webview 接管（Tauri 默认 dragDropEnabled），这里只关心"放下了"
+  useEffect(() => {
+    if (!isTauri()) return;
+    let dispose: (() => void) | undefined;
+    let disposed = false;
+
+    void getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (event.payload.type !== "drop") return;
+        void installFromPaths(event.payload.paths);
+      })
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else dispose = unlisten;
+      })
+      .catch((error) => setErrors((prev) => [...prev, { dir: "(drop)", message: String(error) }]));
+
+    return () => {
+      disposed = true;
+      dispose?.();
+    };
+  }, [installFromPaths]);
+
+  const openWidgetsDir = useCallback(async () => {
+    if (!isTauri()) return;
+    try {
+      const dir = await invoke<string>("widgets_dir");
+      await revealItemInDir(dir);
+    } catch (error) {
+      setNotice({ kind: "error", text: `打不开组件目录：${String(error)}` });
+    }
+  }, []);
 
   const toggleDesktop = useCallback(async () => {
     if (!isTauri()) return;
@@ -273,35 +389,14 @@ export default function App() {
         </div>
 
         <div className="lattice-topbar-actions">
-          <span className="lattice-hint lattice-inline-hint">
-            {placements.length} 个组件 · {installedSet.size} 个已安装
+          <span className="lattice-stat">
+            <span className="lattice-stat-dot" aria-hidden />
+            <b>{placements.length}</b> 个组件 · <b>{installedSet.size}</b> 个已安装
           </span>
 
           <button
             type="button"
-            className={`lattice-btn${snapToGrid ? " is-active" : ""}`}
-            onClick={toggleSnap}
-            title="拖动时对齐到 8px 网格"
-          >
-            网格吸附
-          </button>
-
-          <div className="lattice-segmented">
-            {(["light", "system", "dark"] as ThemeMode[]).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                className={`lattice-segment${theme === mode ? " is-active" : ""}`}
-                onClick={() => setTheme(mode)}
-              >
-                {mode === "light" ? "浅色" : mode === "dark" ? "深色" : "跟随系统"}
-              </button>
-            ))}
-          </div>
-
-          <button
-            type="button"
-            className={`lattice-btn${desktopMode ? " is-active" : ""}`}
+            className={`lattice-btn${desktopMode ? " is-active" : " is-primary"}`}
             onClick={() => void toggleDesktop()}
             disabled={!isTauri() || desktopBusy}
             title={
@@ -313,9 +408,27 @@ export default function App() {
             {desktopMode ? "收回组件" : "投放到桌面"}
           </button>
 
-          <button type="button" className="lattice-btn" onClick={() => void refresh()}>
-            刷新组件
+          <button
+            type="button"
+            className="lattice-icon-btn is-large"
+            onClick={() => setTheme(nextTheme(theme))}
+            title={`外观：${THEME_LABEL[theme]} · 点击切到${THEME_LABEL[nextTheme(theme)]}`}
+            aria-label={`外观：${THEME_LABEL[theme]}`}
+          >
+            <ThemeGlyph mode={theme} />
           </button>
+
+          <button
+            type="button"
+            className={`lattice-icon-btn is-large${loading ? " is-spinning" : ""}`}
+            onClick={() => void refresh()}
+            title="重新扫描组件目录"
+            aria-label="刷新组件"
+          >
+            <Glyph d={ICON.refresh} />
+          </button>
+
+          <SettingsMenu installedCount={installedSet.size} placementCount={placements.length} />
         </div>
       </header>
 
@@ -325,6 +438,9 @@ export default function App() {
           installedIds={installedSet}
           errors={errors}
           loading={loading}
+          notice={notice}
+          onDismissNotice={() => setNotice(null)}
+          onOpenWidgetsDir={() => void openWidgetsDir()}
           onAdd={addWidget}
           onInstall={install}
           onInstallPack={installPack}
