@@ -102,6 +102,13 @@ export default function App() {
     [installWidget],
   );
 
+  const installPack = useCallback(
+    (records: WidgetRecord[]) => {
+      for (const record of records) installWidget(record.manifest.id);
+    },
+    [installWidget],
+  );
+
   const uninstall = useCallback(
     async (record: WidgetRecord) => {
       // 用户目录里的包是真在磁盘上的，要交给 Rust 删；内置包只是取消启用
@@ -195,6 +202,7 @@ export default function App() {
           loading={loading}
           onAdd={addWidget}
           onInstall={install}
+          onInstallPack={installPack}
           onUninstall={(record) => void uninstall(record)}
         />
         <Canvas records={records} installedIds={installedSet} onDropWidget={onDropWidget} />

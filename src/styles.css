@@ -332,6 +332,10 @@ button {
 }
 
 .lattice-lib-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
   padding: 10px 12px;
   border: 1px dashed var(--lattice-border);
   border-radius: var(--lattice-radius);
@@ -402,6 +406,39 @@ button {
 
 .lattice-widget.is-top {
   z-index: 20;
+}
+
+/* 组件撞到未授权权限时的就地提示 —— 比让用户去右边面板找开关更直接 */
+.lattice-perm-prompt {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 6px 5px 9px;
+  border: 1px solid var(--lattice-accent);
+  border-radius: 8px;
+  background: var(--lattice-surface);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 18%);
+}
+
+.lattice-perm-prompt-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--lattice-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lattice-perm-prompt .lattice-btn {
+  flex: none;
+  white-space: nowrap;
 }
 
 .lattice-widget-bar {
@@ -516,6 +553,18 @@ button {
 .lattice-btn.is-small {
   padding: 3px 10px;
   font-size: 11px;
+}
+
+.lattice-btn.is-primary {
+  border-color: transparent;
+  background: var(--lattice-accent);
+  color: var(--lattice-accent-contrast, #0b1f19);
+  font-weight: 500;
+}
+
+.lattice-btn.is-primary:hover {
+  border-color: transparent;
+  filter: brightness(1.06);
 }
 
 .lattice-segmented {

@@ -6,9 +6,29 @@
 
 ## 现状
 
-v0.1 是**设计态骨架**：能扫描组件、拖到画布上摆位置、调层级与穿透、逐项授予权限，组件在沙箱 iframe 里真实运行并通过 RPC 桥调用平台能力。
+v0.1 是**可运行的 demo**：平台开箱是空白的，安装官方组件包后把组件摆到画布上，组件在沙箱 iframe 里真实运行，通过 RPC 桥调用平台能力，权限逐项授予。
+
+![安装官方组件包后](docs/screenshot.png)
 
 还没做的：把画布上的组件变成真正的独立桌面窗口（见 [ROADMAP](./docs/ROADMAP.md)）。
+
+## 平台是空白的
+
+装好第一次打开，桌面上什么都没有——像刚装好的 VS Code 没有插件。
+
+- **核心不含任何组件**：画布、窗口层、组件宿主、权限系统、安装卸载、组件库、设置
+- **官方组件没有特权**：`public/widgets` 下的包走和第三方完全相同的 manifest、沙箱、权限桥，只是"已经在你硬盘上"，不是"编译进了内核"
+- **发现 ≠ 安装**：`bundled` 来源必须显式安装；`user` 来源（`%APPDATA%` 下的包）在磁盘上就算已装
+
+这条原则的完整论述见 [ARCHITECTURE](./docs/ARCHITECTURE.md#零内置原则)。
+
+## 权限是看得见的
+
+组件撞到未授权的能力时，画布上直接弹出提示，一次授予全部所需权限，组件随即重新初始化：
+
+![权限提示](docs/screenshot-permission.png)
+
+沙箱 iframe **不含 `allow-same-origin`**，所以组件拿到的是不透明源：读不到宿主 DOM、没有可用的 `localStorage`、发出的请求带 `Origin: null`。它除了走桥，什么都做不了。桥的鉴权用 `event.source` 比对窗口引用而非 `event.origin`——沙箱 iframe 的 origin 都是字符串 `"null"`，靠它区分不出实例。
 
 ## 技术栈
 
@@ -25,12 +45,14 @@ v0.1 是**设计态骨架**：能扫描组件、拖到画布上摆位置、调�
 
 ```bash
 npm install
+npm run dev           # 浏览器里跑 demo：http://localhost:1420
 npm run tauri:dev     # 完整桌面应用（首次要编译 Rust）
-npm run dev           # 只跑前端，浏览器里调试 UI
 npm run tauri:build   # 出安装包：src-tauri/target/release/bundle/nsis
 ```
 
 环境要求：Node ≥ 20、Rust 工具链、WebView2（Win11 自带）。
+
+> 只想看 demo 的话用 `npm run dev`，不需要 Rust。桌面端目前需要 `windres`（mingw binutils）或 MSVC 工具链，见 ROADMAP 的环境说明。
 
 ## 目录
 
@@ -38,7 +60,7 @@ npm run tauri:build   # 出安装包：src-tauri/target/release/bundle/nsis
 src/
   platform/          平台外壳：画布、组件库、属性面板、平台状态
   runtime/           组件运行时：manifest 校验、注册表、RPC 桥
-public/widgets/      内置组件（每个目录一个组件包）
+public/widgets/      官方组件包（未安装前只是"可安装"）
 scripts/             构建辅助（生成组件索引）
 src-tauri/
   src/widgets.rs     组件包扫描 / 安装 / 卸载

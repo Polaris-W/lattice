@@ -8,14 +8,15 @@
  * 只需替换渲染部分，桥的协议与权限校验完全不用改。
  */
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BRIDGE_TAG,
   handleBridgeRequest,
   isBridgeRequest,
   readThemeTokens,
+  type BridgeResponseMessage,
 } from "../runtime/bridge";
-import type { Permission } from "../runtime/manifest";
+import { PERMISSION_LABELS, type Permission } from "../runtime/manifest";
 import type { WidgetRecord } from "../runtime/registry";
 import { snap, useLattice, type Placement } from "./store";
 
@@ -32,6 +33,24 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
   const select = useLattice((state) => state.select);
   const remove = useLattice((state) => state.removePlacement);
   const update = useLattice((state) => state.updatePlacement);
+  const grant = useLattice((state) => state.grant);
+
+  /** 组件撞到未授权的权限时记在这里，就地提示，不用去右边面板翻 */
+  const [missing, setMissing] = useState<Permission[]>([]);
+
+  /**
+   * 权限集合变化后重挂 iframe，让组件重新走一遍初始化。
+   * 不这么做的话，组件在授权前就把"权限被拒"写进了自己的状态，
+   * 用户点完授权界面上还是旧样子 —— 组件没法知道权限变了。
+   */
+  const [reloadKey, setReloadKey] = useState(0);
+  const grantSignature = [...(grants ?? [])].sort().join(",");
+  const lastSignature = useRef(grantSignature);
+  useEffect(() => {
+    if (lastSignature.current === grantSignature) return;
+    lastSignature.current = grantSignature;
+    setReloadKey((value) => value + 1);
+  }, [grantSignature]);
 
   // 权限会在运行期被用户改动，用 ref 让监听器始终读到最新值
   const grantedRef = useRef<ReadonlySet<Permission>>(new Set());
@@ -58,7 +77,13 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
         instanceId: placement.instanceId,
         widgetId: record.manifest.id,
         granted: grantedRef.current,
-        reply: post,
+        reply: (payload: BridgeResponseMessage) => {
+          const denied = payload.code === "permission_denied" ? payload.permission : undefined;
+          if (denied) {
+            setMissing((prev) => (prev.includes(denied) ? prev : [...prev, denied]));
+          }
+          post(payload);
+        },
         close: () => remove(placement.instanceId),
       });
     };
@@ -169,6 +194,7 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
 
       {record.entryUrl ? (
         <iframe
+          key={reloadKey}
           ref={iframeRef}
           className="lattice-widget-frame"
           title={record.manifest.name}
@@ -185,6 +211,27 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
             自定义协议才能渲染，见 ROADMAP 第 1 项。
           </p>
           <code className="lattice-mono lattice-path">{record.dir}</code>
+        </div>
+      )}
+
+      {missing.length > 0 && missing[0] !== undefined && (
+        <div className="lattice-perm-prompt">
+          <span className="lattice-perm-prompt-text">
+            需要「{PERMISSION_LABELS[missing[0]]}」
+            {missing.length > 1 ? ` 等 ${missing.length} 项` : ""}
+          </span>
+          <button
+            type="button"
+            className="lattice-btn is-small is-primary"
+            onClick={(event) => {
+              event.stopPropagation();
+              // 一次给全，不然组件会一项一项撞过来，用户要点好几次
+              for (const permission of missing) grant(record.manifest.id, permission);
+              setMissing([]);
+            }}
+          >
+            {missing.length > 1 ? "全部授权" : "授权"}
+          </button>
         </div>
       )}
 

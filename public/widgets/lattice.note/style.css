@@ -1,0 +1,68 @@
+:root {
+  --bg: transparent;
+  --fg: #ecebe6;
+  --muted: #97978f;
+  --accent: #5dcaa5;
+  --border: rgba(255, 255, 255, 0.12);
+  --radius: 10px;
+  --font: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  overflow: hidden;
+}
+
+.note {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 10px 12px 8px;
+}
+
+.note textarea {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.note textarea::placeholder {
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+.note-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 6px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+#status.is-saved {
+  color: var(--accent);
+}
+
+#status.is-error {
+  color: #e2725b;
+}

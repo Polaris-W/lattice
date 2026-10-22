@@ -29,6 +29,8 @@ export interface BridgeResponseMessage {
   result?: unknown;
   error?: string;
   code?: BridgeErrorCode;
+  /** code 为 permission_denied 时，明确告诉宿主缺的是哪一项，便于就地提示授权 */
+  permission?: Permission;
 }
 
 export type BridgeErrorCode = "unknown_method" | "permission_denied" | "bad_params" | "internal";
@@ -84,7 +86,9 @@ export async function handleBridgeRequest(
   message: BridgeRequestMessage,
   ctx: BridgeContext,
 ): Promise<void> {
-  const reply = (body: Pick<BridgeResponseMessage, "ok" | "result" | "error" | "code">) => {
+  const reply = (
+    body: Pick<BridgeResponseMessage, "ok" | "result" | "error" | "code" | "permission">,
+  ) => {
     ctx.reply({ [BRIDGE_TAG]: 1, type: "response", id: message.id, ...body });
   };
 
@@ -94,7 +98,12 @@ export async function handleBridgeRequest(
     return;
   }
   if (spec.permission && !ctx.granted.has(spec.permission)) {
-    reply({ ok: false, code: "permission_denied", error: `未授予权限 ${spec.permission}` });
+    reply({
+      ok: false,
+      code: "permission_denied",
+      error: `未授予权限 ${spec.permission}`,
+      permission: spec.permission,
+    });
     return;
   }
 

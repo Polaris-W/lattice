@@ -1,0 +1,12 @@
+{
+  "id": "lattice.countdown",
+  "name": "倒计时",
+  "version": "0.1.0",
+  "description": "倒数到指定日期，显示剩余天数与时分秒",
+  "author": "Lattice",
+  "entry": "index.html",
+  "size": { "w": 240, "h": 156, "minW": 180, "minH": 130 },
+  "layer": "desktop",
+  "permissions": ["clock", "storage"],
+  "sdk": "^0.1"
+}

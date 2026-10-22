@@ -1,0 +1,93 @@
+:root {
+  --bg: transparent;
+  --fg: #ecebe6;
+  --muted: #97978f;
+  --accent: #5dcaa5;
+  --border: rgba(255, 255, 255, 0.12);
+  --radius: 10px;
+  --font: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  overflow: hidden;
+  user-select: none;
+}
+
+.cd {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 100%;
+  padding: 10px;
+}
+
+.cd-label {
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cd-days {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  line-height: 1;
+}
+
+.cd-days span {
+  font-size: 44px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.cd-days small {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.cd-clock {
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+}
+
+.cd-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.cd-pick input {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 10px;
+  color-scheme: dark;
+}
+
+.cd.is-done .cd-days span {
+  color: var(--accent);
+}

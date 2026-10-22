@@ -20,6 +20,7 @@ interface LibraryPanelProps {
   loading: boolean;
   onAdd: (record: WidgetRecord) => void;
   onInstall: (record: WidgetRecord) => void;
+  onInstallPack: (records: WidgetRecord[]) => void;
   onUninstall: (record: WidgetRecord) => void;
 }
 
@@ -30,10 +31,12 @@ export function LibraryPanel({
   loading,
   onAdd,
   onInstall,
+  onInstallPack,
   onUninstall,
 }: LibraryPanelProps) {
   const installed = widgets.filter((record) => installedIds.has(record.manifest.id));
   const available = widgets.filter((record) => !installedIds.has(record.manifest.id));
+  const officialPack = available.filter((record) => record.source === "bundled");
 
   const activate = (record: WidgetRecord) => {
     if (!installedIds.has(record.manifest.id)) {
@@ -150,6 +153,15 @@ export function LibraryPanel({
             <p className="lattice-hint">
               下面这些包还没安装。装一个，桌面上才会有东西。
             </p>
+            {officialPack.length > 0 && (
+              <button
+                type="button"
+                className="lattice-btn is-small is-primary"
+                onClick={() => onInstallPack(officialPack)}
+              >
+                安装官方组件包（{officialPack.length} 个）
+              </button>
+            )}
           </div>
         )}
 

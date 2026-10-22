@@ -1,0 +1,12 @@
+{
+  "id": "lattice.note",
+  "name": "便签",
+  "version": "0.1.0",
+  "description": "随手记点东西，自动保存到组件私有存储",
+  "author": "Lattice",
+  "entry": "index.html",
+  "size": { "w": 260, "h": 200, "minW": 180, "minH": 120 },
+  "layer": "desktop",
+  "permissions": ["storage"],
+  "sdk": "^0.1"
+}
