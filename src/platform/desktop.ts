@@ -27,12 +27,23 @@ export interface WidgetWindowSpec {
   theme: "light" | "dark";
 }
 
+/** 上一次算出来的、可信的画布原点 */
+let cachedOrigin: { x: number; y: number } | null = null;
+
 /** 画布左上角在屏幕坐标系里的位置 */
 function canvasOrigin(): { x: number; y: number } {
-  const element = document.querySelector(".lattice-canvas");
-  const rect = element?.getBoundingClientRect();
-  if (!rect) return { x: 0, y: 0 };
-  return { x: window.screenX + rect.left, y: window.screenY + rect.top };
+  const rect = document.querySelector(".lattice-canvas")?.getBoundingClientRect();
+  if (!rect) return cachedOrigin ?? { x: 0, y: 0 };
+
+  const x = window.screenX + rect.left;
+  const y = window.screenY + rect.top;
+
+  // 投放之后主窗口会被最小化，此时 screenX/screenY 是 -32000 这类哨兵值。
+  // 拿它算出来的坐标会把所有组件推出屏幕外，所以遇到就退回上一次的可见位置。
+  if (x < -10000 || y < -10000) return cachedOrigin ?? { x: 0, y: 0 };
+
+  cachedOrigin = { x, y };
+  return cachedOrigin;
 }
 
 /** 直接读 <html data-theme>：App 的主题 effect 已经把它算好了，这里不用再猜一次 */
