@@ -15,8 +15,9 @@ Drag this **folder** (not the files inside it) from Explorer into a Lattice wind
 
 ```
 counter/
-  manifest.json   id, entry, size, requested permissions
+  manifest.json   id, entry, icon, size, requested permissions
   index.html      markup; only relative asset paths
+  icon.svg        shape only — the platform masks it and paints it with the current text colour
   style.css       colours come from --surface / --fg style variables, so it follows the theme
   widget.js       bridge client + business logic; imports nothing from the platform
 ```

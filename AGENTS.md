@@ -189,12 +189,14 @@ registry.ts  entryUrl = http://lattice-widget.localhost/<id>/index.html
 public/widgets/<id>/
   manifest.json    id 必须是反向域名、version 是语义化版本
   index.html       入口，文件名与 manifest.entry 一致
+  icon.svg         图标（manifest.icon 指过来）；16×16 视框、1.4 描边
   widget.js        自己写 call()/主题映射（参考 lattice.todo）
   style.css
 ```
 
 然后 `npm run widgets:index`（`dev` / `build` 会自动跑）。注意：
 
+- **图标只当形状用**：平台拿它当 CSS 遮罩、用 `currentColor` 上色，所以 SVG 里 `fill` 写什么色都行，深色浅色自动对。也因此**永远不要**把组件的 SVG 内容直接塞进主窗口的 DOM（第三方内容，`<script>` 会跟着跑），只让它以图片身份参与遮罩。
 - **不要用原生表单控件**。沙箱文档的 `color-scheme` 被强制成 `normal`，原生 checkbox/radio 会按浅色主题画，在深色卡片上几乎看不见。用 `appearance: none` 自绘。
 - 组件拿不到 `localStorage`、读不到 `parent` 的 DOM，一切能力走桥。
 - 组件里所有颜色从 `--lattice-*` 变量来，别硬编码明暗。

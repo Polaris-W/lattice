@@ -25,6 +25,8 @@ export interface WidgetRecord {
   dir: string;
   /** iframe 可直接加载的绝对地址 */
   entryUrl: string;
+  /** 图标绝对地址；清单没声明图标时为 null，调用方退回"名字首字" */
+  iconUrl: string | null;
 }
 
 export interface WidgetLoadError {
@@ -92,6 +94,7 @@ export async function loadRegistry(): Promise<RegistrySnapshot> {
         source: raw.source,
         dir: raw.dir,
         entryUrl: resolveEntryUrl(manifest, raw.source),
+        iconUrl: manifest.icon ? resolveAssetUrl(manifest, raw.source, manifest.icon) : null,
       });
     } catch (error) {
       errors.push({
@@ -116,9 +119,21 @@ export async function loadRegistry(): Promise<RegistrySnapshot> {
  * 仍然落在自己的目录里，所以组件作者只管用相对路径就行。
  */
 export function resolveEntryUrl(manifest: WidgetManifest, source: WidgetSource): string {
-  const entry = manifest.entry.replace(/^\/+/, "");
-  if (source === "user") return `${widgetSchemeBase()}${manifest.id}/${entry}`;
-  return `${appOrigin()}${assetBase()}widgets/${manifest.id}/${entry}`;
+  return resolveAssetUrl(manifest, source, manifest.entry);
+}
+
+/**
+ * 组件目录里任意一个文件（入口 HTML、图标……）的绝对地址。
+ * 两条源的分流规则见文件头；这里只负责拼，不负责校验。
+ */
+export function resolveAssetUrl(
+  manifest: WidgetManifest,
+  source: WidgetSource,
+  relative: string,
+): string {
+  const path = relative.replace(/^\.\//, "").replace(/^\/+/, "");
+  if (source === "user") return `${widgetSchemeBase()}${manifest.id}/${path}`;
+  return `${appOrigin()}${assetBase()}widgets/${manifest.id}/${path}`;
 }
 
 async function loadBundled(): Promise<RawInstalledWidget[]> {

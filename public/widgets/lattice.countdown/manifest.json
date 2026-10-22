@@ -5,6 +5,7 @@
   "description": "Counts down to a date, showing days, hours, minutes and seconds",
   "author": "Lattice",
   "entry": "index.html",
+  "icon": "icon.svg",
   "size": { "w": 240, "h": 156, "minW": 180, "minH": 130 },
   "layer": "desktop",
   "permissions": ["clock", "storage"],

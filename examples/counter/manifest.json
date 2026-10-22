@@ -5,6 +5,7 @@
   "description": "A sample widget that proves the install path: reads the theme, stores data, responds to clicks",
   "author": "Third-party sample",
   "entry": "index.html",
+  "icon": "icon.svg",
   "size": { "w": 220, "h": 160, "minW": 180, "minH": 130 },
   "layer": "desktop",
   "permissions": ["storage"],

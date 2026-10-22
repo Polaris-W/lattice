@@ -11,7 +11,7 @@
 
 import type { WidgetLoadError, WidgetRecord } from "../runtime/registry";
 import { PERMISSION_LABELS } from "../runtime/manifest";
-import { Glyph, ICON, PanelGlyph } from "./icons";
+import { Glyph, ICON, PanelGlyph, WidgetIconMark } from "./icons";
 
 /** 安装结果提示。成功的会自己消失，失败的留着等用户处理 */
 export interface InstallNotice {
@@ -87,7 +87,12 @@ export function LibraryPanel({
       >
         <div className="lattice-card-top">
           <span className="lattice-card-glyph" aria-hidden>
-            {record.manifest.name.trim().slice(0, 1)}
+            {record.iconUrl ? (
+              <WidgetIconMark url={record.iconUrl} size={17} />
+            ) : (
+              /* 没声明图标的包退回"名字首字"，总比空一块好认 */
+              record.manifest.name.trim().slice(0, 1)
+            )}
           </span>
           <span className="lattice-card-heading">
             <span className="lattice-card-name">{record.manifest.name}</span>

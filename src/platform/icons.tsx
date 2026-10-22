@@ -8,7 +8,7 @@
  * 另开一套 fill 规则。
  */
 
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 export function Glyph({
   d,
@@ -80,6 +80,26 @@ export function PanelGlyph({ side, size = 16 }: { side: "left" | "right"; size?:
         stroke="none"
       />
     </Glyph>
+  );
+}
+
+/**
+ * 组件自己的图标（清单里声明的那个文件）。
+ *
+ * 用 mask 而不是 `<img>`：SVG 只提供形状，颜色取 `currentColor`，于是
+ * 明暗主题、悬停态全自动跟着走，第三方给的彩色图标也会被压成单色剪影 ——
+ * 在 30px 的色块里，单色永远比彩色整齐。
+ *
+ * 也因此绝不能把 SVG 内容直接塞进 DOM（那是第三方内容，`<script>` 会跟着跑），
+ * 只能让它以图片的身份参与遮罩。
+ */
+export function WidgetIconMark({ url, size }: { url: string; size: number }) {
+  return (
+    <span
+      className="lattice-icon-mask"
+      style={{ width: size, height: size, "--widget-icon": `url("${url}")` } as CSSProperties}
+      aria-hidden="true"
+    />
   );
 }
 

@@ -272,10 +272,21 @@ button {
 }
 
 .lattice-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
   margin: 0;
   font-size: 13px;
   font-weight: 500;
   letter-spacing: 0.02em;
+}
+
+/* 名字要能被省略号截断，所以得有自己的盒子（flex 容器里的裸文本截不了） */
+.lattice-panel-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lattice-panel-count {
@@ -382,6 +393,19 @@ button {
   font-size: 13px;
   font-weight: 500;
   line-height: 1;
+}
+
+/*
+ * 组件图标：只当形状用，颜色跟着 currentColor 走。
+ * 所以同一份 SVG 在深色和浅色主题下都看得清，第三方给的彩色图标
+ * 也会被压成单色剪影 —— 30px 的色块里，单色永远比彩色整齐。
+ */
+.lattice-icon-mask {
+  display: block;
+  flex: none;
+  background: currentColor;
+  -webkit-mask: var(--widget-icon) center / contain no-repeat;
+  mask: var(--widget-icon) center / contain no-repeat;
 }
 
 .lattice-card.is-available .lattice-card-glyph {
@@ -736,8 +760,8 @@ button {
 .lattice-widget-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  justify-content: flex-start;
+  gap: 6px;
   flex: none;
   height: 26px;
   padding: 0 9px;
@@ -745,6 +769,16 @@ button {
   user-select: none;
   background: var(--lattice-surface-2);
   border-bottom: 1px solid var(--lattice-border);
+}
+
+/* 图层徽标顶到最右；标题条改成 flex-start 之后不能再靠 space-between */
+.lattice-widget-bar .lattice-chip {
+  margin-left: auto;
+}
+
+/* 标题条里的组件图标：比组件库那颗小一档，只做身份提示 */
+.lattice-widget-bar .lattice-icon-mask {
+  color: var(--lattice-text-muted);
 }
 
 .lattice-widget-title {

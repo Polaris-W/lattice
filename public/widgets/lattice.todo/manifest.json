@@ -5,6 +5,7 @@
   "description": "A minimal to-do list; check to complete, stored per widget",
   "author": "Lattice",
   "entry": "index.html",
+  "icon": "icon.svg",
   "size": { "w": 280, "h": 240, "minW": 200, "minH": 140 },
   "layer": "top",
   "permissions": ["storage"],

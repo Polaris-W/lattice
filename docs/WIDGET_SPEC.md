@@ -10,6 +10,7 @@
 my-widget/
   manifest.json     必需，清单
   index.html        必需（文件名由 manifest.entry 指定）
+  icon.svg          可选，组件图标（manifest.icon 指过来，见 §2.1）
   ...               其余文件随意：js / css / 图片
 ```
 
@@ -60,6 +61,7 @@ my-widget/
 | `description` | 否 | `""` | 一句话说明，显示在组件库 |
 | `author` | 否 | `未知作者` | |
 | `entry` | 否 | `index.html` | 相对组件目录的入口 |
+| `icon` | 否 | `""` | 相对组件目录的图标（SVG 优先）。不写就退回"名字首字"，见 §2.1 |
 | `size` | 否 | `240×140` | `w/h` 初始尺寸，`minW/minH` 缩放下限 |
 | `layer` | 否 | `desktop` | `desktop` 贴桌面 / `top` 置顶 |
 | `permissions` | 否 | `[]` | 申请的平台权限，见下表 |
@@ -78,6 +80,28 @@ my-widget/
 * `false`：挂 WorkerW、保持 `WS_EX_NOACTIVATE`，是真正的"桌面背景"，最省事也最不打扰。
 
 **纯展示的组件（时钟、倒计时、天气）建议显式写 `false`**：少一次激活，也就不会在点桌面的时候抢焦点。
+
+### 2.1 `icon`：组件图标
+
+写一个相对组件目录的路径就行（`"icon": "icon.svg"`）。平台把它显示在三处：组件库的卡片色块、画布卡片的标题条、属性面板的标题前。
+
+**图标只当形状用。** 平台不是把 SVG 塞进 DOM（那是第三方内容，`<script>` 会跟着跑），而是拿它当 CSS 遮罩，用当前文字颜色上色。所以：
+
+* SVG 里 `fill` / `stroke` 写什么颜色都无所谓 —— 最后都是单色
+* 深色主题下自动变亮、浅色主题下自动变深，不用你准备两套
+* 彩色图标会被压成剪影。30px 的色块里，单色比彩色整齐得多
+
+画的时候按 **16×16 视框、1.4 描边、round 端点**来，跟平台自带图标一个规格：
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none"
+     stroke="#000" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="8" cy="8" r="5.6" />
+  <path d="M8 4.9v3.3l2.1 1.3" />
+</svg>
+```
+
+不写 `icon`、或者路径写错（绝对地址、带 `..`、带引号）都**不会让组件加载失败** —— 图标是锦上添花，退回"名字首字"那块色块就是了。
 
 
 ## 3. 权限
@@ -216,9 +240,10 @@ if (data.type === "store-changed" && (!data.payload.key || data.payload.key === 
 ```json
 {
   "id": "lattice.hello",
-  "name": "你好",
+  "name": "Hello",
   "version": "0.1.0",
   "entry": "index.html",
+  "icon": "icon.svg",
   "size": { "w": 200, "h": 100, "minW": 120, "minH": 60 },
   "permissions": ["clock"]
 }

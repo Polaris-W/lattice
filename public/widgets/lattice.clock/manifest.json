@@ -5,6 +5,7 @@
   "description": "A large clock with the date and time zone; 12/24-hour toggle",
   "author": "Lattice",
   "entry": "index.html",
+  "icon": "icon.svg",
   "size": { "w": 240, "h": 140, "minW": 160, "minH": 110 },
   "layer": "desktop",
   "interactive": false,

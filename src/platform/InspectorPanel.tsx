@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import { PERMISSION_LABELS, type Permission } from "../runtime/manifest";
 import type { WidgetRecord } from "../runtime/registry";
-import { PanelGlyph } from "./icons";
+import { PanelGlyph, WidgetIconMark } from "./icons";
 import { useLattice } from "./store";
 
 interface InspectorPanelProps {
@@ -129,7 +129,10 @@ export function InspectorPanel({ records, open, onToggle }: InspectorPanelProps)
   return (
     <aside className="lattice-panel lattice-panel-right">
       <header className="lattice-panel-head">
-        <h2 className="lattice-panel-title">{manifest.name}</h2>
+        <h2 className="lattice-panel-title">
+          {record.iconUrl && <WidgetIconMark url={record.iconUrl} size={13} />}
+          <span className="lattice-panel-title-text">{manifest.name}</span>
+        </h2>
         <div className="lattice-panel-actions">
           <button
             type="button"

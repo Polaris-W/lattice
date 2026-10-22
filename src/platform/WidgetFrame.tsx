@@ -19,6 +19,7 @@ import {
 } from "../runtime/bridge";
 import { PERMISSION_LABELS, type Permission } from "../runtime/manifest";
 import { isTauri, type WidgetRecord } from "../runtime/registry";
+import { WidgetIconMark } from "./icons";
 import { snap, useLattice, type Placement } from "./store";
 
 interface WidgetFrameProps {
@@ -217,6 +218,7 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
         onPointerUp={onDragEnd}
         title="Drag to move"
       >
+        {record.iconUrl && <WidgetIconMark url={record.iconUrl} size={12} />}
         <span className="lattice-widget-title">{record.manifest.name}</span>
         <span className={`lattice-chip${placement.layer === "top" ? " is-accent" : ""}`}>
           {placement.layer === "top" ? "On top" : "Desktop"}

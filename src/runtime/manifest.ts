@@ -37,6 +37,14 @@ export interface WidgetManifest {
   author: string;
   /** 相对组件目录的入口 HTML，默认 index.html */
   entry: string;
+  /**
+   * 相对组件目录的图标（SVG 优先），空字符串 = 没声明。
+   *
+   * 只当**形状**用：平台把它当遮罩上色，所以 SVG 里 fill 写什么颜色都无所谓，
+   * 彩色图标也会被压成单色剪影 —— 在 30px 的色块里，单色永远比彩色整齐，
+   * 而且明暗主题切换不用组件操心。
+   */
+  icon: string;
   size: WidgetSize;
   layer: WidgetLayer;
   /**
@@ -60,6 +68,13 @@ export const SUPPORTED_SDK = "^0.1";
 
 const ID_RE = /^[a-z0-9]+(?:[.-][a-z0-9]+)+$/;
 const VERSION_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+/**
+ * 图标路径只允许"包内相对路径"。
+ *
+ * 这个字符串会被拼进 CSS 的 `url("...")` 当遮罩用，所以既不能带引号，
+ * 也不能是绝对地址 —— 后者等于让组件清单远程拉图，而清单是第三方内容。
+ */
+const ICON_PATH_RE = /^[A-Za-z0-9._\-/]+$/;
 
 export class ManifestError extends Error {}
 
@@ -106,6 +121,7 @@ export function normalizeManifest(raw: unknown, dirName: string): WidgetManifest
     description: optionalString(input.description),
     author: optionalString(input.author) || "Unknown author",
     entry: optionalString(input.entry) || "index.html",
+    icon: normalizeIconPath(input.icon),
     size,
     layer,
     interactive,
@@ -131,6 +147,16 @@ function normalizePermissions(raw: unknown): Permission[] {
     }
   }
   return out;
+}
+
+/**
+ * 图标路径：只接受包内相对路径，其余一律当没声明。
+ * 不抛错是刻意的 —— 图标是锦上添花，不该因为写错一个路径就整包加载失败。
+ */
+function normalizeIconPath(value: unknown): string {
+  const raw = optionalString(value).replace(/^\.\//, "").replace(/^\/+/, "");
+  if (!raw || raw.includes("..") || !ICON_PATH_RE.test(raw)) return "";
+  return raw;
 }
 
 function requireString(value: unknown, field: string): string {
