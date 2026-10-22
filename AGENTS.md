@@ -50,7 +50,7 @@ src/
     LibraryPanel.tsx      组件库：已安装 / 可安装 / 加载失败
     InspectorPanel.tsx    属性面板：层级、穿透、尺寸、权限授予
     SettingsMenu.tsx      设置浮层：本机档案、外观、网格吸附、关于（Ctrl+, 唤出）
-    icons.tsx             16px 图标集（Glyph / ICON / ThemeGlyph），顶栏与菜单共用
+    icons.tsx             16px 图标集（Glyph / ICON / ThemeGlyph / PanelGlyph / WidgetIconMark），顶栏、菜单、面板共用
     desktop.ts            Placement → WidgetWindowSpec，坐标换算，投放/收回命令
   runtime/
     manifest.ts           清单校验与归一化；Permission 类型与中文标签（唯一真源）
@@ -290,11 +290,7 @@ public/widgets/<id>/
   `--virtual-time-budget` 必须给，否则会截到 transition 的中间态。
 - 改了桥 / 组件存储：`tests/bridge-storage.html` 与 `tests/note-save.html` 是自检页（`npm run dev` 后打开 `http://localhost:1420/tests/bridge-storage.html`）。前者验证并发写不丢键、跨窗口读到最新值；后者验证便签的保存顺序与载入竞态。动过存储或便签保存逻辑，先看这两个页面是不是全绿。
 - 改了窗口行为：只能 `npm run tauri:dev` 实机看。注意**改 Rust 会重启应用，桌面上的组件会被收回**（`desktopMode` 不持久化），重新点一次「投放到桌面」即可，摆放和数据都在。
-- 改了协议 / 安装链路：拿 `examples/counter` 当样本 —— 拖进窗口 → 出现在「已安装」→ 放到画布 → 授权 `storage` → 点几下 → 看 `%APPDATA%\com.iron-tom.lattice\widget-data\demo.counter.json` 有没有写进去。协议本身可以单独探：
-  ```bash
-  # 想在应用里探（绕开浏览器的跨域限制），用 CDP：
-  # WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--in-process-gpu --remote-debugging-port=9333" npm run tauri:dev
-  # 然后在主窗口 fetch("http://lattice-widget.localhost/<id>/index.html")
-  ```
-  预期：真文件 200 + 正确 `Content-Type`，`..` / 大写 id / 不存在的组件全部 404。
+- 改了协议 / 安装链路：拿 `examples/counter` 当样本 —— 拖进窗口 → 出现在「已安装」→ 放到画布 → 授权 `storage` → 点几下 → 看 `%APPDATA%\com.iron-tom.lattice\widget-data\demo.counter.json` 有没有写进去。协议本身只能在应用里探（浏览器态没有 Rust，`lattice-widget.localhost` 压根不解析）：预期真文件 200 + 正确 `Content-Type`，`..` / 大写 id / 不存在的组件全部 404。
+- **驱动真机 UI 用键盘，不要用合成鼠标**。`SendInput` 的键盘事件能进 WebView2（`SetForegroundWindow` 之后发 `Ctrl+R` 能刷新、往输入框打字能落盘），但 `mouse_event` 的点击进不去：悬停生效（tooltip 会弹）、click 不生效。另外 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=…` 对 Tauri 无效（Tauri 自己设了 additional args，覆盖掉了），端口不会起来，别指望用 CDP 连真机。要验 UI 就在 `npm run dev` 的浏览器态用 CDP，真机只用来看"实际长什么样"。
+- 抓真机窗口用 `PrintWindow(hwnd, hdc, 2 /*PW_RENDERFULLCONTENT*/)`，被别的窗口盖住也能抓到；配合 `ShowWindow(h, 4 /*SHOWNOACTIVATE*/)` 不抢用户焦点。
 - 提交信息用 `feat:` / `fix:` / `docs:` / `chore:` 前缀，一句话说清"改了什么"，不写"update file"。

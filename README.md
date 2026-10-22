@@ -14,6 +14,8 @@ Once they are out there, windows can be dragged, resized and pinned, and both th
 
 Third-party widgets work too: drop a folder into the window and it is installed, copied into `%APPDATA%` and served over the `lattice-widget` protocol. [`examples/counter`](./examples/counter) is a sample you can drag straight in.
 
+Both side panels collapse to a 40px rail when you want the whole canvas, and every package can ship its own icon: the library card, the canvas title bar and the inspector all draw it instead of a letter tile.
+
 The current UI, with the settings menu open:
 
 ![The platform UI](docs/screenshot-settings.png)
@@ -70,11 +72,11 @@ From skeleton to genuinely-on-the-desktop in a single day. The code-size steps a
 | 09:54 | First runnable demo | 1,553 / 358 / 680 |
 | 11:22 | Widgets really on the desktop | 1,782 / 712 / 680 |
 | 12:31 | Window chrome + file-backed state | 2,282 / 1,123 / 868 |
-| Now | Third-party protocol, typing, storage sync, settings | 3,216 / 1,649 / 1,757 |
+| Now | Third-party protocol, typing, storage sync, settings, collapsible panels, widget icons | 3,433 / 1,649 / 1,834 |
 
 More interesting than the numbers are the **six overturned decisions**: per-pixel transparency that could not work, a `localStorage` that never reached disk, `NOACTIVATE` making the note untypeable, the host page building the wrong URL for user widgets, two instances each holding their own list and eating the to-dos, and a self-managed window table that deadlocked itself. Each one records why it was chosen, what knocked it over, how it was fixed, and what it cost.
 
-The 27 entries in "Pitfalls" are a by-product of the same process, and the most valuable part of this repository — they record the temper of this particular machine, not general dogma.
+The 28 entries in "Pitfalls" are a by-product of the same process, and the most valuable part of this repository — they record the temper of this particular machine, not general dogma.
 
 ## The platform is empty
 
@@ -124,6 +126,7 @@ If you are taking over this repository (or you are a different model / person), 
 
 ```
 AGENTS.md            Onboarding: read this first
+LICENSE              MIT
 src/
   platform/          Platform shell: canvas, library, inspector, state
   runtime/           Widget runtime: manifest validation, registry, RPC bridge
@@ -150,6 +153,7 @@ docs/
 public/widgets/lattice.hello/
   manifest.json
   index.html
+  icon.svg
   widget.js
 ```
 
@@ -159,6 +163,7 @@ public/widgets/lattice.hello/
   "name": "Hello",
   "version": "0.1.0",
   "entry": "index.html",
+  "icon": "icon.svg",
   "size": { "w": 200, "h": 100, "minW": 120, "minH": 60 },
   "layer": "desktop",
   "permissions": ["clock"]
@@ -171,4 +176,4 @@ Widgets call platform capabilities with `parent.postMessage({ __lattice: 1, type
 
 ## License
 
-MIT
+[MIT](./LICENSE)

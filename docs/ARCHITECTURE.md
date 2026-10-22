@@ -119,6 +119,7 @@ window.addEventListener("message", (event) => {
 lattice.clock/
   manifest.json    清单（契约）
   index.html       入口
+  icon.svg         图标（可选，清单的 icon 指过来）
   widget.js        逻辑
   style.css        样式
 ```
@@ -180,5 +181,5 @@ z 序守卫是 v0.2 补的：可激活的窗口被点中时，Windows 会顺手�
 | 每个组件一个 WebView | 内存随组件数线性涨 | 崩溃隔离、独立 DPI、独立输入焦点都靠它；同一 WebView 装多组件的方案留到性能告急时再评估 |
 | 用户组件走自定义协议，不走 `file://` | 多一层协议代码、Windows 上 URL 形式特殊 | `file://` 没有源隔离，组件能直接读整个磁盘 |
 | `csp: null` | 没有 CSP 兜底 | 组件源不统一（应用源 + 协议源），先让两套都能跑，等 SDK 定型再一起锁 |
-| 不引入 Tailwind | 手写 CSS 更长（1 757 行） | 定制工作台用变量层更可控，少一个构建依赖，组件也只认 `--lattice-*` |
+| 不引入 Tailwind | 手写 CSS 更长（1 834 行） | 定制工作台用变量层更可控，少一个构建依赖，组件也只认 `--lattice-*` |
 | 本机档案不是账号系统 | "登录"只写本地 `state.json` | 没有服务端。文案上明说"只保存在这台电脑"，免得被当成云端账号；真做同步时换 `signIn/signOut` 即可 |

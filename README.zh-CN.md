@@ -14,6 +14,8 @@ v0.2 是**能真的贴到桌面上的 demo**：平台开箱是空白的，安装
 
 第三方组件也能用：把整个文件夹拖进窗口就装好了，文件落在 `%APPDATA%`，经 `lattice-widget` 协议加载。[`examples/counter`](./examples/counter) 是一个可以直接拖进去的样本。
 
+两侧面板都能收成 40px 竖条，把整块画布让出来；每个组件包也可以自带图标——组件库卡片、画布标题条、属性面板画的都是它，不再是"名字首字"的色块。
+
 现在的界面（设置菜单展开）：
 
 ![平台界面](docs/screenshot-settings.png)
@@ -70,11 +72,11 @@ v0.2 是**能真的贴到桌面上的 demo**：平台开箱是空白的，安装
 | 09:54 | 第一个能跑的 demo | 1 553 / 358 / 680 |
 | 11:22 | 组件真的贴到桌面 | 1 782 / 712 / 680 |
 | 12:31 | 窗饰 + 状态落盘 | 2 282 / 1 123 / 868 |
-| 现在 | 用户组件协议、可输入、存储同步、设置 | 3 216 / 1 649 / 1 757 |
+| 现在 | 用户组件协议、可输入、存储同步、设置、面板收起与组件图标 | 3 433 / 1 649 / 1 834 |
 
 比数字更有意思的是**六个被推翻的决定**：逐像素透明做不出来、`localStorage` 不落盘、`NOACTIVATE` 让便签打不了字、宿主页拼不对用户组件的路径、两个实例各持一份列表把待办吃掉、自己维护窗口表把自己锁死。每一个都写着当初为什么这么选、被什么撞翻、现在怎么补、代价是什么。
 
-那 27 条「踩过的坑」是同一个过程的副产品，也是这个仓库最值钱的部分——它记的是这台机器的脾气，不是通用教条。
+那 28 条「踩过的坑」是同一个过程的副产品，也是这个仓库最值钱的部分——它记的是这台机器的脾气，不是通用教条。
 
 ## 平台是空白的
 
@@ -124,6 +126,7 @@ npm run tauri:build   # 出安装包：src-tauri/target/release/bundle/nsis
 
 ```
 AGENTS.md            接手文档：换模型 / 换人时先读这一页
+LICENSE              MIT
 src/
   platform/          平台外壳：画布、组件库、属性面板、平台状态
   runtime/           组件运行时：manifest 校验、注册表、RPC 桥
@@ -150,6 +153,7 @@ docs/
 public/widgets/lattice.hello/
   manifest.json
   index.html
+  icon.svg
   widget.js
 ```
 
@@ -159,6 +163,7 @@ public/widgets/lattice.hello/
   "name": "你好",
   "version": "0.1.0",
   "entry": "index.html",
+  "icon": "icon.svg",
   "size": { "w": 200, "h": 100, "minW": 120, "minH": 60 },
   "layer": "desktop",
   "permissions": ["clock"]
@@ -171,4 +176,4 @@ public/widgets/lattice.hello/
 
 ## 许可
 
-MIT
+[MIT](./LICENSE)
