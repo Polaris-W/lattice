@@ -11,6 +11,8 @@
 
 pub mod desktop;
 pub mod runner;
+pub mod state;
+pub mod widget_store;
 pub mod widgets;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -39,9 +41,20 @@ pub fn run() {
             widgets::install_widget,
             widgets::uninstall_widget,
             desktop::apply_window_layer,
+            state::state_read,
+            state::state_write,
+            state::state_clear,
+            widget_store::widget_store_read,
+            widget_store::widget_store_write,
+            widget_store::widget_store_clear,
             runner::sync_widget_windows,
             runner::close_widget_windows,
             runner::widget_host_config,
+            runner::widget_report_rect,
+            runner::widget_set_pinned,
+            runner::widget_set_layer,
+            runner::widget_close,
+            runner::widget_set_theme,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Lattice 失败");

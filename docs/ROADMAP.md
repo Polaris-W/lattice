@@ -22,10 +22,16 @@
 - [x] **每个组件一个 WebviewWindow** —— 由 Placement 派生真实窗口，主窗口最小化退场
 - [x] **层级实机接入** —— `desktop.rs` 的 `apply_window_layer` 已接进窗口创建流程
 - [x] **圆角** —— `SetWindowRgn` 把窗口裁成圆角矩形（见下方"踩过的坑"）
+- [x] **桌面窗口的窗饰** —— 右上角四个功能图标（拖动 / 层级 / 别针 / 收回）+ 八向缩放手柄，全部由宿主页 `widgetHost.ts` 自绘，组件不参与
+- [x] **别针锁定** —— `placement.pinned` 落到 Win32 之外的一层：锁住后拖拽与缩放手柄整体禁用，光标也跟着变
+- [x] **位置与尺寸回写** —— 松手时把窗口矩形报回主窗口，存进 `desktopRects`，下次投放优先用它
+- [x] **状态落盘** —— 平台状态与组件私有存储都写文件（`%APPDATA%\com.iron-tom.lattice`），重启不丢
+- [x] **主题热更新** —— 平台切明暗时广播给所有桌面窗口，不用重开
 - [ ] **`lattice-widget://` 自定义协议** —— 让用户安装的组件能从磁盘加载，这是当前最大的缺口
 - [ ] 多显示器与 PerMonitorV2 DPI 处理
 - [ ] 托盘图标：显示设置、暂停全部组件、退出
 - [ ] 组件加载失败的可视化错误卡片（当前是"待接入"占位）
+- [ ] 重启后自动把组件放回桌面（当前重启回到设计态，是刻意的：先让用户看见画布）
 
 验收标准：关掉主窗口后，桌面上的组件仍在，切窗口不被遮挡，点击不抢焦点。
 
@@ -41,6 +47,10 @@
 | `layer: desktop` 的组件跑到了最上层                                  | `window.show()` 在 `apply_to` 之后调用，ShowWindow 会把窗口重新提到最前                                    | 先 `show()` 再应用层级                                                  |
 | 投放之后组件"消失"，`GetWindowRect` 显示在 -31000 一带                   | 主窗口最小化后 `window.screenX/screenY` 变成 `-32000` 哨兵值，防抖同步拿它重算画布原点，把窗口 `set_position` 到屏幕外      | 缓存上一次可信的原点，遇到哨兵值退回缓存                                             |
 | `cargo build` 报 `export ordinal too large: 92606`           | `crate-type` 里有 `cdylib`，windows-gnu 要导出巨大符号表                                              | 只留 `rlib`                                                         |
+| 组件内容明明写了 `background: transparent`，桌面卡片却是一块白板        | 平台在 `:root` 上设了 `color-scheme: dark`，它会继承进 iframe 元素、变成被嵌入文档的初始 color-scheme；只要不是 `normal`，Chromium 就给 iframe 画布刷一层不透明底色 | `iframe { color-scheme: normal }`（`widgetHost.css` 与 `styles.css` 各一处） |
+| 缩放手柄"点不准"，正对着窗口角点按下去会穿到桌面                    | 窗口被 `SetWindowRgn` 裁成圆角后，圆角弧线外侧那几个像素不属于窗口，鼠标事件到不了                            | 四个角的手柄放大到 18px，让弧线以内的部分也落在手柄里；这是圆角窗口的固有代价，Windows 自己的窗口也一样 |
+| 重启之后布局全丢，`localStorage` 里空空如也                        | 这台机器的 WebView2 把 localStorage 全放内存里，`EBWebView/Default/Local Storage` 从没被创建过（优雅退出也一样） | 状态改为显式写文件：`state.json` + `widget-data/<组件>.json`，走原子替换          |
+| `layer: desktop` 的窗口其实没挂到 WorkerW                       | 部分 Win11 版本 `Progman` 自己承载 `SHELLDLL_DefView`，`0x052C` 之后也不会派生 WorkerW 兄弟窗口，查找返回 None | 已有降级：退成 `HWND_BOTTOM`，仍在所有普通窗口之下；真挂载留给后续版本                  |
 
 ### 环境与构建（windows-gnu）
 

@@ -1,7 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "widget",
-  "description": "桌面组件窗口：只需要能关掉自己",
+  "description": "桌面组件窗口：能关掉自己，也能被拖动、缩放（窗饰由宿主页驱动）",
   "windows": ["widget-*"],
-  "permissions": ["core:default", "core:window:allow-close"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-set-position",
+    "core:window:allow-set-size",
+    "core:window:allow-scale-factor",
+    "core:window:allow-inner-size",
+    "core:window:allow-outer-position"
+  ]
 }

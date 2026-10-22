@@ -470,6 +470,9 @@ button {
   background: transparent;
   display: block;
   min-height: 0;
+  /* 同 widgetHost.css：不重置的话，平台的 color-scheme 会继承进 iframe，
+     让组件文档的画布变成不透明底色，卡片底色和深色主题全都透不出来 */
+  color-scheme: normal;
 }
 
 .lattice-resize-handle {

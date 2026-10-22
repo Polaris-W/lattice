@@ -9,6 +9,7 @@
  *    这样组件能优雅降级（例如不显示剪贴板按钮）。
  */
 
+import { invoke } from "@tauri-apps/api/core";
 import type { Permission } from "./manifest";
 
 export const BRIDGE_TAG = "__lattice";
@@ -124,6 +125,54 @@ export async function handleBridgeRequest(
 
 const STORAGE_PREFIX = "lattice.widget.store.";
 
+/**
+ * 组件私有存储：一个包一个 JSON 文件，整块读整块写。
+ *
+ * 浏览器预览里退回 localStorage（按包存一份 map），桌面端走 Rust 落盘。
+ * 加一层内存缓存，免得组件每次 set 都往返一次 IPC。
+ */
+const storeCache = new Map<string, Record<string, unknown>>();
+
+function bridgeInTauri(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+async function loadStore(widgetId: string): Promise<Record<string, unknown>> {
+  const cached = storeCache.get(widgetId);
+  if (cached) return cached;
+
+  let raw: string | null = null;
+  if (bridgeInTauri()) {
+    raw = await invoke<string | null>("widget_store_read", { widgetId });
+  } else {
+    raw = localStorage.getItem(`${STORAGE_PREFIX}${widgetId}`);
+  }
+
+  let map: Record<string, unknown> = {};
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        map = parsed as Record<string, unknown>;
+      }
+    } catch {
+      map = {};
+    }
+  }
+  storeCache.set(widgetId, map);
+  return map;
+}
+
+async function saveStore(widgetId: string, map: Record<string, unknown>): Promise<void> {
+  storeCache.set(widgetId, map);
+  const json = JSON.stringify(map);
+  if (bridgeInTauri()) {
+    await invoke("widget_store_write", { widgetId, json });
+  } else {
+    localStorage.setItem(`${STORAGE_PREFIX}${widgetId}`, json);
+  }
+}
+
 defineMethod("clock.now", "clock", () => ({
   now: new Date().toISOString(),
   epochMs: Date.now(),
@@ -131,27 +180,27 @@ defineMethod("clock.now", "clock", () => ({
   utcOffsetMinutes: -new Date().getTimezoneOffset(),
 }));
 
-defineMethod("storage.get", "storage", (params, ctx) => {
+defineMethod("storage.get", "storage", async (params, ctx) => {
   const key = readKey(params);
-  const raw = localStorage.getItem(storageKey(ctx.widgetId, key));
-  if (raw === null) return null;
-  try {
-    return JSON.parse(raw) as unknown;
-  } catch {
-    return null;
-  }
+  const map = await loadStore(ctx.widgetId);
+  return key in map ? map[key] : null;
 });
 
-defineMethod("storage.set", "storage", (params, ctx) => {
+defineMethod("storage.set", "storage", async (params, ctx) => {
   const key = readKey(params);
   const value = (params as { value?: unknown }).value ?? null;
-  localStorage.setItem(storageKey(ctx.widgetId, key), JSON.stringify(value));
+  const map = await loadStore(ctx.widgetId);
+  await saveStore(ctx.widgetId, { ...map, [key]: value });
   return { ok: true };
 });
 
-defineMethod("storage.remove", "storage", (params, ctx) => {
+defineMethod("storage.remove", "storage", async (params, ctx) => {
   const key = readKey(params);
-  localStorage.removeItem(storageKey(ctx.widgetId, key));
+  const map = await loadStore(ctx.widgetId);
+  if (!(key in map)) return { ok: true };
+  const next = { ...map };
+  delete next[key];
+  await saveStore(ctx.widgetId, next);
   return { ok: true };
 });
 
@@ -170,10 +219,6 @@ defineMethod("window.close", null, (_params, ctx) => {
   ctx.close();
   return { ok: true };
 });
-
-function storageKey(widgetId: string, key: string): string {
-  return `${STORAGE_PREFIX}${widgetId}:${key}`;
-}
 
 function readKey(params: unknown): string {
   const key = (params as { key?: unknown } | undefined)?.key;

@@ -13,11 +13,12 @@
        * 用 SetWindowRgn 把窗口裁成圆角矩形，所以这里必须画满整块矩形，
        * 形状交给裁剪决定。
        */
-      html,
-      body {
+      html body {
         margin: 0;
         height: 100%;
         overflow: hidden;
+        /* 用 surface 而不是 bg：卡片是浮在桌面上的，比底色亮一档更像一块玻璃。
+           选择器写成 html body 是为了压过平台样式里的 body 规则 */
         background: var(--lattice-surface, #1d1d21);
       }
 

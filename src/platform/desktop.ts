@@ -10,7 +10,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Permission } from "../runtime/manifest";
 import type { WidgetRecord } from "../runtime/registry";
-import type { Placement } from "./store";
+import type { DesktopRect, Placement } from "./store";
 
 export interface WidgetWindowSpec {
   instanceId: string;
@@ -21,8 +21,11 @@ export interface WidgetWindowSpec {
   y: number;
   w: number;
   h: number;
+  minW: number;
+  minH: number;
   layer: "desktop" | "top";
   clickThrough: boolean;
+  pinned: boolean;
   /** 平台当前解析出的明暗，桌面窗口据此上色 */
   theme: "light" | "dark";
 }
@@ -55,6 +58,7 @@ export function buildSpecs(
   placements: Placement[],
   records: Map<string, WidgetRecord>,
   grants: Record<string, Permission[]>,
+  desktopRects: Record<string, DesktopRect>,
 ): WidgetWindowSpec[] {
   const origin = canvasOrigin();
   const theme = currentTheme();
@@ -64,17 +68,23 @@ export function buildSpecs(
     const record = records.get(placement.widgetId);
     if (!record) continue;
     const entry = record.manifest.entry.replace(/^\/+/, "");
+    // 桌面上摆过就以那次为准 —— 用户拖到哪儿就该待在哪儿，
+    // 画布坐标只在第一次投放时用来给个初始位置
+    const placed = desktopRects[placement.instanceId];
     specs.push({
       instanceId: placement.instanceId,
       widgetId: placement.widgetId,
       entry: `widgets/${placement.widgetId}/${entry}`,
       permissions: grants[placement.widgetId] ?? [],
-      x: Math.round(origin.x + placement.x),
-      y: Math.round(origin.y + placement.y),
-      w: placement.w,
-      h: placement.h,
+      x: Math.round(placed ? placed.x : origin.x + placement.x),
+      y: Math.round(placed ? placed.y : origin.y + placement.y),
+      w: Math.round(placed ? placed.w : placement.w),
+      h: Math.round(placed ? placed.h : placement.h),
+      minW: record.manifest.size.minW,
+      minH: record.manifest.size.minH,
       layer: placement.layer,
       clickThrough: placement.clickThrough,
+      pinned: placement.pinned ?? false,
       theme,
     });
   }

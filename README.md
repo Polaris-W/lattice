@@ -8,6 +8,8 @@
 
 v0.2 是**能真的贴到桌面上的 demo**：平台开箱是空白的，安装官方组件包后把组件摆到画布上，组件在沙箱 iframe 里真实运行，通过 RPC 桥调用平台能力，权限逐项授予。点"投放到桌面"，每个组件变成一个独立的无边框窗口，主窗口最小化退场。
 
+落到桌面上之后，窗口能拖、能缩、能用别针锁住，布局与组件数据重启不丢。
+
 ![安装官方组件包后](docs/screenshot.png)
 
 ## 组件真的在桌面上
@@ -22,6 +24,35 @@ v0.2 是**能真的贴到桌面上的 demo**：平台开箱是空白的，安装
 - `layer: desktop` 的组件挂到 WorkerW（拿不到时降级 `HWND_BOTTOM`），沉在普通窗口之下；`layer: top` 的走 `HWND_TOPMOST`
 - 窗口无边框、不进任务栏、`WS_EX_NOACTIVATE` 不抢焦点，形状由 `SetWindowRgn` 裁成圆角
 - 画布上继续拖动、改层级，桌面窗口跟着走（120ms 防抖增量同步）
+
+## 桌面窗口能直接摆弄
+
+![桌面组件与窗饰](docs/screenshot-chrome.png)
+
+组件浮在桌面上之后，把鼠标移到它身上，右上角浮出一排功能图标——这些是**宿主页画的，不是组件画的**，组件完全不用操心自己怎么被搬动：
+
+| 图标 | 做什么 |
+| --- | --- |
+| ⣿ 拖动 | 按住搬窗口。用 `setPointerCapture` 跟踪指针，拖出窗口甚至拖出屏幕都不会断线 |
+| ↓ / ↑ 层级 | 在"贴桌面"与"置顶"之间切换，立刻作用到 Win32 的 z-order |
+| ⚲ 别针 | 锁住位置与大小。锁上之后拖拽和八条缩放手柄整体禁用，光标也跟着变成默认箭头 |
+| ✕ 收回 | 关掉这个窗口，并把 placement 从画布上删掉（不是藏起来） |
+
+八向缩放手柄贴着窗口边，四个角给了 18px 的余量——窗口被裁成圆角之后，圆角弧线外侧那几个像素压根不属于这个窗口，手柄得往里让一截才点得到。
+
+松手时窗口矩形会报回主窗口存进 `desktopRects`，**下次投放优先用它**，而不是从画布坐标重新推。
+
+## 布局是真的记住了
+
+平台的落盘不用 `localStorage`：这台机器上的 WebView2 把它整个放在内存里，进程一退就没了。改成显式写文件：
+
+```
+%APPDATA%\com.iron-tom.lattice\
+  state.json                  摆放、已安装、授权、主题、桌面矩形
+  widget-data\lattice.note.json   组件私有存储，一个包一个文件
+```
+
+写入走"临时文件 + 原子替换"，写到一半断电也不会留下半截 JSON。组件私有存储也走同一条路（`storage.get / set / remove` 三个桥方法背后是 Rust 的文件读写），所以便签里的字、待办里的勾，重启之后都还在。
 
 ## 平台是空白的
 
@@ -43,14 +74,14 @@ v0.2 是**能真的贴到桌面上的 demo**：平台开箱是空白的，安装
 
 ## 技术栈
 
-| 层 | 选型 | 为什么 |
-| --- | --- | --- |
-| 外壳 / 窗口 | Tauri 2 + `windows-sys` | 常驻应用对内存敏感；Win32 行为要直调 |
-| UI | React 19 + TypeScript | 与组件生态一致 |
-| 构建 | Vite 8 | 快，且与 Tauri 官方模板对齐 |
-| 状态 | Zustand（带 persist） | 平台状态很浅，不需要更重的东西 |
-| 样式 | 纯 CSS + CSS 变量 | 定制工作台，变量层比工具类更可控 |
-| 组件运行时 | 沙箱 iframe + postMessage RPC | 见 [ARCHITECTURE](./docs/ARCHITECTURE.md) |
+| 层       | 选型                          | 为什么                                      |
+| ------- | --------------------------- | ---------------------------------------- |
+| 外壳 / 窗口 | Tauri 2 + `windows-sys`     | 常驻应用对内存敏感；Win32 行为要直调                    |
+| UI      | React 19 + TypeScript       | 与组件生态一致                                  |
+| 构建      | Vite 8                      | 快，且与 Tauri 官方模板对齐                        |
+| 状态      | Zustand + 自定义落盘适配器           | 平台状态很浅，不需要更重的东西；存储层换成文件，避开 WebView2 的 localStorage 内存化    |
+| 样式      | 纯 CSS + CSS 变量              | 定制工作台，变量层比工具类更可控                         |
+| 组件运行时   | 沙箱 iframe + postMessage RPC | 见 [ARCHITECTURE](./docs/ARCHITECTURE.md) |
 
 ## 快速开始
 
@@ -75,8 +106,10 @@ public/widgets/      官方组件包（未安装前只是"可安装"）
 scripts/             构建辅助（生成组件索引）
 src-tauri/
   src/widgets.rs     组件包扫描 / 安装 / 卸载
-  src/runner.rs      运行态：Placement → 真实窗口的增量同步
+  src/runner.rs      运行态：Placement → 真实窗口的增量同步、窗口控件回传
   src/desktop.rs     窗口层级、圆角裁剪、鼠标穿透、焦点行为（Win32）
+  src/state.rs       平台状态落盘（state.json，原子替换）
+  src/widget_store.rs 组件私有存储落盘（widget-data/<id>.json）
 docs/
   ARCHITECTURE.md    架构与取舍
   WIDGET_SPEC.md     组件规范（写组件看这个）
@@ -104,7 +137,7 @@ public/widgets/lattice.hello/
 }
 ```
 
-组件里用 `parent.postMessage({ __lattice: 1, type: "request", id, method, params }, "*")` 调平台能力，完整协议见 [WIDGET_SPEC](./docs/WIDGET_SPEC.md)。改完执行 `npm run widgets:index` 让平台发现新组件。
+组件里用 `parent.postMessage({ __lattice: 1, type: "request", id, method, params }, "*")` 调平台能力，完整协议见 [WIDGET\_SPEC](./docs/WIDGET_SPEC.md)。改完执行 `npm run widgets:index` 让平台发现新组件。
 
 ## 许可
 

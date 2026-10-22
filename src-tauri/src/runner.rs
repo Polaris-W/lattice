@@ -21,8 +21,12 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, WebviewUrl,
+    WebviewWindowBuilder,
+};
 
 use crate::desktop::{self, WindowLayer};
 
@@ -42,8 +46,13 @@ pub struct WidgetWindowSpec {
     pub y: f64,
     pub w: f64,
     pub h: f64,
+    /// 清单里声明的最小尺寸，宿主页缩放时据此夹紧
+    pub min_w: f64,
+    pub min_h: f64,
     pub layer: WindowLayer,
     pub click_through: bool,
+    /// 别针：锁住位置与大小，宿主页把拖拽/缩放手柄收掉
+    pub pinned: bool,
     /// 平台当前解析出来的明暗，桌面窗口据此上色，
     /// 不跟随系统 —— 否则用户把平台切成深色，桌面卡片还是白的
     pub theme: String,
@@ -52,10 +61,46 @@ pub struct WidgetWindowSpec {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostConfig {
+    pub instance_id: String,
     pub widget_id: String,
     pub entry: String,
     pub permissions: Vec<String>,
     pub theme: String,
+    pub pinned: bool,
+    pub min_w: f64,
+    pub min_h: f64,
+    pub layer: WindowLayer,
+    pub click_through: bool,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RectPayload {
+    instance_id: String,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PinnedPayload {
+    instance_id: String,
+    pinned: bool,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LayerPayload {
+    instance_id: String,
+    layer: WindowLayer,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InstancePayload {
+    instance_id: String,
 }
 
 /// 只存宿主页启动时要问的那点东西，按窗口 label 索引
@@ -70,10 +115,20 @@ pub struct Runner {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Applied {
-    layer: WindowLayer,
-    click_through: bool,
+    x: f64,
+    y: f64,
     w: f64,
     h: f64,
+    layer: WindowLayer,
+    click_through: bool,
+}
+
+/// 这次同步相对上次真正写进 Win32 的状态，哪些维度变了
+#[derive(Debug, Default, Clone, Copy)]
+struct Change {
+    pos: bool,
+    size: bool,
+    layer: bool,
 }
 
 impl Runner {
@@ -96,16 +151,53 @@ impl Runner {
         }
     }
 
-    /// 状态有变化才返回 true
-    fn needs_apply(&self, label: &str, next: Applied) -> bool {
-        let Ok(mut map) = self.applied.lock() else {
-            return true;
-        };
-        if map.get(label) == Some(&next) {
-            return false;
+    /// 记住某个窗口刚被写进去的状态（新建窗口时用，避免第一次同步重复写）
+    fn remember(&self, label: &str, applied: Applied) {
+        if let Ok(mut map) = self.applied.lock() {
+            map.insert(label.to_string(), applied);
         }
-        map.insert(label.to_string(), next);
-        true
+    }
+
+    /// 只改层级那一格，位置和尺寸保持原样。
+    ///
+    /// 这里必须"就地改"，不能整条覆盖 —— 覆盖成 0 的话，下一次同步会以为
+    /// 位置变了，把窗口 set_position 到左上角去。
+    fn patch_layer(&self, label: &str, layer: WindowLayer, click_through: bool) {
+        if let Ok(mut map) = self.applied.lock() {
+            if let Some(entry) = map.get_mut(label) {
+                entry.layer = layer;
+                entry.click_through = click_through;
+            }
+        }
+    }
+
+    /// 比对并记录：返回 None 表示这一轮什么都不用做。
+    ///
+    /// 只写变化的部分不只是省开销 —— 用户在桌面上拖动组件时，
+    /// 那条 120ms 防抖同步如果无条件 set_position，就会把窗口拽回去。
+    /// 位置没变就一根手指都不碰窗口，拖动才不会被抢。
+    fn diff(&self, label: &str, next: Applied) -> Option<Change> {
+        let mut map = self.applied.lock().ok()?;
+        match map.get(label) {
+            Some(prev) if *prev == next => None,
+            Some(prev) => {
+                let change = Change {
+                    pos: prev.x != next.x || prev.y != next.y,
+                    size: prev.w != next.w || prev.h != next.h,
+                    layer: prev.layer != next.layer || prev.click_through != next.click_through,
+                };
+                map.insert(label.to_string(), next);
+                Some(change)
+            }
+            None => {
+                map.insert(label.to_string(), next);
+                Some(Change {
+                    pos: true,
+                    size: true,
+                    layer: true,
+                })
+            }
+        }
     }
 }
 
@@ -125,10 +217,16 @@ fn create(app: &AppHandle, spec: &WidgetWindowSpec, runner: &Runner) -> Result<(
     runner.put(
         &label,
         HostConfig {
+            instance_id: spec.instance_id.clone(),
             widget_id: spec.widget_id.clone(),
             entry: spec.entry.clone(),
             permissions: spec.permissions.clone(),
             theme: spec.theme.clone(),
+            pinned: spec.pinned,
+            min_w: spec.min_w,
+            min_h: spec.min_h,
+            layer: spec.layer,
+            click_through: spec.click_through,
         },
     );
 
@@ -137,6 +235,8 @@ fn create(app: &AppHandle, spec: &WidgetWindowSpec, runner: &Runner) -> Result<(
         .inner_size(spec.w, spec.h)
         .position(spec.x, spec.y)
         .decorations(false)
+        // 尺寸由宿主页自己算（它要知道最小尺寸、也要在拖边时同步移动窗口），
+        // 所以窗口本身不开可调整，避免系统边框和自绘手柄打架
         .resizable(false)
         .shadow(false)
         .skip_taskbar(true)
@@ -151,6 +251,20 @@ fn create(app: &AppHandle, spec: &WidgetWindowSpec, runner: &Runner) -> Result<(
         }
     };
 
+    // 缩放时窗口尺寸变了，圆角裁剪区域得跟着重算。
+    // 放在 Rust 里做，省掉"上报前端 → 存 store → 再同步回来"这一圈，拖动边缘才跟手。
+    if let Ok(handle) = window.window_handle() {
+        if let RawWindowHandle::Win32(win32) = handle.as_raw() {
+            let hwnd = win32.hwnd.get();
+            let radius = desktop::CORNER_RADIUS * window.scale_factor().unwrap_or(1.0);
+            window.on_window_event(move |event| {
+                if let tauri::WindowEvent::Resized(size) = event {
+                    let _ = desktop::clip_rounded(hwnd, size.width, size.height, radius);
+                }
+            });
+        }
+    }
+
     // 先显示再落到层级：ShowWindow 会把窗口提到最前，
     // 顺序反过来的话，刚压到 HWND_BOTTOM / WorkerW 的窗口又被顶上去了
     let _ = window.show();
@@ -158,13 +272,15 @@ fn create(app: &AppHandle, spec: &WidgetWindowSpec, runner: &Runner) -> Result<(
         // 层级失败不该让整个同步失败：窗口已经建好了，至少先让人看见
         eprintln!("[lattice] 应用窗口层级失败（{label}）：{error}");
     } else {
-        runner.needs_apply(
+        runner.remember(
             &label,
             Applied {
-                layer: spec.layer,
-                click_through: spec.click_through,
+                x: spec.x,
+                y: spec.y,
                 w: spec.w,
                 h: spec.h,
+                layer: spec.layer,
+                click_through: spec.click_through,
             },
         );
     }
@@ -206,21 +322,27 @@ pub async fn sync_widget_windows(
         let label = label_for(&spec.instance_id);
         match app.get_webview_window(&label) {
             Some(window) => {
-                // 位置每次写：拖动时这一步就是全部开销，也最便宜
-                let _ = window.set_position(LogicalPosition::new(spec.x, spec.y));
-                let _ = window.set_size(LogicalSize::new(spec.w, spec.h));
-
                 let next = Applied {
-                    layer: spec.layer,
-                    click_through: spec.click_through,
+                    x: spec.x,
+                    y: spec.y,
                     w: spec.w,
                     h: spec.h,
+                    layer: spec.layer,
+                    click_through: spec.click_through,
                 };
-                if runner.needs_apply(&label, next) {
-                    if let Err(error) =
-                        desktop::apply_to(&window, spec.layer, spec.click_through)
-                    {
-                        eprintln!("[lattice] 更新窗口层级失败（{label}）：{error}");
+                if let Some(change) = runner.diff(&label, next) {
+                    if change.pos {
+                        let _ = window.set_position(LogicalPosition::new(spec.x, spec.y));
+                    }
+                    if change.size {
+                        let _ = window.set_size(LogicalSize::new(spec.w, spec.h));
+                    }
+                    if change.layer {
+                        if let Err(error) =
+                            desktop::apply_to(&window, spec.layer, spec.click_through)
+                        {
+                            eprintln!("[lattice] 更新窗口层级失败（{label}）：{error}");
+                        }
                     }
                 }
             }
@@ -263,4 +385,141 @@ pub fn widget_host_config(
     runner
         .get(window.label())
         .ok_or_else(|| format!("窗口 {} 没有登记组件配置", window.label()))
+}
+
+// ---------------------------------------------------------------------------
+// 宿主页 → 主窗口的动作通道
+//
+// 组件窗口和主窗口是两个 webview，彼此看不见对方的状态。宿主页上用户拖了、
+// 缩了、点了别针，都要经由 Rust 转一手：Rust 改自己那份配置、必要时直接落到
+// Win32，然后 emit 给主窗口，让 store 记下来。
+//
+// 为什么不让宿主页直接改 store：它没有 store，也不该有 —— 组件窗口只是渲染层。
+// ---------------------------------------------------------------------------
+
+/// 用户在桌面上拖完/缩完之后上报真实矩形
+#[tauri::command]
+pub fn widget_report_rect(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    runner: State<'_, Runner>,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) -> Result<(), String> {
+    let config = runner
+        .get(window.label())
+        .ok_or_else(|| "这个窗口不在组件窗口表里".to_string())?;
+
+    // 顺手把缓存更新掉：下一次同步就不会再拿旧坐标去 set_position
+    runner.remember(
+        window.label(),
+        Applied {
+            x,
+            y,
+            w,
+            h,
+            layer: config.layer,
+            click_through: config.click_through,
+        },
+    );
+
+    let _ = app.emit_to(
+        "main",
+        "lattice:widget-rect",
+        RectPayload {
+            instance_id: config.instance_id,
+            x,
+            y,
+            w,
+            h,
+        },
+    );
+    Ok(())
+}
+
+/// 别针开关
+#[tauri::command]
+pub fn widget_set_pinned(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    runner: State<'_, Runner>,
+    pinned: bool,
+) -> Result<(), String> {
+    let mut config = runner
+        .get(window.label())
+        .ok_or_else(|| "这个窗口不在组件窗口表里".to_string())?;
+    config.pinned = pinned;
+    runner.put(window.label(), config.clone());
+
+    let _ = app.emit_to(
+        "main",
+        "lattice:widget-pinned",
+        PinnedPayload {
+            instance_id: config.instance_id,
+            pinned,
+        },
+    );
+    Ok(())
+}
+
+/// 层级切换：贴桌面 / 置顶
+#[tauri::command]
+pub fn widget_set_layer(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    runner: State<'_, Runner>,
+    layer: WindowLayer,
+) -> Result<(), String> {
+    let mut config = runner
+        .get(window.label())
+        .ok_or_else(|| "这个窗口不在组件窗口表里".to_string())?;
+    config.layer = layer;
+    runner.put(window.label(), config.clone());
+
+    // 立即落到 Win32，不等主窗口那一圈同步，点完马上就能看到效果
+    desktop::apply_to(&window, layer, config.click_through)?;
+    runner.patch_layer(window.label(), layer, config.click_through);
+
+    let _ = app.emit_to(
+        "main",
+        "lattice:widget-layer",
+        LayerPayload {
+            instance_id: config.instance_id,
+            layer,
+        },
+    );
+    Ok(())
+}
+
+/// 收回这一个组件（不只是关窗口，还要让主窗口把 placement 删掉）
+#[tauri::command]
+pub async fn widget_close(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    runner: State<'_, Runner>,
+) -> Result<(), String> {
+    if let Some(config) = runner.get(window.label()) {
+        let _ = app.emit_to(
+            "main",
+            "lattice:widget-close",
+            InstancePayload {
+                instance_id: config.instance_id,
+            },
+        );
+    }
+    runner.forget(window.label());
+    let _ = window.close();
+    Ok(())
+}
+
+/// 平台换了明暗，把已经在桌面上的组件一起改过来。
+///
+/// 组件的明暗是在建窗口时定下的，之后平台再切主题就跟它没关系了。
+/// 广播一条事件，各宿主页自己重上色。
+#[tauri::command]
+pub fn widget_set_theme(app: AppHandle, theme: String) -> Result<(), String> {
+    let _ = app.emit("lattice:theme", theme);
+    Ok(())
 }

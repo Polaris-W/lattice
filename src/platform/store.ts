@@ -5,9 +5,66 @@
  * 组件自己的业务数据不在这里，走 storage 桥按 widgetId 隔离。
  */
 
+import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 import type { Permission, WidgetLayer } from "../runtime/manifest";
+
+/**
+ * 状态存哪儿。
+ *
+ * 桌面端存文件（见 src-tauri/src/state.rs）：这台机器上 WebView2 的
+ * localStorage 只活在内存里，进程一退布局就没了。浏览器里预览时退回
+ * localStorage，至少刷新页面不丢。
+ */
+const STATE_FILE = "lattice.platform.v1";
+
+function inTauri(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+/**
+ * 水合完成前不许写盘。
+ *
+ * 读状态是异步的，这中间只要有一次 set，persist 就会把"默认空状态"盖到
+ * 磁盘上，把用户上次的布局冲掉。所以先读后写。
+ */
+let hydrated = false;
+
+const platformStorage: StateStorage = {
+  getItem: async (name) => {
+    if (!inTauri()) return localStorage.getItem(name);
+    try {
+      return await invoke<string | null>("state_read");
+    } catch (error) {
+      console.error("读取平台状态失败", error);
+      return null;
+    }
+  },
+  setItem: async (name, value) => {
+    if (!hydrated) return;
+    if (!inTauri()) {
+      localStorage.setItem(name, value);
+      return;
+    }
+    try {
+      await invoke("state_write", { json: value });
+    } catch (error) {
+      console.error("保存平台状态失败", error);
+    }
+  },
+  removeItem: async (name) => {
+    if (!inTauri()) {
+      localStorage.removeItem(name);
+      return;
+    }
+    try {
+      await invoke("state_clear");
+    } catch (error) {
+      console.error("清除平台状态失败", error);
+    }
+  },
+};
 
 export interface Placement {
   /** 实例 id，同一个组件可以摆多份 */
@@ -21,6 +78,21 @@ export interface Placement {
   layer: WidgetLayer;
   /** 是否穿透鼠标事件（只展示不交互的组件可以开） */
   clickThrough: boolean;
+  /**
+   * 别针：锁住位置与大小。
+   *
+   * 桌面态下组件是可以随便拖、随便缩的，锁住之后宿主页会把拖拽与缩放手柄收掉。
+   * 老版本存下来的 placement 没有这个字段，读的时候按 false 处理。
+   */
+  pinned: boolean;
+}
+
+/** 桌面态下某个实例的真实窗口矩形（屏幕坐标，逻辑像素） */
+export interface DesktopRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 export type ThemeMode = "light" | "dark" | "system";
@@ -42,6 +114,14 @@ interface LatticeState {
   selectedInstanceId: string | null;
   /** 是否已把组件投放到真实桌面（运行态）。不持久化，重启回到设计态 */
   desktopMode: boolean;
+  /**
+   * 桌面态下每个实例的窗口矩形，按 instanceId 索引。
+   *
+   * 为什么不复用 placement.x/y：画布坐标是相对画布的，窗口坐标是相对屏幕的，
+   * 两者基准不同。用户在桌面上把组件拖到哪儿，只有这里知道；下次再投放时
+   * 优先用它，否则才从画布坐标推。
+   */
+  desktopRects: Record<string, DesktopRect>;
 
   addPlacement: (placement: Placement) => void;
   removePlacement: (instanceId: string) => void;
@@ -51,6 +131,7 @@ interface LatticeState {
   setTheme: (theme: ThemeMode) => void;
   toggleSnap: () => void;
   setDesktopMode: (enabled: boolean) => void;
+  setDesktopRect: (instanceId: string, rect: DesktopRect) => void;
   installWidget: (widgetId: string) => void;
   /** 卸载时连带清掉这个组件在画布上的所有实例，避免留下"组件缺失" */
   uninstallWidget: (widgetId: string) => void;
@@ -74,6 +155,7 @@ export const useLattice = create<LatticeState>()(
       snapToGrid: true,
       selectedInstanceId: null,
       desktopMode: false,
+      desktopRects: {},
 
       addPlacement: (placement) =>
         set((state) => ({
@@ -82,11 +164,16 @@ export const useLattice = create<LatticeState>()(
         })),
 
       removePlacement: (instanceId) =>
-        set((state) => ({
-          placements: state.placements.filter((item) => item.instanceId !== instanceId),
-          selectedInstanceId:
-            state.selectedInstanceId === instanceId ? null : state.selectedInstanceId,
-        })),
+        set((state) => {
+          const nextRects = { ...state.desktopRects };
+          delete nextRects[instanceId];
+          return {
+            placements: state.placements.filter((item) => item.instanceId !== instanceId),
+            desktopRects: nextRects,
+            selectedInstanceId:
+              state.selectedInstanceId === instanceId ? null : state.selectedInstanceId,
+          };
+        }),
 
       updatePlacement: (instanceId, patch) =>
         set((state) => ({
@@ -112,6 +199,21 @@ export const useLattice = create<LatticeState>()(
 
       setDesktopMode: (enabled) => set({ desktopMode: enabled }),
 
+      setDesktopRect: (instanceId, rect) =>
+        set((state) => {
+          const current = state.desktopRects[instanceId];
+          if (
+            current &&
+            current.x === rect.x &&
+            current.y === rect.y &&
+            current.w === rect.w &&
+            current.h === rect.h
+          ) {
+            return state;
+          }
+          return { desktopRects: { ...state.desktopRects, [instanceId]: rect } };
+        }),
+
       installWidget: (widgetId) =>
         set((state) =>
           state.installedIds.includes(widgetId)
@@ -121,15 +223,19 @@ export const useLattice = create<LatticeState>()(
 
       uninstallWidget: (widgetId) =>
         set((state) => {
+          const removed = state.placements.filter((item) => item.widgetId === widgetId);
           const nextPlacements = state.placements.filter((item) => item.widgetId !== widgetId);
           const nextGrants = { ...state.grants };
           delete nextGrants[widgetId];
+          const nextRects = { ...state.desktopRects };
+          for (const item of removed) delete nextRects[item.instanceId];
           const keepSelection = nextPlacements.some(
             (item) => item.instanceId === state.selectedInstanceId,
           );
           return {
             installedIds: state.installedIds.filter((id) => id !== widgetId),
             placements: nextPlacements,
+            desktopRects: nextRects,
             grants: nextGrants,
             selectedInstanceId: keepSelection ? state.selectedInstanceId : null,
           };
@@ -151,13 +257,19 @@ export const useLattice = create<LatticeState>()(
         }),
     }),
     {
-      name: "lattice.platform.v1",
+      name: STATE_FILE,
+      storage: createJSONStorage(() => platformStorage),
+      onRehydrateStorage: () => (_state, error) => {
+        if (error) console.error("平台状态水合失败", error);
+        hydrated = true;
+      },
       partialize: (state) => ({
         placements: state.placements,
         installedIds: state.installedIds,
         grants: state.grants,
         theme: state.theme,
         snapToGrid: state.snapToGrid,
+        desktopRects: state.desktopRects,
       }),
     },
   ),

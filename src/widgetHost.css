@@ -1,0 +1,185 @@
+/*
+ * 棂 / Lattice —— 桌面组件窗口的"窗饰"
+ *
+ * 卡片本体（背景、描边、圆角）由 widget-host.html 负责，这里只管浮在
+ * 组件内容之上的那层操作控件：右上角的功能图标 + 八条缩放手柄。
+ *
+ * 两条规矩：
+ *   1. 没被指到的时候一律 pointer-events: none —— 不然透明的控件会变成
+ *      隐形陷阱，用户点组件内容却触发了"收回"。
+ *   2. 手柄要往内让一截。窗口被 SetWindowRgn 裁成圆角之后，圆角外侧那几个
+ *      像素压根不属于这个窗口，正对着角点按下去会直接穿到桌面上。所以四个
+ *      角给到 18px，让"圆角弧线以内"也稳稳落在手柄里。
+ */
+
+/*
+ * 关键一行：iframe 必须显式 color-scheme: normal。
+ *
+ * 平台样式在 :root 上设了 color-scheme: dark，它会继承进 iframe 元素、
+ * 再成为被嵌入文档的初始 color-scheme。一旦 color-scheme 不是 normal，
+ * Chromium 就给 iframe 的画布刷一层不透明底色（light→白、dark→黑），
+ * 于是组件文档里写的 background: transparent 全部失效 —— 卡片永远是白板。
+ * 重置成 normal 之后画布才是真的透明，宿主页的卡片底色才透得出来。
+ */
+iframe {
+  color-scheme: normal;
+}
+
+.lw-chrome {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.lw-pill {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2; /* 盖在缩放手柄上面，否则"收回"按钮上半截会被 ne 手柄吃掉 */
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid var(--lattice-border);
+  border-radius: 9px;
+  background: var(--lattice-surface-2);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 22%);
+  opacity: 0;
+  transform: translateY(-3px) scale(0.97);
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
+  pointer-events: none;
+}
+
+body:hover .lw-pill,
+.lw-pill:focus-within {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.lw-btn {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--lattice-text-muted);
+  cursor: pointer;
+}
+
+.lw-btn:hover {
+  background: var(--lattice-border);
+  color: var(--lattice-text);
+}
+
+.lw-btn:active {
+  transform: scale(0.94);
+}
+
+.lw-btn.is-on {
+  color: var(--lattice-accent);
+}
+
+.lw-grip {
+  cursor: grab;
+}
+
+.lw-grip:active {
+  cursor: grabbing;
+}
+
+/* 固定之后拖不动，光标也要说实话 */
+body.is-pinned .lw-grip,
+body.is-pinned .lw-grip:active {
+  cursor: default;
+}
+
+body.is-pinned .lw-grip:hover {
+  background: transparent;
+  color: var(--lattice-text-muted);
+}
+
+.lw-edge {
+  position: absolute;
+  z-index: 1;
+  pointer-events: auto;
+}
+
+.lw-edge[data-dir="n"] {
+  top: 0;
+  left: 14px;
+  right: 14px;
+  height: 5px;
+  cursor: ns-resize;
+}
+
+.lw-edge[data-dir="s"] {
+  bottom: 0;
+  left: 14px;
+  right: 14px;
+  height: 5px;
+  cursor: ns-resize;
+}
+
+.lw-edge[data-dir="w"] {
+  left: 0;
+  top: 14px;
+  bottom: 14px;
+  width: 5px;
+  cursor: ew-resize;
+}
+
+.lw-edge[data-dir="e"] {
+  right: 0;
+  top: 14px;
+  bottom: 14px;
+  width: 5px;
+  cursor: ew-resize;
+}
+
+.lw-edge[data-dir="nw"] {
+  top: 0;
+  left: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+}
+
+.lw-edge[data-dir="ne"] {
+  top: 0;
+  right: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nesw-resize;
+}
+
+.lw-edge[data-dir="sw"] {
+  bottom: 0;
+  left: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nesw-resize;
+}
+
+.lw-edge[data-dir="se"] {
+  bottom: 0;
+  right: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+}
+
+body.is-pinned .lw-edge {
+  pointer-events: none;
+}
+
+/* 拖拽/缩放时整块卡片跟随，别让组件里的 hover 效果乱闪 */
+body.is-dragging iframe {
+  pointer-events: none;
+}

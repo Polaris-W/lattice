@@ -21,16 +21,29 @@
 //! 裁剪方案没有这些前提：窗口照常渲染，形状由系统负责，
 //! 代价是圆角边缘没有抗锯齿。对一个贴桌面的小组件来说这笔交易很划算。
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// 组件窗口的圆角半径（逻辑像素），与画布里 `.lattice-widget` 的 12px 对齐
 pub const CORNER_RADIUS: f64 = 12.0;
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum WindowLayer {
     Desktop,
     Top,
+}
+
+/// 把窗口裁成圆角矩形。区域坐标是物理像素
+pub fn clip_rounded(hwnd: isize, width: u32, height: u32, radius: f64) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        imp::clip_rounded(hwnd, width, height, radius)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (hwnd, width, height, radius);
+        Err("窗口裁剪目前只实现了 Windows".to_string())
+    }
 }
 
 /// 对给定窗口句柄应用层级与穿透设置
