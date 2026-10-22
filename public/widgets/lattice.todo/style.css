@@ -1,12 +1,15 @@
 /*
  * 待办清单
  *
- * 两条约束决定了这里的写法：
+ * 三条约束决定了这里的写法：
  *   1. 勾选框不能用原生 checkbox —— 沙箱 iframe 里 color-scheme 被强制成
  *      normal，原生控件会按浅色主题画成一个几乎看不见的小白块，跟深色卡片
  *      完全对不上。所以 appearance: none，方框和勾都自己画。
  *   2. 字号 13px + 行高 1.45。12px 的中文在这个尺寸里笔画会粘在一起，
  *      桌面组件是"扫一眼"的阅读场景，宁可少放一行字。
+ *   3. 顶上那条 22px 的标题栏不是装饰。桌面窗口的功能图标（拖动/层级/别针/
+ *      收回）浮在右上角 6px 处、大约 97×28，不腾出这块地方，它就会压在输入框
+ *      的右上角上 —— 用户想点输入框，点到的是"收回"。
  */
 
 :root {
@@ -46,7 +49,41 @@ body {
   flex-direction: column;
   height: 100%;
   padding: 12px;
-  gap: 10px;
+  gap: 8px;
+}
+
+/* ---------- 标题栏（同时给窗饰让位） ---------- */
+
+.todo-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 22px;
+  /* 96px 是窗饰的实际占地：四个 22px 按钮 + 间距 + 内边距 + 右边距 6px，
+     再减掉卡片自己的 12px 内边距 */
+  padding-right: 96px;
+}
+
+.todo-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.todo-meta {
+  flex: none;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.todo-meta.is-error {
+  color: #f09595;
 }
 
 /* ---------- 输入 ---------- */
@@ -94,7 +131,7 @@ body {
 .todo-list {
   height: 100%;
   margin: 0;
-  padding: 0 2px 0 0;
+  padding: 0 2px 2px 0;
   list-style: none;
   overflow-y: auto;
   overscroll-behavior: contain;

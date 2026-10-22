@@ -149,6 +149,7 @@
 - [x] **设置菜单** —— 顶栏头像（`Ctrl+,`）唤出：本机档案、外观、网格吸附、关于
 - [x] **图标集** —— 内联 SVG 取代 emoji，随主题上色，不再受 DPI 影响
 - [x] **界面文案统一英文** —— 平台、组件、错误提示、窗口标题全英文；代码注释与文档保持中文，README 分英文版与中文版（`README.zh-CN.md`）
+- [x] **待办清单能用回车了** —— 沙箱补上 `allow-forms`（少这一位，`<form>` 提交被整条拦掉，回车静默失效）；顶部加 22px 标题栏把右上角窗饰让出去；`tests/todo-add.html` 12 条断言钉住加/勾/删/计数与"没有 `allow-forms` 就 0 次写盘"
 
 **验收结果**（2026-10-22 实机，不是"应该能"）：
 
@@ -186,8 +187,7 @@
 | 守卫明明加了，窗口还是往上窜                                            | `SetWindowSubclass` 跨线程调用不报错，只返回 0 —— 从同步命令的线程装守卫会静默失败                                    | 用 `window.run_on_main_thread(...)` 回到窗口线程再装                                  |
 | 用户组件"装了但打不开"，卡片写着"待接入"                                 | 用户组件的文件在 `%APPDATA%` 里，前端资源里没有，`/widgets/<id>/...` 这条路径够不到它                          | 注册 `lattice-widget` 协议，把 iframe 的 src 指向 `http://lattice-widget.localhost/<id>/<相对路径>`（`protocol.rs`） |
 | 自定义协议的地址在 Windows 上一直 404                                  | Windows / Android 把自定义 scheme 挂在 `http://<scheme>.localhost/`，其它平台才是 `<scheme>://localhost/` —— 写成后者在 Windows 上连请求都发不出去 | `registry.ts::widgetSchemeBase()` 按 UA 分流；协议处理器只看 `uri.path()`，不关心 host |
-| 组件里 `fetch("data.json")` 被 CORS 拦掉                            | iframe 是 `sandbox="allow-scripts"`，文档源是 opaque 的，取自己的文件在浏览器看来也算跨域                       | 协议响应统一带 `Access-Control-Allow-Origin: *`                                     |
-| 卸载组件后顶栏计数比看得见的多一个                                     | 只删了 `installedIds`，没删 `placements`：留下一个指向不存在组件的幽灵，画不出来也点不到                            | `uninstall` 里先按 `widgetId` 清掉所有实例，再取消安装                                |
+| 组件里 `fetch("data.json")` 被 CORS 拦掉                            | iframe 是 `sandbox="allow-scripts allow-forms"`，文档源是 opaque 的，取自己的文件在浏览器看来也算跨域                       | 协议响应统一带 `Access-Control-Allow-Origin: *`                                     || 卸载组件后顶栏计数比看得见的多一个                                     | 只删了 `installedIds`，没删 `placements`：留下一个指向不存在组件的幽灵，画不出来也点不到                            | `uninstall` 里先按 `widgetId` 清掉所有实例，再取消安装                                |
 | 装完第三个组件"什么都没发生"                                        | `nextFreeSlot` 把换行线写死在 1600px，窄窗口下新组件被摆到可视区右侧，得横向滚才看得见                            | 换行位置按 `.lattice-canvas` 的实际 `clientWidth` 算                                  |
 | `cargo test` 编译通过但一运行就 `0xc0000139 STATUS_ENTRYPOINT_NOT_FOUND` | windows-gnu 下 tauri 的测试二进制起不来（跟代码无关，`cargo build` / 真机运行都正常）                    | 纯函数逻辑靠端到端验证兜底（`curl` 协议、CDP 查 iframe）；换 msvc 工具链即可正常跑测试 |
 | 组件拖到屏幕边缘外面，之后就再也拖不回来                                 | 拖动完全按指针位移走，没有任何边界约束；唯一能抓的按钮在窗口右上角，跟着窗口一起出界                          | `widgetHost.ts::clampAnchor`：以那颗按钮为锚点，至少留 24px 在某块显示器**工作区**内；按锚点选屏，跨屏拖动才不会被接缝卡住 |
@@ -195,6 +195,8 @@
 | 组件在桌面上的位置停在任务栏底下，按钮点不到                                | 夹边界用的是 `monitor.size`（含任务栏），不是 `monitor.workArea`                                            | `screenBoxes` 取 `workArea`，取不到才退回 `size`                                  |
 | 切"置顶"没反应，组件还趴在桌面层                                         | 守卫摘得比 `HWND_TOPMOST` 晚：那一下 SetWindowPos 被守卫改写掉了                                                | 守卫状态用窗口属性做开关，`apply_to` 里**先翻开关再落层级**                                  |
 | 属性面板改了尺寸，桌面上的组件纹丝不动                                       | `buildSpecs` 优先用 `desktopRects` 里的尺寸（那是用户拖边缘改过的真实值），只写 `placement.w/h` 会被它盖掉                      | 提交尺寸时两处一起写；`desktopRects` 有记录才写它                                         |
+| 待办里字打进去了，回车什么都不发生，列表永远是 "Nothing here yet" | iframe 沙箱是 `sandbox="allow-scripts"`，没有 `allow-forms` —— 浏览器会把表单提交整条拦掉，`submit` 事件不触发，也不报错 | 沙箱补上 `allow-forms`（`widgetHost.ts` 与 `WidgetFrame.tsx` 两处）；`tests/todo-add.html` 钉住：同一条提交路径，有这一位就写盘，没有就 0 次写盘 |
+| 点待办输入框的右端，组件被钉住 / 直接被关掉 | 桌面窗口的功能图标浮在右上角 `top:6 right:6`、约 97×28，盖在组件内容之上而且**能点**；待办的第一行恰好是通栏输入框 | 组件顶部留一条 22px 标题栏（`padding-right: 96px`）把窗饰让出去，写进 WIDGET_SPEC §5.1 |
 
 ### 环境与构建（windows-gnu）
 

@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>todo add / toggle / delete test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+      iframe {
+        position: absolute;
+        left: -9999px;
+        width: 300px;
+        height: 240px;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      /*
+       * 这页盯的是「回车加不上」这个 bug。
+       *
+       * 沙箱 iframe 里少一个 allow-forms，浏览器会把整个提交过程拦掉 ——
+       * submit 事件根本不触发，组件里的 onSubmit 一行都不跑，而且不报错。
+       * 用 requestSubmit() 代替"敲回车"：它走的是同一条提交算法，
+       * 同样会撞上沙箱检查，但不用伪造可信键盘事件。
+       */
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      function mountTodo({ forms = true, initial } = {}) {
+        const state = { stored: initial, setCalls: 0 };
+        const frame = document.createElement("iframe");
+        // allow-same-origin 只是让测试能读 iframe 里的 DOM，
+        // 被测的是 allow-forms 这一位 —— 两种沙箱都带着 allow-same-origin，变量只有一个。
+        frame.setAttribute(
+          "sandbox",
+          "allow-scripts allow-same-origin" + (forms ? " allow-forms" : ""),
+        );
+        frame.src = "/widgets/lattice.todo/index.html";
+        document.body.appendChild(frame);
+
+        const ready = new Promise((resolve) => {
+          window.addEventListener("message", function handler(event) {
+            if (event.source !== frame.contentWindow) return;
+            const data = event.data;
+            if (!data || data.__lattice !== 1) return;
+            if (data.type === "ready") {
+              resolve();
+              return;
+            }
+            if (data.type !== "request") return;
+
+            const reply = (payload) =>
+              frame.contentWindow.postMessage(
+                Object.assign({ __lattice: 1, type: "response", id: data.id }, payload),
+                "*",
+              );
+
+            if (data.method === "storage.get") {
+              reply({ ok: true, result: state.stored });
+              return;
+            }
+            if (data.method === "storage.set") {
+              state.setCalls += 1;
+              state.stored = data.params.value;
+              reply({ ok: true, result: { ok: true } });
+              return;
+            }
+            reply({ ok: false, error: "unknown" });
+          });
+        });
+
+        return { frame, state, ready };
+      }
+
+      const texts = (doc) =>
+        Array.from(doc.querySelectorAll(".todo-text")).map((el) => el.textContent);
+
+      // ---- 场景 1：回车能加上 ----
+      {
+        const todo = mountTodo();
+        await todo.ready;
+        const doc = todo.frame.contentDocument;
+        const input = doc.getElementById("input");
+        const form = doc.getElementById("form");
+
+        input.value = "Buy milk";
+        form.requestSubmit();
+        await sleep(120);
+
+        log(texts(doc).join("|") === "Buy milk", `提交后列表里是「${texts(doc).join("|")}」`);
+        log(
+          Array.isArray(todo.state.stored) && todo.state.stored.length === 1,
+          `落盘条数 ${todo.state.stored ? todo.state.stored.length : "null"}`,
+        );
+        log(input.value === "", "提交后输入框已清空");
+
+        // ---- 场景 2：连加两条，最新的一条在最上面 ----
+        input.value = "Read the spec";
+        form.requestSubmit();
+        await sleep(120);
+        log(texts(doc).join("|") === "Read the spec|Buy milk", `顺序是「${texts(doc).join("|")}」`);
+
+        // ---- 场景 3：勾掉一条，计数跟着走 ----
+        log(doc.getElementById("meta").textContent === "2 left", `计数是「${doc.getElementById("meta").textContent}」`);
+        doc.querySelectorAll(".todo-item")[1].querySelector(".todo-check").click();
+        await sleep(120);
+        log(todo.state.stored[1].done === true, `第二条的 done 落盘为 ${todo.state.stored[1].done}`);
+        log(doc.getElementById("meta").textContent === "1 left", `勾掉后计数是「${doc.getElementById("meta").textContent}」`);
+
+        // ---- 场景 4：点整行也能勾 ----
+        doc.querySelectorAll(".todo-text")[0].click();
+        await sleep(120);
+        log(todo.state.stored[0].done === true, "点文字也能勾上");
+        log(doc.getElementById("meta").textContent === "All done", `全勾完计数是「${doc.getElementById("meta").textContent}」`);
+
+        // ---- 场景 5：删除 ----
+        doc.querySelectorAll(".todo-remove")[0].click();
+        await sleep(120);
+        log(texts(doc).join("|") === "Buy milk", `删完剩下「${texts(doc).join("|")}」`);
+        log(todo.state.stored.length === 1, `落盘条数 ${todo.state.stored.length}`);
+
+        todo.frame.remove();
+      }
+
+      // ---- 场景 6：没有 allow-forms 时，提交被整条拦掉（这就是当初的病根） ----
+      {
+        const todo = mountTodo({ forms: false });
+        await todo.ready;
+        const doc = todo.frame.contentDocument;
+        doc.getElementById("input").value = "Should not appear";
+        doc.getElementById("form").requestSubmit();
+        await sleep(200);
+
+        log(
+          texts(doc).length === 0 && todo.state.setCalls === 0,
+          `无 allow-forms 时提交被拦（列表 ${texts(doc).length} 条，写盘 ${todo.state.setCalls} 次）`,
+        );
+        todo.frame.remove();
+      }
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>

@@ -30,6 +30,8 @@ src-tauri/target
 .shot-*.png
 .crop-*.png
 .run*.log
+# 真机验证用的临时脚本与截图（pyside 抓窗口、SendInput 之类）
+.scratch/
 
 # 由 scripts/widget-index.mjs 生成
 public/widgets/index.json

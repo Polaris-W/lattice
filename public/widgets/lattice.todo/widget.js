@@ -76,6 +76,7 @@
   var inputEl = document.getElementById("input");
   var listEl = document.getElementById("list");
   var emptyEl = document.getElementById("empty");
+  var metaEl = document.getElementById("meta");
 
   /*
    * 同一个组件可能在画布上有一个实例、桌面上又有一个，各自持一份内存列表。
@@ -89,11 +90,44 @@
   var writing = 0;
   var pendingReload = false;
 
+  /**
+   * 落盘失败只在标题栏那一小格里说一句，不动输入框。
+   * 以前是把提示写进 input.placeholder —— 出错一次，那句 "Add a to-do,
+   * press Enter" 就永远回不来了。
+   */
+  var saveError = false;
+
+  function paintMeta() {
+    if (saveError) {
+      metaEl.textContent = "Not saved";
+      metaEl.classList.add("is-error");
+      return;
+    }
+    metaEl.classList.remove("is-error");
+    metaEl.title = "";
+    if (items.length === 0) {
+      metaEl.textContent = "";
+      return;
+    }
+    var left = 0;
+    items.forEach(function (item) {
+      if (!item.done) left += 1;
+    });
+    metaEl.textContent = left === 0 ? "All done" : left + " left";
+  }
+
   function persist() {
     writing += 1;
     call("storage.set", { key: STORAGE_KEY, value: items })
+      .then(function () {
+        if (!saveError) return;
+        saveError = false;
+        paintMeta();
+      })
       .catch(function (error) {
-        inputEl.placeholder =
+        saveError = true;
+        paintMeta();
+        metaEl.title =
           error.code === "permission_denied" ? "Storage permission required to save" : "Could not save";
       })
       .then(function () {
@@ -162,7 +196,6 @@
       var text = document.createElement("span");
       text.className = "todo-text";
       text.textContent = item.text;
-      text.title = item.text;
 
       var remove = document.createElement("button");
       remove.type = "button";
@@ -192,7 +225,19 @@
       listEl.appendChild(li);
     });
 
+    /*
+     * 只有真被省略号截断的行才挂 title。
+     * 全都挂的话，鼠标扫过列表就一路弹系统那个白底黑框的原生提示框，
+     * 内容还是屏幕上已经写着的那几个字 —— 在小卡片上特别扎眼。
+     * 这里要等节点进树之后量，离树时 scrollWidth 恒等于 clientWidth。
+     */
+    Array.prototype.forEach.call(listEl.querySelectorAll(".todo-text"), function (el) {
+      if (el.scrollWidth > el.clientWidth) el.title = el.textContent;
+      else el.removeAttribute("title");
+    });
+
     emptyEl.classList.toggle("is-visible", items.length === 0);
+    paintMeta();
   }
 
   formEl.addEventListener("submit", function (event) {

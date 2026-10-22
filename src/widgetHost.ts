@@ -385,7 +385,12 @@ async function boot() {
   const granted = new Set<Permission>(config.permissions as Permission[]);
 
   const iframe = document.createElement("iframe");
-  iframe.setAttribute("sandbox", "allow-scripts");
+  // allow-forms 不能省：沙箱里没有它，浏览器会把 <form> 的提交整条拦掉，
+  // submit 事件根本不触发 —— 组件里"输入框 + 回车"这种最普通的写法会静默失效
+  // （待办清单就是这么躺了一整版：字打进去了，回车没反应，列表永远是空的）。
+  // 它不扩大权限面：不给 allow-same-origin 的话表单只能提交到自己的不透明源，
+  // 而外发请求本来就能用 fetch 发，网络权限也不在这条路上。
+  iframe.setAttribute("sandbox", "allow-scripts allow-forms");
   iframe.setAttribute("referrerpolicy", "no-referrer");
   iframe.setAttribute(
     "style",

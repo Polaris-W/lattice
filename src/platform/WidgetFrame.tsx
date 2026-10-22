@@ -230,7 +230,7 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
           className="lattice-widget-frame"
           title={record.manifest.name}
           src={record.entryUrl}
-          sandbox="allow-scripts"
+          sandbox="allow-scripts allow-forms"
           referrerPolicy="no-referrer"
           style={{ pointerEvents: placement.clickThrough ? "none" : "auto" }}
         />
