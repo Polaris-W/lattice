@@ -188,6 +188,7 @@ button {
   padding: 10px 12px;
   text-align: left;
   cursor: grab;
+  user-select: none;
   border: 1px solid var(--lattice-border);
   border-radius: var(--lattice-radius);
   background: var(--lattice-surface-2);
@@ -264,6 +265,83 @@ button {
   background: var(--lattice-accent-soft);
   color: var(--lattice-accent);
   font-size: 10px;
+}
+
+/* 未安装的包：虚线边、无底色，视觉上明确"还不在你的桌面里" */
+.lattice-card.is-available {
+  cursor: pointer;
+  border-style: dashed;
+  background: transparent;
+}
+
+.lattice-card.is-available:active {
+  cursor: pointer;
+}
+
+.lattice-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.lattice-link-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--lattice-text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.lattice-link-btn:hover {
+  color: var(--lattice-danger);
+}
+
+.lattice-lib-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lattice-lib-section + .lattice-lib-section {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--lattice-border);
+}
+
+.lattice-lib-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--lattice-text-muted);
+}
+
+.lattice-lib-section-title span {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--lattice-surface-2);
+  font-size: 10px;
+}
+
+.lattice-lib-note {
+  padding: 10px 12px;
+  border: 1px dashed var(--lattice-border);
+  border-radius: var(--lattice-radius);
+}
+
+.lattice-lib-note-title {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--lattice-text);
 }
 
 /* ---------- 画布 ---------- */
@@ -433,6 +511,11 @@ button {
 
 .lattice-btn.is-danger {
   color: var(--lattice-danger);
+}
+
+.lattice-btn.is-small {
+  padding: 3px 10px;
+  font-size: 11px;
 }
 
 .lattice-segmented {

@@ -6,11 +6,12 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Canvas } from "./platform/Canvas";
 import { InspectorPanel } from "./platform/InspectorPanel";
 import { LibraryPanel } from "./platform/LibraryPanel";
 import { nextFreeSlot, useLattice, type ThemeMode } from "./platform/store";
-import { loadRegistry, type WidgetLoadError, type WidgetRecord } from "./runtime/registry";
+import { isTauri, loadRegistry, type WidgetLoadError, type WidgetRecord } from "./runtime/registry";
 
 export default function App() {
   const [widgets, setWidgets] = useState<WidgetRecord[]>([]);
@@ -19,12 +20,30 @@ export default function App() {
 
   const placements = useLattice((state) => state.placements);
   const addPlacement = useLattice((state) => state.addPlacement);
+  const installedIds = useLattice((state) => state.installedIds);
+  const installWidget = useLattice((state) => state.installWidget);
+  const uninstallWidget = useLattice((state) => state.uninstallWidget);
   const theme = useLattice((state) => state.theme);
   const setTheme = useLattice((state) => state.setTheme);
   const snapToGrid = useLattice((state) => state.snapToGrid);
   const toggleSnap = useLattice((state) => state.toggleSnap);
 
   const records = useMemo(() => new Map(widgets.map((item) => [item.manifest.id, item])), [widgets]);
+
+  /**
+   * 已启用的组件 id。
+   * 用户目录里的包由磁盘状态决定（装上去就是装上了），
+   * 随应用分发的包必须经过显式安装 —— 平台开箱是空白的。
+   */
+  const installedSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const record of widgets) {
+      if (record.source === "user" || installedIds.includes(record.manifest.id)) {
+        set.add(record.manifest.id);
+      }
+    }
+    return set;
+  }, [widgets, installedIds]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -59,6 +78,7 @@ export default function App() {
 
   const addWidget = useCallback(
     (record: WidgetRecord) => {
+      if (!installedSet.has(record.manifest.id)) return;
       const { w, h } = record.manifest.size;
       const slot = nextFreeSlot(useLattice.getState().placements, w, h);
       addPlacement({
@@ -72,14 +92,38 @@ export default function App() {
         clickThrough: false,
       });
     },
-    [addPlacement],
+    [addPlacement, installedSet],
+  );
+
+  const install = useCallback(
+    (record: WidgetRecord) => {
+      installWidget(record.manifest.id);
+    },
+    [installWidget],
+  );
+
+  const uninstall = useCallback(
+    async (record: WidgetRecord) => {
+      // 用户目录里的包是真在磁盘上的，要交给 Rust 删；内置包只是取消启用
+      if (record.source === "user" && isTauri()) {
+        try {
+          await invoke("uninstall_widget", { id: record.manifest.id });
+        } catch (error) {
+          setErrors((prev) => [...prev, { dir: record.dir, message: String(error) }]);
+          return;
+        }
+        await refresh();
+      }
+      uninstallWidget(record.manifest.id);
+    },
+    [refresh, uninstallWidget],
   );
 
   const onDropWidget = useCallback(
     (event: React.DragEvent) => {
       const widgetId = event.dataTransfer.getData("application/x-lattice-widget");
       const record = records.get(widgetId);
-      if (!record) return;
+      if (!record || !installedSet.has(widgetId)) return;
       event.preventDefault();
 
       const bounds = event.currentTarget.getBoundingClientRect();
@@ -98,7 +142,7 @@ export default function App() {
         clickThrough: false,
       });
     },
-    [addPlacement, records],
+    [addPlacement, records, installedSet],
   );
 
   return (
@@ -112,7 +156,7 @@ export default function App() {
 
         <div className="lattice-topbar-actions">
           <span className="lattice-hint lattice-inline-hint">
-            {placements.length} 个组件 · {widgets.length} 个可用
+            {placements.length} 个组件 · {installedSet.size} 个已安装
           </span>
 
           <button
@@ -144,8 +188,16 @@ export default function App() {
       </header>
 
       <main className="lattice-main">
-        <LibraryPanel widgets={widgets} errors={errors} loading={loading} onAdd={addWidget} />
-        <Canvas records={records} onDropWidget={onDropWidget} />
+        <LibraryPanel
+          widgets={widgets}
+          installedIds={installedSet}
+          errors={errors}
+          loading={loading}
+          onAdd={addWidget}
+          onInstall={install}
+          onUninstall={(record) => void uninstall(record)}
+        />
+        <Canvas records={records} installedIds={installedSet} onDropWidget={onDropWidget} />
         <InspectorPanel records={records} />
       </main>
     </div>

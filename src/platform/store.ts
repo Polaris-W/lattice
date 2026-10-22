@@ -27,6 +27,14 @@ export type ThemeMode = "light" | "dark" | "system";
 
 interface LatticeState {
   placements: Placement[];
+  /**
+   * 已启用的组件包 id。
+   *
+   * 平台开箱是空白的 —— 随应用分发的组件包只是"发现到了"，不等于"已安装"。
+   * 只有这里列出的包才会出现在画布上。用户目录里的包由磁盘状态决定，
+   * 不走这个列表（装上去就是装上了）。
+   */
+  installedIds: string[];
   /** 已授予的权限，按 widgetId 聚合 */
   grants: Record<string, Permission[]>;
   theme: ThemeMode;
@@ -40,6 +48,9 @@ interface LatticeState {
   select: (instanceId: string | null) => void;
   setTheme: (theme: ThemeMode) => void;
   toggleSnap: () => void;
+  installWidget: (widgetId: string) => void;
+  /** 卸载时连带清掉这个组件在画布上的所有实例，避免留下"组件缺失" */
+  uninstallWidget: (widgetId: string) => void;
   grant: (widgetId: string, permission: Permission) => void;
   revoke: (widgetId: string, permission: Permission) => void;
 }
@@ -54,6 +65,7 @@ export const useLattice = create<LatticeState>()(
   persist(
     (set) => ({
       placements: [],
+      installedIds: [],
       grants: {},
       theme: "system",
       snapToGrid: true,
@@ -94,6 +106,29 @@ export const useLattice = create<LatticeState>()(
 
       toggleSnap: () => set((state) => ({ snapToGrid: !state.snapToGrid })),
 
+      installWidget: (widgetId) =>
+        set((state) =>
+          state.installedIds.includes(widgetId)
+            ? state
+            : { installedIds: [...state.installedIds, widgetId] },
+        ),
+
+      uninstallWidget: (widgetId) =>
+        set((state) => {
+          const nextPlacements = state.placements.filter((item) => item.widgetId !== widgetId);
+          const nextGrants = { ...state.grants };
+          delete nextGrants[widgetId];
+          const keepSelection = nextPlacements.some(
+            (item) => item.instanceId === state.selectedInstanceId,
+          );
+          return {
+            installedIds: state.installedIds.filter((id) => id !== widgetId),
+            placements: nextPlacements,
+            grants: nextGrants,
+            selectedInstanceId: keepSelection ? state.selectedInstanceId : null,
+          };
+        }),
+
       grant: (widgetId, permission) =>
         set((state) => {
           const current = state.grants[widgetId] ?? [];
@@ -113,6 +148,7 @@ export const useLattice = create<LatticeState>()(
       name: "lattice.platform.v1",
       partialize: (state) => ({
         placements: state.placements,
+        installedIds: state.installedIds,
         grants: state.grants,
         theme: state.theme,
         snapToGrid: state.snapToGrid,

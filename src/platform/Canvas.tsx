@@ -11,13 +11,16 @@ import type { WidgetRecord } from "../runtime/registry";
 
 interface CanvasProps {
   records: Map<string, WidgetRecord>;
+  /** 当前已启用的组件 id；不在里面的包即使被摆放了也不该渲染 */
+  installedIds: Set<string>;
   onDropWidget: (event: React.DragEvent) => void;
 }
 
-export function Canvas({ records, onDropWidget }: CanvasProps) {
+export function Canvas({ records, installedIds, onDropWidget }: CanvasProps) {
   const placements = useLattice((state) => state.placements);
   const snapToGrid = useLattice((state) => state.snapToGrid);
   const select = useLattice((state) => state.select);
+  const hasInstalled = installedIds.size > 0;
 
   return (
     <div
@@ -33,16 +36,28 @@ export function Canvas({ records, onDropWidget }: CanvasProps) {
     >
       {placements.length === 0 && (
         <div className="lattice-empty">
-          <p className="lattice-empty-title">桌面还是空的</p>
-          <p className="lattice-empty-hint">
-            从左侧组件库拖一个到画布，或者直接点击组件卡片
-          </p>
+          {hasInstalled ? (
+            <>
+              <p className="lattice-empty-title">桌面还是空的</p>
+              <p className="lattice-empty-hint">
+                从左侧组件库拖一个到画布，或者直接点击组件卡片
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="lattice-empty-title">空的，这正是它该有的样子</p>
+              <p className="lattice-empty-hint">
+                平台本身不带任何组件。去左侧安装一个组件包，或者把你写的组件放进 widgets/ 目录。
+              </p>
+            </>
+          )}
         </div>
       )}
 
       {placements.map((placement) => {
         const record = records.get(placement.widgetId);
-        if (!record) {
+        const live = record && installedIds.has(record.manifest.id);
+        if (!live) {
           return (
             <div
               key={placement.instanceId}
@@ -55,7 +70,9 @@ export function Canvas({ records, onDropWidget }: CanvasProps) {
               }}
             >
               <div className="lattice-broken-body">
-                <span className="lattice-broken-title">组件缺失</span>
+                <span className="lattice-broken-title">
+                  {record ? "组件未安装" : "组件缺失"}
+                </span>
                 <code className="lattice-mono">{placement.widgetId}</code>
               </div>
             </div>
