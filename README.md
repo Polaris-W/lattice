@@ -12,6 +12,10 @@ v0.2 是**能真的贴到桌面上的 demo**：平台开箱是空白的，安装
 
 ## 组件真的在桌面上
 
+![组件浮在桌面上](docs/screenshot-desktop.png)
+
+上图是实机截图：左边被普通窗口挡住的便签是 `layer: desktop`，中间压在窗口之上的待办是 `layer: top`，右边是倒计时。
+
 "投放到桌面"之后：
 
 - 每个 Placement 变成一个独立的 `WebviewWindow`，加载 `widget-host.html`，再由它套一层沙箱 iframe——**桌面窗口和画布预览跑的是同一套桥、同一套权限校验**，不会出现"预览能用、桌面上不能用"的分叉
