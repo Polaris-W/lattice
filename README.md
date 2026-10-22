@@ -1,5 +1,7 @@
 # Lattice
 
+[![ci](https://github.com/unraveltao/lattice/actions/workflows/ci.yml/badge.svg)](https://github.com/unraveltao/lattice/actions/workflows/ci.yml)
+
 An extensible desktop widget platform for Windows. Third parties write widgets in plain HTML / CSS / JS; the platform puts them safely onto the desktop.
 
 > 棂 (líng) is the wooden lattice in a window pane. Every pane on your desktop is a widget that can grow there on its own.

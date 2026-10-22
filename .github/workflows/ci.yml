@@ -1,0 +1,23 @@
+name: ci
+
+# 只验前端：tsc + vite build。Rust 侧要 MSVC/mingw 工具链和 WebView2，
+# 在这台机器上编得过不代表 runner 上编得过，暂时不放进 CI（见 ROADMAP v0.4）。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      # build 会先跑 widgets:index 生成 public/widgets/index.json（该文件不入库）
+      - run: npm run build
