@@ -16,21 +16,25 @@
 | --- | --- | --- | --- |
 | v0.1 | 骨架 | ✅ 完成 | 组件在沙箱里跑起来，桥与权限能验 |
 | v0.2 | 真桌面 | ✅ 完成 | 组件是独立的 Win32 窗口，能拖能缩能锁，重启不丢 |
-| v0.3 | 平台能力 | 进行中 | 系统指标、网络代理、调度器、崩溃隔离 |
+| v0.3 | 平台能力 | ✅ 完成 | 调度器、系统指标、落盘备份、关闭撤销、CSP 锁定、出网闸门、每实例配置、网络白名单代理、托盘/自启、目录监听、崩溃隔离、双屏边界夹紧全部落地 |
 | v0.4 | 开发体验 | 未开始 | SDK、脚手架、打包工具 |
 | v0.5 | 分发 | 未开始 | 组件商店、签名、更新 |
 
-**当前规模**（截至本次提交，2026-10-23 14:05）：
+**当前规模**（截至本次改动，2026-10-24 01:45）：
 
 | 指标 | 数值 | 备注 |
 | --- | --- | --- |
-| 前端 TS/TSX | 4 383 行 | 平台外壳 + 运行时 |
-| 样式 CSS | 2 215 行 | 纯手写，无 UI 库 |
-| Rust | 2 504 行 | 窗口、协议、落盘、壁纸采样、诊断 |
-| 官方组件 + 示例 | 1 738 行 | 4 个官方包 + 1 个第三方样本 |
-| Tauri 命令 | 22 个 | |
-| 权限 | 6 项 | clock / storage / clipboard:write / network / system:monitor / media:control |
-| 踩过的坑 | 38 条 | 见文末 |
+| 前端 TS/TSX | 6 469 行 | 平台外壳 + 运行时 |
+| 样式 CSS | 2 561 行 | 纯手写，无 UI 库 |
+| Rust | 5 716 行 | 窗口、协议、落盘、壁纸采样、指标采样、诊断、单实例、CSP、出网闸门、托盘、自启、目录监听、崩溃守卫、网络代理 |
+| 官方组件 + 示例 | 2 417 行 | 5 个官方包 |
+| 构建脚本 | 382 行 | 组件索引、tauri 包装、上报脚本注入 + 它的单测 |
+| 浏览器断言 | 216 条 | 12 个自检页 |
+| Node 断言 | 9 条 | 注入规则（`npm run test:injection`），不依赖 dev server |
+| Rust 单测 | 59 条 | 42 条纯逻辑用 `rustc --test` 壳子跑得动，17 条要 `cargo test`（本机跑不了），见 AGENTS §11 |
+| Tauri 命令 | 31 个 | |
+| 权限 | 6 项（5 项可用） | 只剩 `media:control` 只有声明 |
+| 踩过的坑 | 56 条 | 见文末 |
 
 ---
 
@@ -63,11 +67,11 @@
 
 ---
 
-## 被推翻的七个决定
+## 被推翻的八个决定
 
 这一节是这份文档的核心。每条都写着**当初为什么这么选**、**什么把它撞翻了**、**现在怎么做**、**付出了什么代价**。
 
-七个里，**五个是环境撞出来的**（显卡拿不到合成、WebView2 不落盘、Tauri 同步命令占主线程、Windows 激活时改 z 序、系统磨砂的半径写死），**两个是自己图省事埋的**（宿主页自己拼地址、每个实例各缓存一份数据）。
+七个里，**五个是环境撞出来的**（显卡拿不到合成、WebView2 不落盘、Tauri 同步命令占主线程、Windows 激活时改 z 序、系统磨砂的半径写死），**两个是自己图省事埋的**（宿主页自己拼地址、每个实例各缓存一份数据）。第八个不一样：它是我把"平台"当"工具"设计错了。
 
 没有一个是"架构不够优雅"。这也解释了为什么坑表比待办清单长：真正拦住你的往往不是设计，而是你没预料到的那台机器。
 
@@ -120,7 +124,14 @@
 - **现在**：`wallpaper.rs` 用 `PrintWindow(Progman, PW_RENDERFULLCONTENT)` 把桌面层（壁纸 + 图标，**不含任何窗口**）截成一张位图，按窗口位置裁一块传给宿主页；宿主页把它铺成 `<canvas>`，用 CSS `filter: blur(Npx)` 糊，再叠一层 `rgba(tint, alpha)` 的底色。这就是 acrylic 的配方，只是把"系统负责的那一步"自己做了。
 - **代价**：透出来的是**壁纸**，不是"后面的浏览器窗口"。这是这个方案的边界，写进了 WIDGET_SPEC §2.2。另外：`PrintWindow(GetDesktopWindow())` 返回全黑（必须用 `Progman`），`BitBlt(GetDC(NULL))` 会把组件自己一起截进去（不能用）；截一张双屏 3456×1081 约 24ms，所以 IPC 带 `2s` 缓存、只在窗口挪动/改尺寸/拖滑杆时重截；壁纸幻灯片和 Wallpaper Engine 这类动态壁纸最多滞后 2 秒。
 
-**一条总结**：这七个都不是"架构错了"，是"环境比文档狠"。所以每次撞墙之后，除了改代码，还往坑表补一行——那 38 行就是这台机器教我的东西。
+### 8. 重启回到设计态 → 记住运行态
+
+- **当初**：`desktopMode` 刻意不持久化，重启一律回到画布。理由是"先让人看见设计态"，别一开机就满屏组件。
+- **撞墙**：这不是一个设计工具，是一个**桌面组件平台**。用户摆好便签和待办、关掉主窗口、第二天开电脑 —— 组件不见了，得重新投放一遍。天天如此。而"开机就有一堆窗口"这个担心，其实一条开关就能解决。
+- **现在**：`desktopMode` 落盘，启动时（水合完成 + 清单读到之后）重建窗口；设置里给一条 `Restore on launch`，不想要就关掉。刻意**不**在恢复时最小化主窗口 —— 开机就把窗口藏起来，用户会以为应用没打开。
+- **代价**：多一个需要保持"磁盘状态 = 屏幕状态"的字段；恢复路径必须等两件事就绪（水合、清单），否则会用空列表同步一次，把所有窗口关掉。
+
+**一条总结**：这八个都不是"架构错了"，是"环境比文档狠"，外加一条"把平台当工具设计"。所以每次撞墙之后，除了改代码，还往坑表补一行——那 50 行就是这台机器教我的东西。
 
 ---
 
@@ -166,6 +177,7 @@
 - [x] **便签正文不再被窗饰压住** —— 正文原来从 10px 就起排，桌面窗口右上角那排图标（97×28）正好盖住第一行；现在顶上是一条 24px 状态条（保存状态从底栏挪上来，不再是空带），正文从 40px 起排。`tests/note-layout.html` 7 条断言直接量正文起点与安全区宽度
 - [x] **底板可调** —— 颜色（色块 + R/G/B 三条滑杆）/ 浓度（`Fill`，0–1）/ 磨砂（`Blur`，0–40px）三条连续滑杆，属性面板里按实例调，清单里给出厂值。`wallpaper.rs` 截桌面层、宿主页三层叠（壁纸 canvas + 底色 veil + iframe）；字色与强调色按合成亮度自动翻转；`Appearance` 随 `sync_widget_windows` 走，拖滑杆 120ms 内跟手，不重建窗口（见"被推翻的决定"第 7 条）。`tests/appearance.html` 31 条断言钉住归一化（非法值退回出厂、范围夹紧、`#abc` 摊开）与合成色/亮度阈值
 - [x] **待办优先级** —— 每行左边一颗圆点，红 / 黄 / 绿三档，点一下循环一档，第四下回到"没设"（空心圈，hover 才变清楚）。老数据没有这个字段就当没设；点圆点不会顺手勾掉那一条。颜色写死成中间调，不走主题令牌 —— 红黄绿是语义色，中间调在深色卡片和浅色底板上都压得住。视觉 10px、可点区域用 `::after` 撑到 18px。`tests/todo-add.html` 场景 7 九条断言钉住载入、循环顺序、不误勾、每档落盘、以及 `aria-label` 说清了"点一下会变成什么"
+- [x] **待办拖动排序** —— 整行都能拖起来换位，不用先找一个"手柄"。指针事件自己实现，不走 HTML5 拖放（沙箱是不透明源，跨文档 `dataTransfer` 靠不住）。过 4px 阈值才算拖动，抬手后浏览器补的那次 `click` 要吃掉，否则拖完那条被顺手勾掉；从圆点 / 勾选框 / 删除按钮上按下不起拖。拖到列表上下边缘自动滚，跟手位移把 `scrollTop` 一起算。`tests/todo-add.html` 场景 8 四条断言钉住换位、落盘顺序、2px 抖动仍算点击
 
 **验收结果**（2026-10-22 实机，不是"应该能"）：
 
@@ -230,7 +242,24 @@
 | 底板一改，没改过的组件也"变了一点" | 脚本无条件把 `--lattice-surface` / `--lattice-text` / `--lattice-border` 覆盖成"近似主题"的值，出厂外观下这些近似值跟主题本身有细微差别 | 出厂外观（`auto / 1 / 0`）一个令牌都不覆盖，`isPlainAppearance()` 判断后直接 `removeProperty`，默认样子跟没有这个功能时一模一样 |
 | 壁纸层四条边发黑 | 模糊的边缘要往外扩，`filter: blur()` 在 canvas 边界上会把外面的透明像素平均进来 | canvas 比卡片四周各大 `2 × MAX_BLUR`（80px），模糊的尾巴落在卡片外面，被窗口圆角裁掉 |
 | 拖窗口时磨砂底"追不上"，停下来还是最初那一张 | 截图是异步的（一张约 24ms + IPC），拖动时每 120ms 就来一次，`wallpaperLoading` 一挡，后面全被丢掉 | 挡的时候记一个 `wallpaperDirty`，`finally` 里发现脏了就补截一张 —— 只补最后一次位置，不排队 |
-
+| 屏幕上看着只有一个组件，实际上跑着两份 WebView2；「收回」只关得掉一个 | 启动恢复和 120ms 防抖同步**并发**触发，两条 `sync_widget_windows` 都先查到 `get_webview_window(label) == None`，然后各自 `build()` 一次 —— 同一个实例被建出两个窗口，一个归 Tauri 管，另一个成了孤儿 | `desktop.ts` 里把同步串成一条链（`serial()`），同一时刻只允许一条在飞；位置/层级幂等，后一条排队跑即可 |
+| 「投放到桌面」按钮点了永久变灰，界面上什么都没发生 | 上一条并发的副作用：同时建窗口把 WebView2 的创建排到几十秒，IPC 的自定义协议先超时（`Failed to fetch`），退到 postMessage 之后长命令的响应再也回不来 —— `desktopBusy` 停在 true | 根因靠串行化解决；同时给 `syncDesktop` / `closeDesktop` 套 `withTimeout`，超时报错并解锁按钮，别让人除了重启没别的办法 |
+| 关掉主窗口之后既退不出也回不来 | 没有 `CloseRequested` 处理，也没有托盘：主窗口被销毁，组件窗口还在（进程不退），但没有任何入口能把主窗口要回来，只能去任务管理器 | 桌面上还有组件时 `prevent_close()` + `hide()`；真退出走设置菜单的 `Quit Lattice`（`quit_app`）；再点一次图标由单实例唤回主窗口 |
+| 两个 Lattice 同时跑，布局互相覆盖 | 没有实例锁。两个进程各建一套组件窗口，还同时往 `state.json` 里写，谁后写谁覆盖 | `instance.rs`：命名互斥体 `Local\Lattice.Instance` 判重 + 命名事件 `Local\Lattice.Wake` 唤回。互斥体句柄**不能**关，关了对象就消失，下一个进程会以为自己是第一个 |
+| 属性面板里撤销了 `storage`，桌面上那个组件照样能读写磁盘 | 权限只在两个地方"记着"：`HostConfig.permissions`（`create()` 时写一次，之后没人更新）和宿主页的 `const granted`（启动时建一次，之后没人动）。`Applied` 那一套 diff 里根本没有权限这一维，所以同步跑了也发现不了变化 | `sync_widget_windows` 每轮比对权限（**排序去重后**比，否则 grants 数组换个顺序会被当成"变了"），变了就 `emit_to` 一条 `lattice:widget-permissions`；宿主页就地清空重填 `granted`（桥每次调用都读它，下一次请求立刻被拒），再 `reloadWidget()` 让组件按新权限重走一遍初始化 |
+| 主窗口最小化之后，画布上的组件还在按心跳空转（系统监控那张卡的数字还在变） | `document.visibilityState` 对"窗口最小化"完全无感 —— 实测最小化前后都是 `visible`。WebView2 只在**整个 webview 被藏起来**时才翻这个属性，而最小化只是把窗口收进任务栏，渲染进程照跑。于是调度器那句"不可见就停摆"在桌面端从来没生效过 | `visibility.rs` 盯 `WindowEvent::Resized`（最小化/还原在 Windows 上都是 `WM_SIZE`，最小化那一下尺寸是 0×0），用 `is_minimized()` / `is_visible()` 算出真实可见性，变了才发 `lattice:window-visible`；`hide()` / `show()` 不动尺寸、不触发 Resized，由调用点显式补一次 `sync()`。调度器把这条信号和 `visibilityState` 取"与" |
+| 热更新之后画布上的组件又跳起来了，窗口明明还最小化着 | 事件是"**变了才发**"，而页面可能是在窗口已经最小化**之后**才加载的（热更新、权限变更重载、改完 Rust 重启应用）。那一次"变成不可见"早就发生过了，只订事件会永远以为自己是可见的 | 页面第一次建调度器时主动拉一次 `getCurrentWindow().isMinimized()`（`hookWindowVisibility` 里那句动态 import），把初始状态补上。Rust 侧不能靠"重发一次"解决：`LAST` 去重就是为了挡住拖边缩放时几十次重复 emit |
+| 改一个组件的外观 / 权限，桌面上**所有**组件一起变 | `emit_to(label)` 并不"只发给那个窗口"：JS 侧 `listen()` 注册的监听器 target 是 `Any`，而 Tauri 的匹配规则是 `target == Any \|\| filter(target)`（`event/listener.rs::match_any_or_filter`）—— 任何 emit 都会送到每个窗口的 `Any` 监听器上。于是拖 A 的 `Fill` 滑杆，四张卡片的底板一起动；撤 A 的一项权限，四个组件一起重载（未落盘的草稿当场丢） | 载荷里带身份，宿主页自己比对：`lattice:appearance` / `lattice:widget-permissions` 带 `instanceId`，`lattice:window-visible` 带窗口 `label`。真机验过：改 Clock 的权限只有 Clock 的 iframe 带上 `__lattice_reload`，另外三个的 `src` 原样；拖 Clock 的滑杆只有 Clock 的 `--lattice-surface` 变 |
+| 在属性面板把权限勾回来，画布卡片上那句 `Needs Widget storage` 还挂着 | `missing` 只在点卡片上那颗 `Grant` 时清（`setMissing([])`），走属性面板这条路没人清 —— 组件其实已经能用了，界面还在喊缺权限 | 授权签名一变就按最新 `grants` 过滤一遍 `missing`（已经有的划掉，仍然缺的留着）。**不要**改成"权限一变就清空"：仍然缺的那几项要等组件下次撞上才重新出现，中间那段时间界面又会骗人 |
+| 画布上的卡片自己消失了（组件数据还在），桌面窗口也没了 —— 前后撞到**三次** | `widget_close` → `lattice:widget-close` → 主窗口 `removePlacement`。第三次给 `widget_close` 加了 `reason` 和一行日志，当场抓到：两次都是 `reason: user`，也就是**宿主页那颗 ✕ 的 click 处理真的跑了**。在宿主页里再挂一层鼠标事件探针，抓到的是一条 `isTrusted: true` 的 `mousedown`，落点 `(203, 15)` —— 正是 220×180 窗口右上角那颗 ✕ 的中心（`target` 读出 `null` 是因为点在了按钮里的 `<svg>` 上，`data-act` 在父节点）。所以不是代码替它派发的，是**真鼠标事件**。但也不是必现：干干净净盯 70 秒，一次都没来 | ① 那一下是**真输入**（`isTrusted: true`），但**不是人**：后来有一轮我在只改 Rust 源码、完全没碰鼠标的几分钟里，四个窗口**各发了一条** `reason: user` —— 不是零星的，是成批的。所以"用户手滑"这个解释不成立，`✕` 的 click 仍然有来路不明的派发方，这条坑**没结**。② 架构上的毛病已经修了（见下一行，`reason` 分家 + 每次调用留一行日志 + 关闭可撤销）。③ 下次再撞到，先看 `[lattice] widget_close <label> (reason: user, …)` 那行里的点击特征：`trusted` + 真实坐标 + `detail: 1` 是真鼠标事件（可能是被重放的），`synthetic` 是脚本派的，`detail: 0` 且坐标 `0,0` 是键盘激活。这行在 Rust 侧打，终端里一定看得见。**别再靠"问一句"结案。** ④ 这条日志已经验过：用 CDP 往时钟窗口的 ✕ 上派发一次真点击，打出来是 `trusted detail=1 pointer=mouse at=140,20`（160 宽的窗口，✕ 中心就是 (140,20)）—— 和那几次的 `(203, 15)`（220 宽窗口的 ✕ 中心）**同一副样子**。也就是说那几次确实是"落在 ✕ 上的真实点击"。⑤ 同时验到：窗饰淡着的时候点下去会被手滑保护丢掉（`opacity 0` → 一条日志都没有）。反过来说，那几次**窗饰是可见的**，指针确实停在组件窗口上 —— 所以不是"窗口在鼠标底下刚建出来"那一下，是窗口已经在那儿、指针已经停在上面之后，才来了一次点击。这条线索指向"指针停在组件窗口上时，系统把别处的点击投给了它"，但还没抓到现行 |
+| 组件的便签 / 待办内容被换成了出厂示例（`This is a Note` / `taskA·B·C`） | `widget-data/lattice.note.json` 与 `lattice.todo.json` 在 19:24:14 / 19:24:35 各被重写了一次，写进去的正是组件自带的**种子数据**。最可能的过程：某一次初始化里 `storage.get` 拿到 `null`（读失败、权限还没到位、或文件当时不在），组件走了"没数据就种一份"的分支，然后**把种子存了回去**。那两个时间点正是开发期反复重启 + 热更新 + 跑 headless 测试的时候 | ① 用户内容已尽量捞回：便签全文从 `.scratch/note-preview.html` 里取回，待办从截图里读回 4 条（另外 2 条滚出视野，找不回来）。② **平台侧的兜底已经补上**：`write_atomic` 覆盖前留一代 `.bak`（见 v0.3"组件数据落盘留一代备份"）。③ 组件侧要立规矩：**读失败 ≠ 没有数据**，读失败时绝不许把种子写回去（WIDGET_SPEC 已补） |
+| 组件自己调 `window.close()` 之后，用户摆好的布局跟着没了 | 一条命令兼着两种语义："窗口关了"就等于"用户把它删了"。于是任何一次意外调用都变成**静默的数据丢失**，连日志都不留一行 | `reason` 把两件事拆开：只有 `reason == "user"`（宿主页 ✕）才发 `lattice:widget-close` 删 placement；别的来路只关窗口，实例记进 `Runner.suppressed`，本次运行不再重建（否则下一次同步又把它变出来，看着像"关不掉"）。`suppressed` 只在内存里 —— placement 一直躺在 `state.json`，下次启动照样回来。真机验过：`reason: widget` 之后窗口消失、四条 placement 一条不少、等 3 秒也不再冒出来 |
+| 网络代理里**带自定义头的请求全部失败**，`GetLastError()` 只给 `ERROR_INVALID_PARAMETER (87)`；不带头的请求好好的 | `WinHttpSendRequest` 的 `dwHeadersLength` 是**字符数**，不是字节数。我按 UTF-16 的字节数传了 2 倍 —— 同一份代码里注册表那几个 API（`RegSetValueExW` 的 `cbData`）收的**是**字节数，凭手感写就错了 | 传 `header_wide.len() - 1`（字符数）。这条只有真机联调能发现：单元测试碰不到 WinHTTP，而"组件联网时灵时不灵"会让人往白名单、权限、DNS 方向查很久 |
+| 崩溃守卫上线后，两个组件窗口在几十秒里各重载了一千多次，日志刷到 1.5MB，界面一直在闪 | 第一版把**认不出来**的 `ProcessFailed` kind 也当成"挂了"去重载。`--in-process-gpu` 下每次导航都会看到辅助进程退出（实测 kind 4 = `UTILITY_PROCESS_EXITED`），重载又触发下一次事件 | 只有明确知道"重载能修好"的 kind 才重载（渲染进程 / GPU），其余记一行就够。拿不准时重载的代价是"把一个偶发事件变成死循环" |
+| 组件目录里放个文件，桌面上五个卡片一起重载 | `lattice:widgets-changed` 是广播（`emit` 到所有窗口），载荷如果不带路径，宿主页只能选择"全量重载" | 载荷带**相对路径**（`<id>/<file>`，第一段就是组件 id），宿主页按前缀筛；只有自己那份变了才 `reloadWidget()` |
+| 托盘菜单改了"暂停"，设置菜单里的开关还是老样子 | 暂停的真相在 Rust（`Runner.paused`），主窗口的 `paused` 只是镜像。托盘改状态时不发事件，主窗口就永远不知道 | `apply_pause` 里 `emit_to("main", "lattice:paused", ...)`，主窗口收到就落 store；另外主窗口挂载时主动拉一次 `widgets_paused` —— 事件是"变了才发"，页面可能在事件之后才加载 |
+| 暂停中的组件窗口恢复之后跑到最前面来了 | `window.show()` 就是 `ShowWindow`，它会把窗口提到最前 —— 而恢复之后层级还停在 `HWND_BOTTOM` / `WorkerW` 的旧印象里 | 恢复时先 `show()` 再重放一次层级（`desktop::apply_to`），顺序反了就等于没压下去 |
+| 开机自启开关打开、重启却没起来；或者起来的还是旧的开发版 | 注册表里那条命令指向的是上一次的 exe（换过安装位置、升级过、或者开发时写进去的 `target\debug\lattice.exe`）。注册表不会自己跟着走 | 启动时对账：`autostart::reconcile()` 发现注册的那条不是当前 exe 就改写（只改已存在的，不会顺手打开）。debug 构建跳过 —— 否则 `tauri dev` 一次就把用户的自启劫持到开发产物上 |
 ### 环境与构建（windows-gnu）
 
 默认工具链是 `stable-x86_64-pc-windows-gnu`，它不自带 `windres`，也没有 `gcc`，  
@@ -246,6 +275,10 @@
 `npm run tauri:dev` / `tauri:build` 都走这个包装脚本，所以直接跑就行。  
 换到 MSVC 工具链（`rustup default stable-x86_64-pc-windows-msvc`）就不需要这一套了。
 
+**`cargo test` 在这台机器上跑不了。** 本机安全策略禁止写 `target\debug\deps\*.exe`，而测试二进制正好生成在那里 —— 表现是链接出来的 exe 不完整，一跑就 `0xc0000139 STATUS_ENTRYPOINT_NOT_FOUND`（看着像链接错误，其实是文件没写全）。同一个策略也是"dev 任务莫名挂掉、报 `beforeDevCommand terminated with a non-zero status code`"的真正原因：`cargo` 想写 `deps\lattice-*.exe` 被拒。
+
+换 `CARGO_TARGET_DIR` **也不行** —— 试过 `.scratch/cargo-target`，规则匹配的是 `deps\*.exe` 这个形状，换目录照样拦（还白编了 7 分钟依赖）。所以这台机器上 Rust 单测（`diagnostics.rs` 14 条、`protocol.rs` 6 条、`widget_store.rs` 5 条）只能靠 `cargo check` 保证能编过，**实际执行得去 CI 或者别的机器**。这也是为什么这几条只能靠真机端到端验：改动落地时宁可多花两分钟在应用里跑一遍，别指望单测。
+
 ### 运行时开关
 
 | 变量                                          | 作用                                      |
@@ -255,24 +288,108 @@
 
 ## v0.3 —— 平台能力
 
-v0.2 收尾时挪过来的四项排在前面。
+已完成的排前面，剩下的按依赖顺序排 —— 顺序不是审美，是"谁挡着谁"。
 
 - [x] **组件坏了能看出来** —— 以前只有一种表现：白屏，分不清 404 还是 JS 崩了。现在三件事一起上：
   - **兜底页**：协议层失败时，文档导航拿到一页可读 HTML（`File not found` / `Widget not installed` / `File could not be read` / `Malformed request path`），带组件 id、请求路径、找过的目录、该怎么修。子资源请求仍然回空 body —— 往 `fetch()` 里塞 HTML 只会换来一个和真实原因无关的解析错误
-  - **错误卡**：发组件 HTML 时注入一段上报脚本（沙箱 iframe 的异常宿主读不到），宿主叠一张贴底的卡：消息、`文件:行:列`、可展开堆栈、`Reload`。按严重程度挑主错误，脚本异常压过资源缺失，其余收进 `+N`；画布上退化成一行
+  - **错误卡**：发组件 HTML 时注入一段上报脚本（沙箱 iframe 的异常宿主读不到），宿主叠一张贴底的卡：消息、`文件:行:列`、可展开堆栈、`Reload`。按严重程度挑主错误，脚本异常压过资源缺失，其余收进 `+N`；画布上退化成一行。**两条发文档的路都注**（用户组件走协议层、内置组件走前端构建），见下面那条"内置组件也上报错误"
   - **重载**：窗饰第 5 颗按钮 + 错误卡上的 `Reload` + 画布错误条上的 `Reload`，都是给 `src` 加时间戳重新导航，改完文件存盘就能看到新内容
   - `tests/diagnostics.html` 28 条断言（识别边界、两条通道不撞、去重指纹、主错误选择）+ `diagnostics.rs` 14 条单测（注入位置、幂等、行号不变、转义、状态码）
-- [ ] **重启后自动把组件放回桌面** —— 现在刻意回到设计态（先让人看见画布），要做成可选项
-- [ ] 多显示器与 PerMonitorV2 DPI 处理
-- [ ] 托盘图标：显示设置、暂停全部组件、退出
-- [ ] 系统指标数据源：CPU / 内存 / 磁盘 / 网络（`system:monitor` 权限落地）
-- [ ] 网络白名单代理（`network` 权限落地，组件不直连）
-- [ ] 平台统一调度器：组件定时器集中管理，不可见时暂停
-- [ ] 组件崩溃隔离与自动恢复
-- [ ] 撤销授权同步到已打开窗口（`Applied` 加 permissions 签名）
-- [ ] 组件目录的文件系统监听（手工往目录里拷文件时也能自动刷新；拖放安装已经能用了）
-- [ ] 每实例配置：清单声明 schema → 属性面板自动渲染表单
-- [ ] 开机自启、单实例锁
+- [x] **重启后自动把组件放回桌面** —— `desktopMode` 改为持久化，启动时（水合完成 + 清单读到之后）重建一遍窗口。设置里留一条 `Restore on launch` 开关：有人把 Lattice 当纯设计工具用，不想一开就有一堆窗口。刻意**不**自动最小化主窗口 —— 开机就把窗口藏起来，用户会以为应用没打开
+- [x] **单实例锁** —— Win32 命名互斥体 `Local\Lattice.Instance` + 命名事件 `Local\Lattice.Wake`，不引插件。第二次启动 `SetEvent` 一下就把已经在跑的那个的主窗口翻出来，然后本进程退出。两个实例同时跑会各建一套组件窗口、还同时往 `state.json` 里写
+- [x] **撤销授权同步到已打开窗口** —— 以前 `HostConfig.permissions` 只在 `create()` 里写一次，之后再也不更新：用户在属性面板撤掉 `storage`，桌面上那个组件照样能读写磁盘。授权界面在说谎。现在 `sync_widget_windows` 每轮都比对权限（排序去重后比，否则 grants 数组换个顺序就会被当成"变了"），变了就 `emit_to` 一条 `lattice:widget-permissions`；宿主页就地清空并重填 `granted` 集合（桥每次调用都读它，所以下一次请求立刻被拒），再调 `reloadWidget()` 重走一遍初始化 —— 和画布那边重挂 iframe 的效果对齐
+- [x] **没有桥方法的权限收口** —— `network` / `system:monitor` / `media:control` 三项一直挂在清单里，能勾、能"授权"，但桥里没有任何方法认领它们，勾完什么都不会发生。现在授权界面对它们显示成禁用态 + `soon` 标记，组件库卡片上是灰色虚线标签，属性面板底下多一行说明。**没有从 `Permission` 类型里删掉**：清单声明了它们的组件照常通过校验，静默丢弃声明比明确拒绝更糟。（`system:monitor` 已经随系统指标落地，现在只剩 `network` 和 `media:control` 还在 `soon` 里）
+
+剩下的按依赖顺序排。括号里写的是"为什么不能提前"：
+
+- [x] **平台统一调度器** —— 组件自己 `setInterval` 的话，一个卡片里三条心跳就是三个计时器对象，而且窗口收起来之后照跑不误。现在一个组件实例只有**一条时间轴**：`schedule.every` / `schedule.clear` 两个桥方法（不需要权限 —— 它不碰系统资源），一次只有一个 `setTimeout` 在飞（永远取最近的到期时刻），最小 250ms、最多 8 条订阅。
+  - **"不可见就停摆"有两个来源**：`document.visibilityState`（浏览器说了算）和 `lattice:window-visible`（Rust 观测窗口最小化 / 收起）。只盯前者等于没停 —— 实测主窗口最小化之后，画布上组件 iframe 的 `visibilityState` 仍然是 `visible`（WebView2 只在整个 webview 被藏起来时才翻这个属性）。`visibility.rs` 盯 `WindowEvent::Resized`（最小化在 Windows 上就是 `WM_SIZE`，尺寸变 0×0）+ 在 `hide()` / `show()` 处显式补一次（这两条不动尺寸）。
+  - **页面加载时还要主动拉一次**：事件是"变了才发"，页面可能在窗口已经最小化之后才加载（热更新、权限变更重载、改完 Rust 重启），那一次变化早过去了。`hookWindowVisibility` 里 `isMinimized()` 补这一刀 —— 不加的话，热更新一次就要等用户再最小化一遍才会重新停摆。
+  - **回来只补一拍，不补一串**：`next` 直接推到"下一个未来时刻"。页面藏十分钟再回来补 2400 次心跳既没意义，还会把主线程堵死 —— 组件要的是"现在是什么样"，不是"这十分钟里每一拍"。
+  - 桌面窗口和画布各有一条自己的时间轴（一个实例 = 一个宿主页），统一的是"这个组件里的所有定时器"，不是整个进程。
+  - `tests/schedule.html` 20 条断言（夹紧、订阅上限、心跳间隔、`clear`、文档藏起来、窗口最小化、桥上参数与权限）
+- [x] **系统指标数据源** —— `metrics.rs` 四路采样，全部走 Win32，不引第三方 crate：`GetSystemTimes`（CPU，**内核时间已经含 idle**，所以总量 = 内核 + 用户）、`GlobalMemoryStatusEx`（内存）、`GetDiskFreeSpaceExW`（系统盘）、`GetIfTable2`（网络，跳过回环和 `OperStatus != Up` 的接口，行数组是变长的 —— 表头声明 `[MIB_IF_ROW2; 1]`，实际要按 `count` 往后走）。
+  - **速率类指标要两次采样做差**，第一次必然返回 0（没有前值就编不出速率），所以组件启动时先打一拍建基线，第一次心跳拿到的才是真数。
+  - **1 秒缓存**：五个组件在同一秒里轮询只真采一次 —— 采样是系统调用，重复采只是浪费。
+  - `system.metrics` 要 `system:monitor`；非 Tauri 环境报 `internal` 而不是静默返回 0（静默会让组件显示"0% CPU"这种谎话）。
+  - 新官方组件 `lattice.sysmon`（240×200，CPU / 内存 / 磁盘 / 上下行），心跳挂在调度器上、自己不碰 `setInterval`。`tests/sysmon.html` 13 条断言
+- [x] **组件数据落盘留一代备份** —— `write_atomic` 覆盖前把旧内容挪到 `<名>.json.bak`，只留一代。三条约束：**只在内容真的变了才留**（组件的保存可能很频繁，一样的内容没有可丢的东西，不为它多写一次盘）；**第一次写不留**（没有旧内容可备份，否则会拿空文件盖掉一个本来不存在的历史）；**备份失败不拦主写入**（用户这一次保存比备份要紧，记一行 `eprintln!` 就走）。卸载（`widget_store_clear`）连 `.bak` 一起删 —— 那是用户明确说的"不要了"，留一份旧数据只会让以后的手工恢复分不清哪份是当前。
+  - 起因见坑表"便签/待办被换成出厂示例"：种子数据把用户内容盖掉之后，一点退路都没有。现在至少能捞回上一次的内容。
+  - 5 条单测（首次写不产生、覆盖留下上一份、内容相同不动备份、只留一代、临时文件不残留）+ 真机验过：先 `one` 再 `two` 再 `two`，主文件 `{"probe":"two"}`、`.bak` 停在 `{"probe":"one"}`。
+- [x] **关掉的组件能撤回来** —— 两颗 ✕（宿主页窗饰上的、画布卡片上的）以前都是**不可逆删除**：placement 从 `state.json` 里删掉，桌面窗口一起销毁。而那颗 ✕ 只有 22×22、还挂在会淡入的窗饰上 —— 手滑一次，用户的布局就少一块。现在删的时候 store 留一份快照（`lastClosed`，含 placement 和 `desktopRects` 里那份矩形），主窗口底部弹 8 秒的 `Removed <名字> · Undo`。
+  - **矩形必须一起存**：删 placement 时 `desktopRects` 那条也删了，只塞回 placement 的话组件会掉到"画布坐标推算"的位置上，用户看到的还是"位置变了"。
+  - **`lastClosed` 不进 `state.json`**（`partialize` 里没有它）：它是"这一次还能撤回"，不是用户配置 —— 重启之后还弹一条"撤销刚才的删除"只会莫名其妙。
+  - `restoreLastClosed` 先查重：实例可能已经通过别的路回来了（重装、重新投放），别再添一份。
+  - 顺带把 ✕ 的**手滑保护**做了：判据是窗饰当前透明度，`< 0.9` 说明它还在 100ms 的淡入里、用户几乎没看见这颗按钮，这一下不认。不用计时器 —— 计时器要靠 `mouseenter`，而指针一直停在 iframe 里时那个事件可能压根不触发，测不出来就变成误挡。
+  - 真机验过：关 sysmon → placement 从 4 变 3、撤销条显示 `Removed System · Undo`；点 Undo → placement 回来、桌面窗口重新建出来（4 个窗口）、条消失；再关 clock → 1 秒时条在、10 秒时条没了而 placement 保持已删。
+  - 每次关闭都会在 Rust 侧打一行 `[lattice] widget_close <label> (reason: user, trusted detail=1 pointer=mouse at 140,20)` —— 点击特征跟着 IPC 参数一起送过去，**不再**用宿主页的 `console.info`：vite dev 其实**不**转发组件窗口的 console，那一行从来没在终端里出现过（这条判断错了整整一轮）。现在参数落到 `widget_close` 里，和 reason 同一行。
+  - 这一整条链是拿真点击验的：CDP 往时钟窗口的 ✕ 上派发一次 `mousePressed`/`mouseReleased` → 日志出上面那行 → 撤销条显示 `Removed Clock` → 点 `Undo` → placement 回到 4 条、桌面窗口重建到 5 个。**注意 CDP 的合成点击不会让 Chromium 更新 `:hover`**，窗饰一直是透明的，第一次验的时候被手滑保护挡住了 —— 得先用 `CSS.forcePseudoState` 把 `body` 的 `hover` 强行打开，才走得到后面的路径。
+- [x] **CSP 锁定** —— `csp.rs` 一处生成策略，`protocol.rs` 只在发 HTML 文档时挂上（子资源响应上的 CSP 浏览器一律忽略，发给 `.js`/`.css` 只是白占几十字节；真正管事的是导航那一次）。`default-src 'none'`，脚本 / 样式 / 图片 / 字体 / 媒体只放行组件自己的协议源，`frame-src` / `object-src` / `base-uri` / `form-action` 全关，`script-src` 里**没有** `'unsafe-eval'`。
+  - **`'self'` 在这里是废的**：宿主页用 `sandbox="allow-scripts"` 把组件装进 iframe，文档因此拿到的是**不透明源** —— `'self'` 谁也匹配不上，连组件自己的 `widget.js` / `style.css` 都会被挡。协议源必须显式写出来。
+  - **协议源跟平台走**：Windows 是 `http://lattice-widget.localhost`，其它平台是 `lattice-widget://localhost`。要和 `registry.ts::widgetSchemeBase` 一字不差，否则组件被自己的 CSP 挡掉 —— 这种 bug 看起来像"组件坏了"，最难查。
+  - **`connect-src` 不是 `'none'`**：组件 `fetch("./data.json")` 读自己目录是正当用法，堵死等于让"组件自带数据文件"这个玩法失效。收在协议源上**不构成外泄通道**：`lattice-widget://` 是只读文件服务，GET 只回这个组件自己的文件，没有日志、没有 query 语义、也没有写入面。
+  - **只锁用户组件**：内置组件走前端资源管线、跟着二进制一起发，拿不到这条头（也不需要）。这是剩下**唯一**的一处"同一份代码、两种行为"—— 错误上报那条已经补平了（见"内置组件也上报错误"）。
+  - 3 条单测（每条出网通道都关着、组件自己的资源仍然放行、协议源与映射一致）+ 真机探针：沙箱 iframe 里 `{"scriptRan":true,"cssLoaded":"rgb(34, 34, 34)","fetch":"blocked: TypeError","image":"blocked","selfFetch":"ok"}`，响应头确实带上了整套策略；404 兜底页在同一套策略下正常渲染（说明页也是组件协议发的 HTML，一样带上）。
+  - **做完不等于堵死了**：CSP 关掉的是 `fetch` / 图片 / 表单 / 套框这几条，**"把自己这个 frame 导航走"它管不了**（没有 `navigate-to` 这个指令，`frame-src` 管的是嵌别人）。`location.href = "https://…/?d=" + 便签` 依然是一次出网。所以下面单列了一条"出网闸门"，在 WebView2 层拦帧导航 —— 那才是硬闸。
+- [x] **出网闸门** —— `egress.rs`，每个组件窗口建完立刻挂 `FrameNavigationStarting` + `NavigationStarting`，在导航**发生前**取消掉。白名单只有四类：宿主页的源、组件协议的源、`about:` / `data:` / `blob:`。
+  - **宿主源不能从窗口现取**。第一版写成 `window.url()` 算 origin，结果 `build()` 返回时窗口还没开始导航，URL 是 `about:blank` → 取不到 origin → 四条 `egress gate skipped … no origin`，闸**根本没挂上**。改成从配置算：开发期用 `dev_url`（`http://127.0.0.1:1420`），打包后是 tauri 的资源协议（三种写法都留着，多一条前缀的代价可以忽略，漏一条就是全量白屏）。
+  - **`FrameNavigationStarting` 是 wry 不暴露的事件**，只能自己拿 `ICoreWebView2` 挂（`with_webview` → `controller.CoreWebView2()`）。所以 `Cargo.toml` 多了一个 `webview2-com = "0.39"` —— 版本必须和 tauri/wry 依赖的那份一致（`Cargo.lock` 里是 0.39.1），差一个次版本就会变成两个不兼容的 crate，报错信息完全指不到这里。
+  - **前缀比较要防后缀骗**：`http://localhost:1420/` 不能放行 `http://localhost:1420.evil.com/` —— 端口后面是 `.` 不是 `/`，对不上。单测钉住了这条，也钉住了 `file://` 和 `javascript:`。
+  - 拦下来一定留一行 `[lattice] egress blocked (<label>, frame): <url>` —— 组件"突然不联网了"和"本来就该拦"从外面看一模一样。放行的默认不打日志（重载一次来一条，刷屏），要看就设 `LATTICE_EGRESS_TRACE=1`。
+  - 真机验过：在组件 iframe **内部**执行 `location.href = "https://example.com/?d=leak-probe"` → 日志出现 `egress blocked (widget-lattice-clock-4e78858c, frame)`，iframe 的 `location.href` 和正文一字未变（21:38 / Oct 23, Fri 还是那两行）。反向也验了：给 `iframe.src` 加时间戳重新导航（就是窗饰那颗 Reload 干的事）照常放行，没有误伤。
+  - **挂闸的时机**（拿 `LATTICE_EGRESS_TRACE=1` 量的）：四个窗口的 `frame` 导航 4/4 都被闸看到了；`top` 导航 3/4 —— 有一个窗口的首次顶层导航比闸快了一线。这条不构成缺口：组件的顶层导航本来就该是宿主页，而组件在 iframe 里、沙箱没给 `allow-top-navigation`，它动不了顶层。真正要管的帧导航是稳的。
+- [x] **每实例配置** —— 组件要"可配置"的地方，以前只能自己画设置 UI 再存进 `storage`。两个官方组件都这么干过：时钟在卡片上放一颗 `24-hour` 按钮，倒计时放了一个原生 `<input type="date">`（还得自己按底板亮度猜 `color-scheme`，否则深色卡片上日历图标是黑的）。两个毛病其实是同一个：卡片只有 240×140，塞不下；而 `storage` 是按 `widgetId` 的，桌面上两个时钟会共享同一份偏好。
+  - 现在清单声明 `config`（`toggle` / `number` / `text` / `select` / `date` 五类字段，最多 12 项），属性面板按 schema 渲染表单，值按 **`instanceId`** 存进 `state.json` 的 `configs`。组件用 `config.get` 读一份**已经合并过出厂值**的完整对象，配置变化时宿主推 `config-changed` —— **不重载**组件，重载会冲掉没落盘的草稿。
+  - 合并规则只有一份（`runtime/config.ts::resolveConfig`）：缺的键补 `default`、非法值（类型错 / 越界 / 选项不存在 / 日期不存在）退回 `default`、未知键不外泄。Rust 只透传，所以画布和桌面看到的是同一份结果。
+  - 写坏的字段**单独丢弃**，不让整包加载失败 —— 跟 `icon` 同一条原则：锦上添花的东西不该拖垮组件。
+  - 顺手把两个官方组件迁到调度器上：`lattice.clock` 与 `lattice.countdown` 原来还在 `setInterval`（不变量 10 的漏网），现在都走 `schedule.every`。另外 12 小时制 + 秒数在 240 宽下会折行、把日期挤出卡片，加了一档 `is-long` 把字号退到 33px。
+  - `tests/config.html` 24 条断言（字段丢弃、上限、`min > max` 交换、`select` 默认回退、日期合法性、未知键、NaN）+ 浏览器态端到端验过：拨 `Show seconds`，画布 iframe 当场从 `23:21` 变 `23:21:14`；倒计时改日期 `69 天 → 62 天`、改说明文字当场生效，值都落在 `configs["lattice.countdown#…"]` 上。
+- [x] **内置组件也上报错误** —— 错误上报一直是"往组件文档里注一段脚本"，而注入只写在 `protocol.rs` 里，那条路只发 `lattice-widget://`（用户装的组件）。内置组件的文件走应用自己的源 —— dev 是 vite、打包后是 tauri 资源协议 —— 协议层压根碰不到，所以**官方组件抛错既不弹卡也不出兜底页**，只能靠自己的测试兜着。这是个"越常用越吃亏"的缺口：五个官方组件恰好是所有人最先跑的东西。
+  - **上报脚本收成一份源码**：`src/runtime/widget-reporter.js`。Rust 侧 `diagnostics.rs` 用 `include_str!` 把它编进二进制，前端侧由 `scripts/widget-diagnostics-plugin.mjs` 注入 —— 两边读同一个文件。不这么收的话，两处各写一份，改一次漏一次，最后"官方组件的错误卡长得跟别人的不一样"。
+  - **前端侧要覆盖 dev 和 build 两条路**，缺一条就等于没做：dev 下 `public/` 是 vite 直接吐的，得用 `configureServer` 装中间件现读现注；`build` 下 `public/` 被原样拷进 `dist/`，得在 `closeBundle` 里回写（必须排在这份拷贝之后，早一拍就是注了个寂寞）。
+  - **注入规则照抄 Rust 那套**，包括那个容易被忽略的细节：只认 `<!doctype` 前面**只有空白**（BOM 也算），`<head` 后面不能是字母（否则 `<header>` 会被当成 `<head>`）。`scripts/widget-diagnostics.test.mjs` 用和 Rust 单测同一批 fixture 钉住这些 —— `npm run test:injection`，9 条，不依赖 dev server。
+  - **压行必须字节一致**：两边都是"按行 trim、空格连接、整体再 trim"。差一个空格不至于出错，但"行数变了"会，而行数正是 `event.lineno` 的坐标系。
+  - 验过：dev 下 `curl` 内置组件的 HTML，标记恰好一个（中间件幂等，没和 vite 的 `public/` 服务叠加成两份），`manifest.json` 一个字没动（`.html` 守卫）；`npm run build` 打出 `已注入 5 份内置组件文档`，5 份 `dist/widgets/*/index.html` 的**行数和源文件完全相等**；画布端到端 —— 在 `lattice.clock` 的 iframe 里 `setTimeout(() => { throw … })`，错误条当场出现 `Script error: boom-from-bundled-widget`，再塞一张不存在的图片，条上多出一个 `+1`（资源失败走 `capture`，和脚本错误是两条路径）。
+  - **兜底页没有跟着补**，这是故意的：内置组件的文件跟着应用一起打包，缺文件在构建时就暴露了，兜底页那条路上只有错误卡。真正需要兜底的是"用户往目录里拷错了一个包"这种场景，那本来就只在协议层。
+  - 桌面窗口那一路也验了，但**没启动 Tauri**：宿主页 `widget-host.html` 的启动链只有一个入口依赖 Rust（`invoke("widget_host_config")`），用 CDP 的 `Page.addScriptToEvaluateOnNewDocument` 在页面脚本之前塞一个假的 `__TAURI_INTERNALS__`，把这条 IPC 换成固定配置，页面就在浏览器里跑起来了 —— 验到的仍是真代码（`isWidgetErrorReport` → `paintWidgetError` → `.lw-error`），只有窗口管理那部分空转。结果：组件 iframe 里抛错，贴底的大卡出现 `Script error / boom-in-desktop-window / index.html:1:26 / Stack trace / Reload`，时钟照常在卡片上方走。这招也能用来调宿主页的样式，不必为了看一眼卡片去重启应用。
+- [x] **组件库能搜** —— 库只有"已安装 / 可安装"两段，装到十几个包之后就只能靠眼睛扫。现在标题下面常驻一格搜索框，按名字、id、描述、作者、**权限名**过滤。
+  - **权限名也算命中是有意的**："哪个组件能读系统指标""哪些要联网"是真实问题，而权限恰好就印在卡片上，搜不到反而奇怪。
+  - **多词是 AND**（`clock 24` 只留时钟），**不做模糊匹配** —— 拼错一个字母就该是"没有"，把一堆不相干的包倒出来比搜不到更烦人。
+  - 过滤只影响视图：两段仍然分开，计数变成 `命中/总数`（`Installed 2/4`），全空时给一张说明卡 + `Clear search`。常驻而不是"点放大镜展开"：库会变长，搜索是常驻入口，藏起来只会让人找不到；展开/收起还会让列表跳一下。
+  - 判定逻辑抽在 `runtime/library-search.ts`（纯函数），`tests/library-search.html` 18 条断言钉着切词、大小写、空白归一、多词 AND、权限名、不做模糊这几条边界 —— 别在组件里再写一遍，复制的后果是"测试过了，界面上还是不对"。
+  - `Esc` 在输入框里：有内容先清空，没内容才失焦；而且要 `stopPropagation` —— 设置菜单在 window 上听 `Esc`，不拦会连带把它关掉。
+- [x] **网络白名单代理** —— `network` 权限真正落地：组件**不直连**，请求走桥上的 `network.fetch`，由 Rust 侧（`network.rs`，WinHTTP）代发。组件文档的 `connect-src` 里只有它自己的协议源，所以浏览器层面根本没有第二条出网的路。
+  - 为什么不做成"本地 HTTP 代理 + `connect-src` 指过去"：那样组件仍然能直接 `fetch`，白名单只剩一层自觉；而且本地代理要开一个端口，`connect-src` 就得放行它，那个地址本身又成了可以被直连的缝。IPC 代理没有端口。
+  - 三道闸门：权限（`HostConfig.permissions`）→ 主机白名单（清单 `network.hosts`，精确匹配、可钉端口、**不支持通配符**）→ 形状（只 http/https、六种方法、请求体 ≤256KB、响应 ≤1MB 截断标记、头 ≤32 条、头里不许有换行）。
+  - **重定向不跟随**（`WINHTTP_OPTION_REDIRECT_POLICY_NEVER`）：跟着 302 走等于白名单只检查了第一跳。3xx 原样回给组件，要跟就再调一次 —— 那时会重新过白名单。
+  - 策略层（URL 解析 + 白名单）拆成 `network_policy.rs`，纯函数，`.scratch/net-test.rs` 用 `rustc --test` 跑 **9 条**断言；清单侧 `tests/manifest-network.html` **21 条**。
+  - 真机验过（临时组件 + 本地 HTTP 服务）：白名单内的 `127.0.0.1:8787` 拿到 200 和 JSON；同端口换主机名（`localhost`）、换域名（`example.com`）、换协议（`file:`）三种全部被拒且理由各不相同；`302 → 127.0.0.1:8788`（不在白名单）**没有被跟随** —— 8788 那个"被击中就会记一行"的端点始终是 0 次
+- [x] **开机自启** —— HKCU 的 `Run` 键，值名 `Lattice`，命令写成带引号的 `"<exe>"`（路径有空格时系统会把命令拆错）。注册表 API 直接调（`RegCreateKeyExW` / `RegSetQueryValueExW` / `RegDeleteValueW`），不引 `auto-launch` 那类库 —— 和 `metrics.rs` 手搓 Win32 采样同一条理由。
+  - 设置菜单里一个开关，读的是**注册表真实状态**，写的返回值也是"写完之后的状态"（写失败时界面不许显示"已开启"）。注册的 exe 和当前跑的不是同一个构建时，下面挂一行提示"另一个构建"——开发态注册的是 `target\debug\lattice.exe`，用户重启后跑起来的却是安装版，这个差异必须说出来
+  - **安装器不给默认开**：装完就多一条启动项是这个品类最招人烦的行为之一。`installer-hooks.nsh` 只做卸载清理（`DeleteRegValue`，不删键 —— `Run` 里还有别人的启动项）
+  - "路径变了"交给应用自己对账：`autostart::reconcile()` 启动时看一眼，注册表里那条指向的不是当前 exe 就改写（**只改已经存在的**，不会因此把自启打开）。放应用里而不是安装器里，是因为应用知道自己的路径，不用去猜 NSIS 模板的 define，绿色版也一并覆盖。debug 构建直接跳过 —— 否则跑一次 `tauri dev` 就把用户的自启劫持到开发产物上
+  - 真机验过：`autostart_get` → 开 → 注册表里确实出现 `"D://GitDev//lattice//src-tauri//target//debug//lattice.exe"`（带引号）→ 关 → 值消失
+- [x] **托盘图标** —— 左键单击唤回主窗口，右键菜单三项：`Open Lattice` / `Pause all widgets` / `Quit`。暂停那一项的文字在 `Pause` 和 `Resume` 之间翻。托盘建失败只打一行日志，不拖垮启动（最坏情况回到"没有托盘"的旧行为）。
+  - **暂停 = 把窗口藏起来**，不是只停动画：`hide()` 会让 `document.visibilityState` 变成 `hidden`，配合 `visibility.rs` 那条信号，调度器整条时间轴停摆 —— 是真的不占 CPU。恢复时先 `show()` 再重放层级（`show()` 会把窗口提到最前），并补一次 `visibility::sync()`（`hide/show` 不动尺寸、不触发 `Resized`）
+  - 暂停状态**不落盘**：它是"现在别动"，不是配置。重启之后该恢复 —— 用户开机的期待是"组件在那儿"
+  - 设置菜单里也有同一个开关（`set_widgets_paused`），托盘改了状态会发 `lattice:paused` 回主窗口，两边不会各说各话
+  - 真机验过：托盘窗口存在（类名 `tray_icon_app`）、无创建失败日志、`set_widgets_paused(true/false)` 往返正确。**菜单项本身没点过** —— 它调的是 `toggle_paused` / `show_main` / `app.exit`，和上面验过的是同一段代码
+- [x] **组件崩溃隔离与自动恢复** —— 只管**渲染进程整个挂掉**（`ICoreWebView2::add_ProcessFailed`）。JS 异常和资源 404 还是兜底页 + 错误卡那条路，没混进来重做。
+  - 按 kind 分流：`RENDER_PROCESS_EXITED` / `FRAME_*` / `GPU_*` → 重载；`RENDER_PROCESS_UNRESPONSIVE` → **只记日志**（WebView2 自己会试，这时候重载可能把用户正在写的草稿弄丢）；`BROWSER_PROCESS_EXITED` → 窗口已经废了，上报不重载
+  - 认不出来的 kind **不重载**。这条是踩出来的：第一版把不认识的也当"挂了"，`--in-process-gpu` 下每次导航都会看到辅助进程退出，重载又触发下一次事件，两个窗口几十秒里各重载一千多次
+  - 重载不在 COM 回调里做（那等于让 WebView2 在自己的事件里拆自己）：换一条线程、等 120ms 再 `reload()`
+  - 崩溃循环：60 秒内超过 3 次就停手，`lattice:widget-crashed` 带 `gaveUp: true` 上报；主窗口弹一条危险色提示条，带 `Try again`（`widget_reload`）。判定抽成 `crash_policy.rs` 的纯函数，`rustc --test` 跑得动
+  - 真机验过（CDP `Page.crash` 直接打掉渲染进程）：第 1 次 → 日志 `attempt 1 — reloading`，宿主页自己回来了（iframe target id 变了，页面正常响应）；连打 4 次 → `attempt 1/2/3` 之后 `gave up`，主窗口出现 `Clock keeps crashing — its window stopped reloading.`，点 `Try again` 提示条消失、窗口回来。两次崩溃间隔超过 60 秒会重新计数（也验到了）
+- [x] **组件目录的文件系统监听** —— `ReadDirectoryChangesW` 递归盯两个根：用户组件目录 + 开发机上的 `public/widgets`。每根一条采集线程，另有一条合并线程按"安静 300ms"去抖（`MAX_HOLD` 2 秒兜底），发 `lattice:widgets-changed`，载荷是**相对路径**。
+  - 为什么不引 `notify`：要的只是"这棵树里有东西变了"，一个 API 就够；引一个跨平台 watcher 会带进来一整套依赖图，而这里只跑 Windows
+  - 安装/卸载期间用 `watch::Suppress` 把事件压住：拷贝本身就是一次递归复制，而且装完之后主窗口自己会 `refresh()`
+  - 宿主页按**前缀**筛（`<widgetId>/`）：协议层和 `install_widget` 都按 `<id>/<相对路径>` 拼，目录名等于清单 id。不筛的话，改一个组件五个卡片一起闪
+  - 真机验过：往 `public/widgets/lattice.clock/` 里放一个文件 → 时钟宿主页的 iframe 带上 `__lattice_reload=<时间戳>`，便签宿主页的 `src` 原样；删掉再放一次同样生效；往**用户目录**里的组件写文件也触发了重载
+- [x] **多屏边界夹紧** —— 几何抽成 `runtime/screen-fit.ts`（`pickScreen` / `fitAnchor`，纯函数），`tests/screen-fit.html` **19 条**断言钉住"锚点在里面就不动 / 出界时刚好挪到 margin / 跨屏按锚点选屏 / 极窄屏不甩飞"。
+  - 全部改成**物理像素**算：`availableMonitors()`、`outerPosition()`、`innerSize()` 在 PerMonitorV2 下报的都是真实物理像素，跨屏连续，可以直接比；只有指针位移是 CSS px，乘一次当次的 `scaleFactor`。早先拿**当前窗口**的 scale 去折算**所有**显示器，是个统一线性变换，夹紧结果其实一样，但它把"别的屏的矩形"和"这块屏的缩放"混在一句话里，改一行就可能错 —— 现在这个歧义没有了
+  - 真正的修正在拖动里：跨到另一块屏时缩放会变，Windows 会按 `WM_DPICHANGED` 的建议矩形把窗口重摆一遍，我们记的起点就此作废（症状是窗口从光标底下"滑走"）。所以每次 pump 都比一次 `scaleFactor()`，变了就重读 `outerPosition()` 并把当前指针位移当成新起点
+  - 真机验过（**这台机器其实是双屏**：1728×1080 主屏 + `(-1728,1)` 的副屏，都是 96 DPI）：把时钟窗口 `set_position` 到 `x=-5000`，重载宿主页 → 开机自我校正把它拉回 `x=-1834`，锚点落在 `-1704 = -1728 + 24`，正好是副屏的左边界加 margin
+  - **混合 DPI 仍然没验过**：两块屏都是 96 DPI，凑不出"一块 100% 一块 150%"的现场。跨屏重锚那段是按 `WM_DPICHANGED` 的语义推的，不是实测
 
 ## v0.4 —— 开发体验
 

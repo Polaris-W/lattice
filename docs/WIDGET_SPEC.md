@@ -65,8 +65,10 @@ my-widget/
 | `size` | 否 | `240×140` | `w/h` 初始尺寸，`minW/minH` 缩放下限 |
 | `layer` | 否 | `desktop` | `desktop` 贴桌面 / `top` 置顶 |
 | `permissions` | 否 | `[]` | 申请的平台权限，见下表 |
+| `network` | 否 | `{ "hosts": [] }` | 联网白名单，只有授予 `network` 时才起作用，见 §3.2 |
 | `interactive` | 否 | `true` | 要不要键盘输入。纯展示的组件设 `false`，见下 |
 | `appearance` | 否 | `{ "tint": "auto", "alpha": 1, "blur": 0 }` | 底板外观的出厂值，见 §2.2 |
+| `config` | 否 | `[]` | 可配置项，平台据此渲染属性面板表单，见 §2.3 |
 | `sdk` | 否 | `^0.1` | 依赖的 SDK 版本区间 |
 
 清单不合法时组件不会消失，而是出现在组件库底部的「加载失败的组件」里并给出原因 —— 便于排错。
@@ -151,20 +153,122 @@ iframe   组件内容
 归一化（非法值退回出厂、范围夹紧、`#abc` 摊成 `#aabbcc`）与合成色/亮度阈值都有断言钉着：`tests/appearance.html`。
 
 
+### 2.3 `config`：每实例配置
+
+组件要"可配置"的地方（12/24 小时制、目标日期、显示几条、字号……）**不要自己画设置 UI**，在清单里声明 schema，平台会在属性面板里渲染表单。
+
+```json
+"config": [
+  { "key": "hour12", "type": "toggle", "label": "12-hour clock", "default": false },
+  { "key": "showSeconds", "type": "toggle", "label": "Show seconds", "default": false },
+  { "key": "target", "type": "date", "label": "Target date", "default": "" },
+  { "key": "caption", "type": "text", "label": "Caption", "default": "", "maxLength": 40 },
+  { "key": "size", "type": "number", "label": "Font size", "default": 13, "min": 11, "max": 24, "step": 1, "unit": "px" }
+]
+```
+
+| 字段 | 必需 | 说明 |
+| --- | --- | --- |
+| `key` | 是 | 组件里读值的键名。字母开头，允许字母数字 `_` `-`，≤40 字符 |
+| `type` | 是 | `toggle` / `number` / `text` / `select` / `date` 之一 |
+| `label` | 否 | 控件上方那行字，默认用 `key` |
+| `default` | 否 | 出厂值。类型必须对得上，否则按下面的规则退 |
+| `help` | 否 | 控件下面的一句说明，默认不显示 |
+| `min` / `max` / `step` / `unit` | `number` 用 | 默认 `0 / 100 / 1 / ""`；`min > max` 会自动交换 |
+| `options` | `select` 用 | `["c", "f"]` 或 `[{ "value": "c", "label": "Celsius" }]` |
+| `placeholder` / `maxLength` | `text` 用 | `maxLength` 默认 120，硬上限 2000 |
+
+**值是按实例存的，不是按组件。** 桌面上摆两个时钟，一个 24 小时制、一个 12 小时制，互不影响 —— 这正是 `placement` 的粒度。这一点和权限相反（权限按 `widgetId`，因为问的是"你信不信任这段代码"）。
+
+**读值只有一条路**：`config.get`（§4），返回的永远是**完整**对象 —— 没改过的键用 `default` 补上，所以你不用写 `?? 默认值`，也不会因为平台升级多了一个字段就拿到 `undefined`。
+
+```js
+const config = await call("config.get");   // { hour12: false, showSeconds: false, ... }
+render(config);
+
+// 用户在属性面板里改了一项：宿主推一条 config-changed（不重载组件）
+if (data.type === "config-changed") {
+  config = data.payload.config;
+  render(config);
+}
+```
+
+**别忘了处理 `config-changed`。** 只在启动时读一次的话，用户拨一下开关组件不会有任何反应 —— 而平台**不会**为了改配置重载 iframe（重载会冲掉没落盘的草稿）。这条推送和 `store-changed` 的区别：配置是用户调的参数，存储是组件自己的业务数据。
+
+**写坏了的字段会被单独丢弃，不会让整包加载失败。** 键名不合法、类型不认识、`select` 没有可选项 —— 这些字段在属性面板里不会出现，`config.get` 也拿不到它，行为等同于"没声明"。同理，非法值（越界、类型错、日期不存在）一律退回 `default`，绝不把 `NaN` 递给组件。
+
+**最多 12 项。** 属性面板只有 320px 宽，再多就不是"配置"了 —— 那种组件该自己画一个设置页，或者拆成两个组件。
+
+**`date` 类型是给日期的**（`YYYY-MM-DD`，`""` 表示没设）。用它的理由不是省事：原生 `<input type="date">` 在深色卡片里会变成一块黑药丸，组件得自己按底板亮度猜 `color-scheme`（倒计时原来就写了这么一段）。属性面板在平台窗口里，`color-scheme` 跟着主题走，这件事天然是对的。
+
+
 ## 3. 权限
 
 默认全拒，用户在属性面板里逐项勾选。**申请了但没被授予时，调用会返回 `permission_denied`，组件必须自己降级。**
 
-| 权限 | 授予后可用 |
-| --- | --- |
-| `clock` | `clock.now` |
-| `storage` | `storage.get` / `storage.set` / `storage.remove` |
-| `clipboard:write` | `clipboard.write` |
-| `network` | 预留（v0.3） |
-| `system:monitor` | 预留（v0.3） |
-| `media:control` | 预留（v0.4） |
+| 权限 | 授予后可用 | 状态 |
+| --- | --- | --- |
+| `clock` | `clock.now` | 可用 |
+| `storage` | `storage.get` / `storage.set` / `storage.remove` | 可用 |
+| `clipboard:write` | `clipboard.write` | 可用 |
+| `system:monitor` | `system.metrics` | 可用 |
+| `network` | `network.fetch`（还要求清单里列了目标主机） | 可用 |
+| `media:control` | 预留（v0.4） | 声明可以，**授予无效果** |
 
 只申请你真正用到的。申请一堆用不上的权限，用户会直接不装。
+
+`media:control` 在平台里还**没有对应的桥方法**：清单里写它不会报错，但授权界面对它显示为不可勾选（带 `soon` 标记）—— 勾了也没有任何东西可用。做到哪一项，那一项才会变成可勾选。
+
+`network` 是**两道锁**：用户授予权限只是第一道，第二道是清单里的 `network.hosts`（§3.2）。只授权、不列主机，等于哪儿都连不上。
+
+`schedule.*` 不需要任何权限 —— 它只影响组件自己那条时间轴，碰不到系统资源。
+
+### 3.1 授权是活的
+
+用户可以在任何时候撤销一项权限，**包括组件正在运行的时候**。撤销之后：
+
+- 下一次桥调用立刻返回 `permission_denied`，不需要等组件重启；
+- 桌面窗口和画布实例都会重新加载入口页，让组件按新权限重走一遍初始化。
+
+所以组件必须做到两件事：**每次调用都处理 `permission_denied`**（别把"已授权"缓存在自己的变量里），以及**重载后能恢复到正确的状态**（数据在 `storage` 里，别只存在内存里）。
+
+反过来说，重新授权同样会触发一次重载 —— 组件里没落盘的临时状态（比如正在输入但还没写进去的草稿）会丢。
+
+### 3.2 联网：两道锁 + 不自动跟随重定向
+
+要联网的组件做三件事：清单里申请 `network`、清单里列 `network.hosts`、让用户授予。
+
+```json
+{
+  "permissions": ["network"],
+  "network": { "hosts": ["api.example.com", "localhost:8080"] }
+}
+```
+
+**组件不直连。** 组件文档的 CSP 里 `connect-src` 只有它自己的协议源，`fetch("https://…")` 在浏览器层面就抛 `TypeError` —— 这不是配错了，是设计。出网只有一条路：桥上的 `network.fetch`，由 Rust 侧代发。
+
+这条路比"在本地起一个 HTTP 代理、把 `connect-src` 指向它"更严：没有本地端口，就没有绕过去的路；白名单在 Rust 侧按**实例**校验，组件改不了自己的清单；每次请求都能留痕（设 `LATTICE_NET_TRACE=1` 会把每条请求打到 stderr）。
+
+白名单两种写法：
+
+| 写法 | 匹配 |
+| --- | --- |
+| `example.com` | 只匹配标准端口（http 80 / https 443） |
+| `example.com:8080` | 只匹配这个端口 |
+
+**不支持通配符。** `*.example.com` 的边界问题（`evil.example.com.attacker.net` 这类）靠人一遍遍想不划算，多列一行的成本几乎为零。
+
+其余几条硬限制：
+
+- 只允许 `http` / `https`。`file:` / `ftp:` / `javascript:` 一律拒。
+- 方法限于 `GET` / `HEAD` / `POST` / `PUT` / `PATCH` / `DELETE`。
+- 请求体 ≤ 256KB，响应 ≤ 1MB（超出**截断**并把 `truncated` 置 `true`，不报错）。
+- 请求头最多 32 条；头名或头值里有换行会被拒（那是注入）。
+- **重定向不自动跟随。** `https://good.com` 302 到别处，跟着走就等于白名单只检查了第一跳。3xx 原样返回给组件，要跟就再调一次 —— 那时会重新过一遍白名单。
+- URL 里的 userinfo（`user:pass@host`）会被丢掉，不会写进日志。
+
+写坏的条目只丢那一条，不让整包加载失败 —— 和图标同一个理由。丢掉的后果是那个主机连不上（明确的拒绝），而不是悄悄放宽。
+
 
 ## 4. 桥 API
 
@@ -197,22 +301,76 @@ parent.postMessage(
 | `storage.set` | `storage` | `{ key, value }` | `{ ok: true }`；`value` 为 `null` 等同于删除 |
 | `storage.remove` | `storage` | `{ key }` | `{ ok: true }` |
 | `clipboard.write` | `clipboard:write` | `{ text }` | `{ ok: true }` |
+| `system.metrics` | `system:monitor` | — | `{ cpu, memory, disk, network, sampledAt }`，见 4.1 |
+| `schedule.every` | — | `{ every }` | `{ id, every }`；`every` 会被夹到 250ms–24h，订阅满 8 条返回 `bad_params` |
+| `schedule.clear` | — | `{ id }` | `{ ok: true }` |
+| `config.get` | — | — | 这个实例的配置，已按清单 schema 合并出厂值，见 §2.3 |
 | `theme.get` | — | — | CSS 变量字典，见下 |
-| `window.close` | — | — | 关闭当前组件实例 |
+| `network.fetch` | `network` | `{ url, method?, headers?, body? }` | `{ status, ok, headers, body, truncated }`，见 §3.2 |
+| `window.close` | — | — | 关闭当前组件实例的窗口，**但不删用户的 placement** |
+
+**`window.close` 只是关窗，不是删组件。** 调用之后窗口消失，但用户摆在画布 / 桌面上的那个 placement 还在 `state.json` 里，下次启动照样回来；本次运行内不会再自动冒出来（平台记着"它自己退出了"）。真正删掉用户布局的只有用户自己按宿主页那颗 ✕。所以组件别把这个方法当"自毁"用 —— 它是"我先歇着"。
 
 **写入是键级的，不是整份覆盖。** 平台在 Rust 侧加锁做「读 → 改这一个键 → 原子替换」，所以主窗口和桌面窗口里的同一个组件同时保存时，改不同键不会互相抹掉。组件不要自己去读整份 map 再写回去 —— 那等于绕过锁，又会退回成互相覆盖。
 
 **读永远读盘，没有内存缓存。** 同一份数据在别的窗口被改过，下一次 `storage.get` 就能看到。代价是一次 IPC，几 KB 的文件不值得为它做缓存。
 
+**读失败 ≠ 没有数据 —— 读失败时绝对不许把默认值写回去。** 这两个状态必须分开处理：`null`（键不存在，可以种一份默认数据并保存）和 reject（权限被拒、IPC 失败、文件读不了）走的是两条路。把 reject 也当成 `null` 处理，就会在"用户明明有数据、只是这一下没读到"的时候用种子数据把真数据覆盖掉 —— 平台里真实发生过一次，便签和待办的用户内容被换成了出厂示例。所以 `.catch()` 里只许把界面标成"没读到"，不许 `storage.set`。
+
+**盘上永远留着上一版：`<组件 id>.json.bak`。** 每次覆盖（内容真的变了才算）之前，平台把旧文件挪到同名 `.bak`，只留一代。所以"把用户的数据写坏了"这件事不再是不可逆的 —— 至少能退回上一次。组件不需要管这个文件，也不要自己去读写它：它是给人用的，不是给代码用的。卸载组件时 `.bak` 一起删掉。
+
 **但是：光"读得到"不够，还得知道"该读了"。** 同一个组件可以在画布上有一个实例、桌面上又有一个，两份各自持一份内存副本。平台在每次落盘后广播 `store-changed`（见下），收到就重读 —— 不做这件事，后写的那份会把对方刚加的内容整块覆盖，用户看到的是"加了几条，回头只剩一条"。
 
-### 宿主 → 组件的推送
+### 4.1 定时器用 `schedule`，不要 `setInterval`
+
+组件的所有周期性工作都该挂在平台的时间轴上：
+
+```js
+const grant = await call("schedule.every", { every: 1000 });   // { id, every }
+
+// 收到 tick 时刷新。一条时间轴上可能挂着好几条心跳，认准自己那一条
+if (data.type === "tick" && data.payload.id === grant.id) refresh();
+
+// 组件自己不再需要时（比如切成静态视图）
+await call("schedule.clear", { id: grant.id });
+```
+
+为什么不是 `setInterval`：平台把**一个组件实例的所有心跳收进一条时间轴**，一次只有一个计时器在飞（永远取最近的到期时刻）。窗口被最小化 / 收起时整条时间轴停摆，用户看不见的东西不烧电；回来只补一拍，不会补一串。
+
+三条边界：
+
+- **最细 250ms**。再密就是拿 `postMessage` 当 `requestAnimationFrame` 用 —— 要逐帧动就自己开 rAF，那才是对的工具。
+- **最多 8 条订阅**。一个组件本来也就一两条心跳，第 9 条会返回 `bad_params`。
+- **不可见期间不累积**。心跳是"现在是什么样"，不是"这段时间里每一拍"，别在组件里自己补算。
+
+`every` 的返回值是**夹紧之后**的间隔，用它校准自己的显示（比如写"每 5 秒刷新"），别用你传进去的那个数。
+
+### 4.2 `system.metrics` 的形状
+
+```json
+{
+  "cpu":     { "usage": 0.41, "cores": 16 },
+  "memory":  { "usage": 0.82, "used": 27311403008, "total": 33648160768 },
+  "disk":    { "mount": "C:", "usage": 0.45, "used": 121899466752, "total": 268435456000 },
+  "network": { "rxPerSec": 3342, "txPerSec": 812, "rxTotal": 918273645, "txTotal": 12837465 },
+  "sampledAt": 1792747537787
+}
+```
+
+- `usage` 是 0–1 的比例，不是百分数。
+- 字节数一律是 `u64`，自己格式化成 KB / MB / GB。
+- **`rxPerSec` / `txPerSec` 第一次调用一定是 0**：速率要两次采样做差，没有前值就编不出来。所以启动时先调一次建基线，第一次心跳拿到的才是真数。
+- 平台在 Rust 侧有 1 秒缓存，几个组件在同一秒里轮询只会真采一次 —— 但别指望它，心跳间隔比采样间隔更细是没意义的。
+
+### 4.3 宿主 → 组件的推送
 
 | 消息 | 时机 | 载荷 |
 | --- | --- | --- |
 | `{ __lattice: 1, type: "theme", payload }` | 主题切换、组件加载完成 | CSS 变量字典 |
+| `{ __lattice: 1, type: "tick", payload }` | `schedule.every` 到期 | `{ id, at }`，`id` 就是订阅号 |
 | `{ __lattice: 1, type: "store-changed", payload }` | 本组件的私有存储被**任意**实例写入了 | `{ key }`，`key` 为空串表示整份文件被替换 |
-| `{ __lattice: 1, type: "ready" }` | 组件主动发出，表示已就绪 | 宿主收到后会立刻推一次主题 |
+| `{ __lattice: 1, type: "config-changed", payload }` | 这个实例的配置被改了（属性面板） | `{ config }`，完整对象，见 §2.3 |
+| `{ __lattice: 1, type: "ready" }` | 组件主动发出，表示已就绪 | 宿主收到后会立刻推一次主题和配置 |
 
 `store-changed` 的标准处理方式（两个示例组件都是这么写的）：
 
@@ -237,11 +395,11 @@ if (data.type === "store-changed" && (!data.payload.key || data.payload.key === 
 | 不能用 | 替代方案 |
 | --- | --- |
 | `localStorage` / `sessionStorage` | `storage.*` 桥方法 |
-| `fetch()` 读自己的文件 | 用 `<link>` / `<script>` 标签加载 |
+| `fetch()` 读**别人的**文件 | 组件自己目录里的文件可以 `fetch("./data.json")`（见 5.2）；外部地址一律被 CSP 拦掉 |
 | 访问 `parent` 的 DOM 或变量 | 桥方法 |
 | Cookie / IndexedDB | 暂不支持 |
 | `alert` / `confirm` | 在组件内自己画 UI |
-| 原生表单控件（`checkbox` / `radio` / `select`） | 沙箱文档的 `color-scheme` 被强制成 `normal`，原生控件按**浅色**主题绘制，在深色卡片上几乎看不见。用 `appearance: none` 自绘，勾选色取 `--lattice-surface`（深色主题浅底配深勾、浅色主题深底配白勾） |
+| 原生表单控件（`checkbox` / `radio` / `select`） | 沙箱文档的 `color-scheme` 被强制成 `normal`，原生控件按**浅色**主题绘制，在深色卡片上几乎看不见。用 `appearance: none` 自绘，勾选色取 `--lattice-surface`（深色主题浅底配深勾、浅色主题深底配白勾）。**如果这个控件是用来调设置的**，别在卡片里画它 —— 声明成 `config`（§2.3），属性面板会按平台的样子渲染 |
 
 这些限制不是缺陷，是安全边界：**组件是不可信代码**，它唯一能做的事就是通过桥申请能力。
 
@@ -265,6 +423,29 @@ if (data.type === "store-changed" && (!data.payload.key || data.payload.key === 
 > 窗饰以后再加按钮，这两个数都要跟着加（每颗按钮 22px + 1px 间距）。`tests/note-layout.html` 里的 `PILL_WIDTH` 是这三个地方的第四份，改一处忘三处的代价是一条被压住的正文。
 
 这两处几何都是被测试钉住的，`tests/note-layout.html` 会直接量正文起点与安全区宽度，改回去就红。
+
+## 5.2 CSP：组件文档带着一套很紧的策略
+
+组件文档的响应头里有一条 CSP。它管的是**"组件能把数据发到哪里"** —— 沙箱挡住了"碰不到宿主"，但挡不住网络。组件作者只需要记住五条：
+
+| 通道 | 允许什么 |
+| --- | --- |
+| `fetch` / `XHR` / `sendBeacon` | 只有组件自己的协议源。`fetch("./data.json")` 可以，`fetch("https://…")` 抛 `TypeError` |
+| `<img>` / `<video>` / `<audio>` / 字体 | 自己的协议源 + `data:` / `blob:`。**外链图片不会显示** |
+| `<iframe>` / `<object>` / `<embed>` | 全部禁止 |
+| `<form action="…">` | 禁止提交（`<form>` 本身能用，见上一节） |
+| `eval` / `new Function` | 禁止 |
+| `location.href = "https://…"` / 顶层跳转 | 禁止。导航在发生前被平台取消，页面停在原地 |
+
+落到写法上：
+
+- 图标内联 SVG，或者 `data:` URI。不要 `<img src="https://…">`。
+- **不要指望 CDN**：脚本、样式、字体都得跟着组件包一起发。这条同时意味着组件离网也能用，是好事。
+- 依赖 `eval` 的库跑不起来（部分模板引擎、旧版 bundler 的 dev 产物）。换非 eval 的构建。
+- 要联网走 `network.fetch`（§3.2），`fetch("https://…")` 永远不通。**别用 try/catch 把 `TypeError` 咽掉然后显示"暂无数据"**，那会让用户以为接口挂了。
+- **跳走也不行**。`location.href = "https://…"` 会被平台在导航发生前取消，页面原地不动、控制台不会给什么有用的提示。`<a href="https://…">` 同理（点了没反应）。想让用户看网页，只能请主窗口用 opener 打开，那是平台的事，不是组件的事。
+
+一个例外要说清楚：**这条头只加在用户目录里的组件上**。内置组件跟着应用一起发、走前端资源管线，拿不到这条头（它们随二进制分发，信任级别和平台本体一样）。所以同一份代码装成内置和装进用户目录，**联网**行为可能不一样 —— 这是已知的不对称，不是你的 bug。错误上报没有这个不对称（两条路都注，见 8.2）；兜底页仍然只在 `lattice-widget://` 上，内置组件的文件跟着应用一起打包，缺文件在构建时就暴露了。
 
 ## 6. 排版
 
@@ -398,6 +579,8 @@ v0.3 之前组件出错只有一种表现：白屏。分不清是路径写错、
 
 两种页面都不盖住整个组件：兜底页本身就是内容，错误卡贴在底边，上面还能看见组件坏成什么样 —— 排查的时候"哪一块炸的"和"炸成什么样"一样重要。
 
+兜底页只出现在 `lattice-widget://` 上（也就是你装的组件）。内置组件的文件跟着应用一起打包，真缺了在构建时就会暴露，所以那条路上只有错误卡。
+
 **错误卡显示的是"主错误"，不是"最后一条"。** 脚本异常和未处理的 rejection 压过资源加载失败，因为缺一张图经常是前面那个异常的结果。真机上就是这样：组件在第 15 行抛 `undefinedThing is not defined`，紧接着 `<img>` 加载失败 —— 只显示后到的那条的话，你看到的是一句 "Failed to load img"，真正的原因被盖掉了。右上角的 `+N` 悬停能看到其余几条。
 
 ### 8.2 错误是怎么到宿主的
@@ -408,7 +591,8 @@ v0.3 之前组件出错只有一种表现：白屏。分不清是路径写错、
 
 - 你在 DevTools 里看组件文档的源码，`<head>` 里会多一个 `<script data-lattice="diagnostics">`。那是平台的，注释里带 `lattice-diagnostics` 标记，别删。
 - **行号不会错位。** 注入的脚本压成了一行，文档的总行数不变 —— 早先版本多占了一行，结果第 15 行抛的错报成了 `index.html:67:25`。
-- 注入只发生在 `lattice-widget://` 这条路上，也就是**用户装的组件**。内置组件的文件走应用自己的源，协议层碰不到，所以官方组件报错不会弹卡（它们有自己的测试兜着）。
+- 注入只发生在**发文档的那一刻**，所以有两条路，各自注一次：`lattice-widget://`（你装的组件）由协议层注；内置组件走应用自己的源（dev 是 vite，打包后是 tauri 资源协议），由构建管线注。**对你的组件来说没有区别** —— 你装的组件和官方组件，报错行为完全一样。
+- 上报脚本只有一份源码。它被压成一行之后编进二进制，同时也被前端构建注进内置组件的 HTML；两边读的是同一个文件，所以不存在"官方组件的错误卡和我的不一样"。
 
 ### 8.3 重载
 
