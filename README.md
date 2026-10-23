@@ -10,7 +10,7 @@ English · [中文](./README.zh-CN.md)
 
 ## Status
 
-v0.4 is a demo that **really sits on the desktop**, and is now pleasant to build for. The platform ships empty: install the official pack, place widgets on the canvas, and each one runs for real inside a sandboxed iframe, calling platform capabilities over an RPC bridge with permissions granted one by one. Hit "Send to desktop" and every widget becomes a frameless window while the main window steps aside.
+v0.5 is the **distributable** version: writing a widget, installing one and updating one all have a real path now. The platform ships empty: install the official pack, place widgets on the canvas, and each one runs for real inside a sandboxed iframe, calling platform capabilities over an RPC bridge with permissions granted one by one. Hit "Send to desktop" and every widget becomes a frameless window while the main window steps aside.
 
 Once they are out there, windows can be dragged, resized and pinned, and both the layout and the widget data survive a restart. Closing the main window just tucks it away while widgets are on the desktop — `Quit Lattice` in the settings menu or on the tray is the real exit, and launching the app again brings the window back (single instance: the second launch wakes the first one instead of starting a duplicate). The avatar in the top-right opens settings: appearance, snap-to-grid, restore-on-launch, start-with-Windows, pause-all, and a local profile — signing in only writes to the local `state.json`, nothing is uploaded.
 
@@ -33,6 +33,19 @@ v0.4 is about the people writing widgets rather than the people using them:
 - **`npm run pack:widget -- <dir>`** — packs a folder into a `.lattice` file (a deterministic zip) that anyone can drag into their window
 - **Media control** — widgets can read and drive the Windows media session (SMTC): what is playing, play/pause, next, previous
 - **A debug panel** (`Ctrl+Shift+D`) — every bridge call with its duration and error code, plus every `console.log` from inside the sandbox, live in one drawer
+
+v0.5 is about **distribution**. There is no server, so the answer is not "build a store backend" but "the catalogue is a static JSON file and the packages are signed":
+
+- **A widget catalogue** — one `registry.json` plus a set of `.lattice` packages, bundled with the app; drop the whole folder on any static host and point the app at it from settings
+- **Three checks, in order** — the package digest matches the catalogue → its ed25519 signature verifies against `publisher.key` → that key equals **the one pinned locally the first time this widget was installed**. The first two catch corruption and forgery; only the third catches "start a new key and swap the catalogue too". A key change needs the user's explicit nod, with both fingerprints on screen
+- **Update and roll back** — the old version is copied to a single backup slot before an overwrite, and the card grows a `Back to x.y.z`. Rolling back **swaps** the two directories rather than copying, so the button works in both directions
+- **Ratings and reports** — five stars, plus a report written to a local file. With no server there is no "submitted": the dialog tells you where the file is and you send it to the author yourself
+- **New permissions are re-confirmed** — a version that asks for more does not get it silently, and the widget is not disabled either: it keeps working, and a banner that does not auto-dismiss stays until you pick `Allow` or `×`
+
+```bash
+npm run store:index                              # pack + sign + write the catalogue
+npm run sign:widget -- --gen-key --out my.key    # your own publishing key
+```
 
 The current UI, with the settings menu open:
 
@@ -147,8 +160,10 @@ The platform does not persist through `localStorage`: on this machine WebView2 k
 
 ```
 %APPDATA%\com.iron-tom.lattice\
-  state.json                      placements, installed, grants, theme, desktop rects
+  state.json                      placements, installed, grants, theme, desktop rects, catalogue, pinned keys, ratings
   widget-data\lattice.note.json   per-widget storage, one file per package
+  widget-backups\lattice.clock\   previous generation, one per widget (for rollback)
+  reports\lattice.clock-1712.json ratings and reports, written as files, never uploaded
 ```
 
 Writes go through "temp file + atomic replace", so a power cut halfway through cannot leave a truncated JSON behind. Widget storage takes the same path (the `storage.get / set / remove` bridge methods sit on top of Rust file I/O), which is why the note text and the ticked to-dos are still there after a restart.
@@ -166,10 +181,11 @@ From skeleton to genuinely-on-the-desktop in a single day. The code-size steps a
 | v0.2 | Third-party protocol, typing, storage sync, settings, collapsible panels, widget icons | 3,433 / 1,649 / 1,834 |
 | v0.3 | Tray, autostart, pause-all, live reload, crash recovery, network whitelist, mixed-DPI clamp | 6,469 / 5,716 / 2,561 |
 | v0.4 | SDK, scaffold, `.lattice` packing, media control, debug panel | 7,119 / 6,488 / 2,791 |
+| v0.5 | Catalogue, signature checks, update + rollback, ratings and reports, permission re-review | 9,026 / 7,477 / 3,102 |
 
-More interesting than the numbers are the **six overturned decisions**: per-pixel transparency that could not work, a `localStorage` that never reached disk, `NOACTIVATE` making the note untypeable, the host page building the wrong URL for user widgets, two instances each holding their own list and eating the to-dos, and a self-managed window table that deadlocked itself. Each one records why it was chosen, what knocked it over, how it was fixed, and what it cost.
+More interesting than the numbers are the **eight overturned decisions**: per-pixel transparency that could not work, a `localStorage` that never reached disk, `NOACTIVATE` making the note untypeable, the host page building the wrong URL for user widgets, two instances each holding their own list and eating the to-dos, a self-managed window table that deadlocked itself, and so on. Each one records why it was chosen, what knocked it over, how it was fixed, and what it cost.
 
-The 73 entries in "Pitfalls" are a by-product of the same process, and the most valuable part of this repository — they record the temper of this particular machine, not general dogma. One of them took an afternoon: `WinHttpSendRequest` takes its header length in **characters** while the registry APIs next door take **bytes**, and passing bytes makes every request with a custom header fail with nothing but `ERROR_INVALID_PARAMETER (87)`.
+The 67 entries in "Pitfalls" are a by-product of the same process, and the most valuable part of this repository — they record the temper of this particular machine, not general dogma. One of them took an afternoon: `WinHttpSendRequest` takes its header length in **characters** while the registry APIs next door take **bytes**, and passing bytes makes every request with a custom header fail with nothing but `ERROR_INVALID_PARAMETER (87)`.
 
 ## The platform is empty
 
@@ -216,7 +232,7 @@ Requirements: Node ≥ 20, a Rust toolchain, WebView2 (bundled with Windows 11).
 
 > To just look at the demo, use `npm run dev` — no Rust needed. The desktop build currently needs `windres` (mingw binutils) or an MSVC toolchain; see the environment notes in the ROADMAP.
 
-If you are taking over this repository (or you are a different model / person), read [AGENTS.md](./AGENTS.md) first: a one-page map, fourteen invariants, recipes for common changes, and the "do not half-fix" known gaps. It is written in Chinese, as are the design docs.
+If you are taking over this repository (or you are a different model / person), read [AGENTS.md](./AGENTS.md) first: a one-page map, fifteen invariants, recipes for common changes, and the "do not half-fix" known gaps. It is written in Chinese, as are the design docs.
 
 ## Layout
 
@@ -224,17 +240,21 @@ If you are taking over this repository (or you are a different model / person), 
 AGENTS.md            Onboarding: read this first
 LICENSE              MIT
 src/
-  platform/          Platform shell: canvas, library, inspector, settings, autostart, state
-  runtime/           Widget runtime: manifest, registry, RPC bridge, scheduler, screen fit
+  platform/          Platform shell: canvas, library, store, inspector, settings, autostart, state
+  runtime/           Widget runtime: manifest, registry, RPC bridge, scheduler, screen fit, semver, catalogue
 public/widgets/      Official widget packages (only "available" until installed)
+public/store/        Bundled catalogue (generated at build time: registry.json + signed packages)
 examples/counter/    Third-party sample (drag it in to install)
-tests/               Self-check pages: 12 pages, 216 assertions, all in the browser
-scripts/             Build helpers (widget index, toolchain PATH, diagnostics injection)
+tests/               Self-check pages: 19 pages, 445 assertions, all in the browser
+scripts/             Build helpers (widget index, store index, signing, toolchain PATH, diagnostics injection)
 src-tauri/
   src/widgets.rs     Widget scanning / install / uninstall
   src/runner.rs      Runtime: Placement → real window incremental sync, chrome callbacks, pause
   src/protocol.rs    lattice-widget static file server (user widget HTML/CSS/JS)
   src/network.rs     Egress proxy over WinHTTP: permission → host whitelist → shape
+  src/signature.rs   ed25519 verification + sha256 (the first two checks when installing)
+  src/backup.rs      Backup before an overwrite and rollback (a swap, one generation only)
+  src/store.rs       Store commands: fetch catalogue, download package, verify + install, write report
   src/crash.rs       ProcessFailed handling: classify, count, reload, give up, tell the user
   src/watch.rs       Widget directory watching (ReadDirectoryChangesW, debounced)
   src/autostart.rs   HKCU Run entry: read, write, repair a stale path
@@ -245,7 +265,7 @@ src-tauri/
   installer-hooks.nsh NSIS hook: remove the Run entry on uninstall
 docs/
   ARCHITECTURE.md    Architecture and trade-offs
-  WIDGET_SPEC.md     Widget spec (read this to write one)
+  WIDGET_SPEC.md     Widget spec (read this to write one; publishing and signing in §9)
   ROADMAP.md         Progress, iteration timeline, overturned decisions, pitfalls
 ```
 
@@ -278,7 +298,9 @@ You can skip the boilerplate: `npm run create:widget -- demo.mine` writes the ma
 
 **Widgets that are not shipped with the app need no repository change**: drag the whole folder from Explorer into a Lattice window and it is installed — files are copied to `%APPDATA%\com.iron-tom.lattice\widgets\<id>\` and loaded over the `lattice-widget` protocol. [`examples/counter`](./examples/counter) is a sample you can drag straight in.
 
-To hand a widget to someone else, pack it first: `npm run pack:widget -- examples/counter` writes `dist-packs/counter.lattice`, and that single file installs the same way when dropped in. The pack is deterministic (sorted entries, fixed timestamp), so the same folder always produces the same bytes — which is what makes "is this the package I shipped?" answerable, and what signing will need later.
+To hand a widget to someone else, pack it first: `npm run pack:widget -- examples/counter` writes `dist-packs/counter.lattice`, and that single file installs the same way when dropped in. The pack is deterministic (sorted entries, fixed timestamp), so the same folder always produces the same bytes — which is what makes "is this the package I shipped?" answerable, and what the signature check is built on.
+
+To publish it in the catalogue, run `npm run store:index`: it packs, signs and writes `registry.json`. **The version number is what counts** — users only see "update available" when `version` goes up. The signing rules and the key-change flow are in [WIDGET_SPEC](./docs/WIDGET_SPEC.md) §9 (the doc is in Chinese).
 
 ## License
 

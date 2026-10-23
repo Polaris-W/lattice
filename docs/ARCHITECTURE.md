@@ -128,13 +128,28 @@ lattice.clock/
 
 内置组件放 `public/widgets/`，随前端资源打包；用户安装的组件放 `%APPDATA%\com.iron-tom.lattice\widgets\`。
 
+### 分发：目录是文件，信任在包上
+
+平台没有服务端。所以"商店"不是一套后端，而是三样东西：
+
+1. **一份静态 `registry.json`**（schema 1）—— 每个组件一行：id、名字、版本、包地址、包的 sha256、签名、发布者公钥。内置的那份跟着应用发（`public/store/`），也可以在设置里换成任何静态地址。
+2. **一批签名过的 `.lattice` 包** —— 签名是 ed25519，签的是**整个包文件的字节**。包本身是确定性 zip，所以"这份签名对应的是不是这个文件"是个能回答的问题。
+3. **本地钉住的发布者钥匙** —— `state.json` 里的 `trustedKeys`，第一次安装时写入（TOFU）。
+
+装的时候三道校验，顺序不能换：摘要 → 签名 → 钉住的钥匙。**目录不签名**，因为它只是索引；改目录最多能让某个条目指向别的包（第一/二道挂）或换一把钥匙（第三道挂，且界面会印出两把指纹要用户点头）。
+
+取舍的完整论证在 [ROADMAP 的 v0.5 四个取舍](./ROADMAP.md#v05-的四个取舍)，作者视角的流程在 [WIDGET_SPEC §9](./WIDGET_SPEC.md#9-发布版本与签名)。
+
 ## 数据
 
 | 数据 | 位置 | 说明 |
 | --- | --- | --- |
-| 组件摆放、层级、授权、主题、网格吸附、本机档案、桌面矩形 | `%APPDATA%\com.iron-tom.lattice\state.json` | Zustand persist 的自定义 `StateStorage` → `state_write` |
+| 组件摆放、层级、授权、主题、网格吸附、本机档案、桌面矩形、目录地址、钉住的钥匙、评分 | `%APPDATA%\com.iron-tom.lattice\state.json` | Zustand persist 的自定义 `StateStorage` → `state_write` |
 | 组件私有数据 | `%APPDATA%\com.iron-tom.lattice\widget-data\<widgetId>.json` | 由宿主代存，组件自己碰不到 localStorage |
 | 用户安装的组件 | `%APPDATA%\com.iron-tom.lattice\widgets\<id>\` | Rust 管理，经 `lattice-widget` 协议加载 |
+| 上一代组件（回滚用） | `%APPDATA%\com.iron-tom.lattice\widget-backups\<id>\` | 覆盖安装前整份复制，只留一代，回滚是交换 |
+| 举报与评分 | `%APPDATA%\com.iron-tom.lattice\reports\<id>-<unix>.json` | 写成文件，不上传 —— 没有服务端就没有"提交" |
+| 下载过的包 | `%APPDATA%\com.iron-tom.lattice\store-cache\<sha256>.lattice` | 按摘要命名，天然的复用与去重 |
 
 **不用 `localStorage`**，原因见 ROADMAP「被推翻的决定」第 2 条：这台机器的 WebView2 把它整个放在内存里，进程一退就没了。文件写入走"临时文件 + 原子替换"，写到一半断电也不会留下半截 JSON。
 
@@ -193,5 +208,8 @@ z 序守卫是 v0.2 补的：可激活的窗口被点中时，Windows 会顺手�
 | 每个组件一个 WebView | 内存随组件数线性涨 | 崩溃隔离、独立 DPI、独立输入焦点都靠它；同一 WebView 装多组件的方案留到性能告急时再评估 |
 | 用户组件走自定义协议，不走 `file://` | 多一层协议代码、Windows 上 URL 形式特殊 | `file://` 没有源隔离，组件能直接读整个磁盘 |
 | 内置组件的文档拿不到 CSP 头 | 同一份代码装成内置和装进用户目录，出网行为不一样 | 内置组件走应用自己的前端资源管线，随二进制分发、信任级别和平台本体一样；用户组件的 CSP 在 `csp.rs` 一处生成（见 AGENTS 缺口表） |
-| 不引入 Tailwind | 手写 CSS 更长（1 834 行） | 定制工作台用变量层更可控，少一个构建依赖，组件也只认 `--lattice-*` |
+| 不引入 Tailwind | 手写 CSS 更长（3 102 行） | 定制工作台用变量层更可控，少一个构建依赖，组件也只认 `--lattice-*` |
 | 本机档案不是账号系统 | "登录"只写本地 `state.json` | 没有服务端。文案上明说"只保存在这台电脑"，免得被当成云端账号；真做同步时换 `signIn/signOut` 即可 |
+| 商店是一份静态 JSON，不是后端 | 目录要手工重发；评分不汇总；举报要用户自己发给作者 | 没有服务端就别做需要服务端的形状。接后端时换的只是"目录从哪儿取""举报写到哪儿"，`parseCatalogue` / `planInstall` / 验签那一层一行都不用动 |
+| 信任靠本地钉住的钥匙（TOFU），没有 PKI | 第一次安装只能信"这次看到的"；换钥匙要用户手动点头 | 真正的 PKI 需要一个平台方来签发和吊销，这个项目没有也不该假装有。界面把指纹印出来，是为了让"换人"这件事有一次被看见的机会 |
+| 备份只留一代，回滚做成交换 | 更新两次之后回不到第一版 | "留几代"是个没有正确答案的配置项，而用户真正需要的是"回到刚才那个"。交换让按钮可以按两次、两个方向都成立 |

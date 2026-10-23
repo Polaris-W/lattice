@@ -10,9 +10,9 @@
 
 **棂 / Lattice** —— 可扩展的 Windows 桌面小组件平台。第三方用纯 HTML/CSS/JS 写组件，平台负责把它们安全地放到桌面上。
 
-当前状态：v0.2 收尾。能装组件包（把文件夹拖进窗口）、能把组件变成真的桌面窗口、能拖能缩能锁、布局与组件数据重启不丢；第三方组件经 `lattice-widget` 协议从 `%APPDATA%` 直接加载。剩下的是 v0.3 的事，见 §8 与 [ROADMAP](./docs/ROADMAP.md)。
+当前状态：**v0.5 收尾**（v0.1–v0.5 全部落地）。组件能装（拖文件夹 / 拖 `.lattice` 包 / 从商店装）、能变成真的桌面窗口、能拖能缩能锁，布局与组件数据重启不丢；商店是一份签名过的静态 JSON，带更新、回滚、举报、新权限复核。没有服务端 —— 这是设计，不是还没做，见 [ROADMAP 的 v0.5 四个取舍](./docs/ROADMAP.md#v05-的四个取舍)。
 
-想先知道"为什么现在是这样"，读 [ROADMAP 的「被推翻的六个决定」](./docs/ROADMAP.md#被推翻的六个决定)——每个决定都写着当初怎么选、被什么撞翻、现在怎么补。
+想先知道"为什么现在是这样"，读 [ROADMAP 的「被推翻的八个决定」](./docs/ROADMAP.md#被推翻的八个决定)——每个决定都写着当初怎么选、被什么撞翻、现在怎么补。
 
 技术栈：Tauri 2 + React 19 + TypeScript + Vite 8 + Zustand。Rust 侧只做窗口与文件，不碰 UI。
 
@@ -26,6 +26,7 @@ npm run dev          # 只跑前端（http://localhost:1420），不需要 Rust
 npm run tauri:dev    # 完整桌面应用，改 Rust 会自动重编译重启
 npm run tauri:build  # 出 NSIS 安装包
 npm run typecheck    # tsc --noEmit，提交前跑一下
+npm run store:index  # 打包 + 签名内置组件，写 public/store/（dev / build 会自动跑）
 ```
 
 **浏览器里 `isTauri()` 为 false**，所以「投放到桌面」是灰的，其余（画布、组件沙箱、桥、权限）都能验。
@@ -47,12 +48,15 @@ src/
     store.ts              Zustand + 文件落盘适配器（Placement / 授权 / 主题 / desktopRects）
     Canvas.tsx            画布：放置、空态、缺失组件占位
     WidgetFrame.tsx       画布里的一个组件实例 = 一个沙箱 iframe + 拖拽缩放
-    LibraryPanel.tsx      组件库：已安装 / 可安装 / 加载失败 + 搜索过滤
+    LibraryPanel.tsx      组件库：已安装 / 可安装 / 加载失败 + 搜索过滤 + 评分与举报入口
+    CatalogueSection.tsx  商店区：目录条目的卡片、权限对比、安装 / 更新 / 换钥匙确认
+    ReportDialog.tsx      举报与评分对话框（没有服务端，落成一份 JSON 文件）
     InspectorPanel.tsx    属性面板：层级、穿透、尺寸、权限授予
-    SettingsMenu.tsx      设置浮层：本机档案、外观、网格吸附、关于（Ctrl+, 唤出）
+    SettingsMenu.tsx      设置浮层：本机档案、外观、网格吸附、目录地址、关于（Ctrl+, 唤出）
     icons.tsx             16px 图标集（Glyph / ICON / ThemeGlyph / PanelGlyph / WidgetIconMark），顶栏、菜单、面板共用
     desktop.ts            Placement → WidgetWindowSpec，坐标换算，投放/收回命令
     autostart.ts          开机自启的读写与"路径漂移"判定（`Run` 注册表项）
+    catalogue.ts          商店客户端：读目录（内置走 fetch / 远端走 IPC）、下载安装、备份与回滚、写举报
     DebugPanel.tsx        调试面板：桥调用与组件 console 的实时抽屉（Ctrl+Shift+D）
   runtime/
     manifest.ts           清单校验与归一化；Permission 类型与中文标签（唯一真源）
@@ -66,7 +70,10 @@ src/
     screen-fit.ts         纯几何：锚点选屏、夹紧（入参一律物理像素，`tests/screen-fit.html` 钉着）
     library-search.ts     组件库搜索：切词 + 单包命中判定（纯函数，`tests/library-search.html` 钉着）
     debug.ts              调试总线：环形缓冲 400 条、攒批镜像到主窗口、过滤 / 统计纯函数
+    semver.ts             版本号与范围：解析 / 比较 / `^ ~ >= <= > < =` / 通配 / `||`（纯函数，`tests/semver.html` 钉着）
+    catalogue.ts          目录解析与安装计划：三道校验、挑版本、权限差集（纯函数，`tests/catalogue.html` 钉着）
 public/widgets/           官方组件包（未安装前只是"可发现"）
+public/store/             内置商店目录（`npm run store:index` 生成：registry.json + packages/*.lattice，**不进仓库**）
 examples/counter/         第三方组件的参考实现（用 SDK），拖进窗口即可安装
 packages/sdk/             @lattice/sdk：零依赖 ES module + .d.ts + README（**唯一真源**）
 scripts/
@@ -75,6 +82,9 @@ scripts/
   widget-diagnostics.test.mjs    注入规则的单测（`npm run test:injection`）
   create-widget.mjs       脚手架：`npm run create:widget -- <id>`
   pack-widget.mjs         目录 → .lattice（手写确定性 ZIP）
+  sign-widget.mjs         ed25519 签名 / 验签 / 生成密钥（`npm run sign:widget`）
+  store-index.mjs         打包 + 签名所有内置组件，写 public/store/registry.json（`npm run store:index`）
+  dev-publisher.key       **开发用**签名种子（故意进仓库，见不变量 15）
   sdk-sync.mjs            把 packages/sdk 的两个文件刷进所有内嵌副本（`--check` 只查不改）
   sdk.test.mjs            副本一致性 + SUPPORTED_SDK 版本对齐（`npm run test:sdk`）
   tauri.mjs               tauri CLI 包装（补工具链 PATH）
@@ -101,6 +111,10 @@ src-tauri/src/
   media.rs                SMTC 媒体会话：读当前播放 + playPause/next/previous/stop（WinRT）
   package.rs              .lattice 解包：inflate + 核 CRC + 原子安装（先解到 .incoming 再换名）
   package_policy.rs       上面那道的纯逻辑：读中央目录、路径规则、体积上限（11 条单测）
+  signature.rs            ed25519 验签 + sha256（三道校验的前两道，4 条单测含一条跨语言向量）
+  signature_policy.rs     上面那道的纯逻辑：hex / base64 / 指纹 / id 规则（8 条单测）
+  backup.rs               覆盖安装前的备份与回滚（回滚是**交换**，只留一代）
+  store.rs                商店命令：取目录、下载包（带缓存）、验签安装、写举报
   instance.rs             单实例：命名互斥体 + 命名事件
   state.rs                平台状态落盘（state.json，原子替换）
   widget_store.rs         组件私有存储落盘（widget-data/<id>.json）
@@ -115,7 +129,7 @@ docs/                     架构、组件规范、路线图与踩坑
 
 ---
 
-## 4. 十四条不变量（改代码前必读）
+## 4. 十五条不变量（改代码前必读）
 
 1. **零内置**。平台本身不含任何组件。随应用分发的包（`bundled`）必须显式"安装"（记进 `installedIds`）才可用；用户目录里的包（`user`）在磁盘上即已装。不要为了"体验好一点"让 bundled 自动可用，那会把扩展平台退化成桌面工具。
 
@@ -153,6 +167,13 @@ docs/                     架构、组件规范、路线图与踩坑
     - **重定向必须关掉**（`WINHTTP_OPTION_REDIRECT_POLICY_NEVER`）。跟随 302 等于白名单失效：放行 `a.com`，`a.com` 把组件 302 到 `evil.com`，数据就出去了。现在的行为是把 302 原样当响应交回组件，由组件自己决定要不要再发一次（那时又要过一遍白名单）。
     - **走 IPC，不搭本地 HTTP 代理**。开一个 `127.0.0.1:xxxx` 的代理端口就等于给组件留了一条绕过桥的路（它 `fetch` 那个端口没人拦），而 IPC 通道只有宿主页能说话。
     这条是**加了一扇门，不是拆了别的门**：CSP（不变量 12）和 `egress.rs` 的导航拦截照旧生效，组件仍然不能自我导航把数据拼进 URL 送走。
+
+15. **分发的信任锚点是包，不是目录**。装一个包要过三道，顺序不能换：`sha256(字节)` 等于目录里写的 → ed25519 签名能被 `publisher.key` 验过 → 这把钥匙等于**这个组件第一次安装时钉在本地的那把**（`store.trustedKeys`）。前两道挡传输损坏和伪造，第三道才挡得住"另起一把钥匙、连目录一起换掉"。五条别踩回去：
+    - **目录本身不签名**，它只是索引。所以"目录能改"这件事必须由上面三道兜住 —— 谁想给目录加个新字段去驱动行为（自动安装、自动更新、静默授权），先想清楚这个字段被改坏之后会怎样。
+    - **先验签名再看版本**。反过来的话，换了钥匙的包会被当成"一次普通更新"直接装进去，用户连提示都看不到（`planInstall` 里那两行的顺序就是这么定的）。
+    - **换钥匙必须由用户点头**。`planInstall` 返回 `untrusted` 时界面要同时印出**两把**指纹，点一次确认才继续；不要"检测到新钥匙就自动信任"。
+    - **覆盖安装之前必须备份，回滚是交换不是复制**。`backup.rs` 只留一代；用复制实现回滚的话，连点两次会回到同一个旧版本，用户会以为按钮坏了。三条安装路径（目录安装 / 拖文件夹 / `.lattice`）走同一条备份规则，否则"拖文件夹"会成为唯一一种没法回滚的安装方式。
+    - **新版本多要的权限不自动授予，但也不禁用组件**。自动授予 = 把"更新"变成一次静默提权；禁用组件 = "更新完就不能用了"。正确形状是"照旧能用 + 一条不会自己消失的横幅，直到用户处理"。`flagPermissionReview` / `resolvePermissionReview` 是唯一入口，别在别处直接改 `grants`。
 
 ---
 
@@ -216,10 +237,14 @@ registry.ts  entryUrl = http://lattice-widget.localhost/<id>/index.html
 
 | 东西 | 位置 | 谁写 |
 | --- | --- | --- |
-| 摆放、已安装、授权、主题、网格吸附、本机档案、桌面矩形 | `%APPDATA%\com.iron-tom.lattice\state.json` | `store.ts` → `state_write` |
+| 摆放、已安装、授权、主题、网格吸附、本机档案、桌面矩形、目录地址、钉住的发布者钥匙、评分、待复核的权限 | `%APPDATA%\com.iron-tom.lattice\state.json` | `store.ts` → `state_write` |
 | 组件私有数据 | `%APPDATA%\com.iron-tom.lattice\widget-data\<widgetId>.json` | `bridge.ts` → `widget_store_write` |
 | 用户安装的组件 | `%APPDATA%\com.iron-tom.lattice\widgets\<id>\` | `widgets.rs` |
+| 上一代的组件（回滚用） | `%APPDATA%\com.iron-tom.lattice\widget-backups\<id>\` | `backup.rs`（只留一代，卸载时一起删） |
+| 举报与评分 | `%APPDATA%\com.iron-tom.lattice\reports\<widgetId>-<unix>.json` | `store.rs::store_report`（**不发送**，只是文件） |
+| 下载过的包 | `%APPDATA%\com.iron-tom.lattice\store-cache\<sha256>.lattice` | `store.rs::store_download` |
 | 内置组件 | `public/widgets/<id>/` + 构建期生成的 `index.json` | `scripts/widget-index.mjs` |
+| 内置商店目录 | `public/store/registry.json` + `packages/*.lattice` | `scripts/store-index.mjs`（gitignore，构建期生成） |
 
 `store.ts` 里有一个 `hydrated` 闸门：**水合完成前不许写盘**。读状态是异步的，中间任何一次 set 都会把默认空状态盖到磁盘上。加新的持久化字段时，记得同时改 `partialize`，否则重启就丢。
 
@@ -271,8 +296,9 @@ public/widgets/<id>/
   style.css
 ```
 
-然后 `npm run widgets:index`（`dev` / `build` 会自动跑）。注意：
+然后 `npm run widgets:index`（`dev` / `build` 会自动跑），商店那条路再跑 `npm run store:index`（打包 + 签名 + 写目录）。注意：
 
+- **改了组件就要抬 `version`**。`planInstall` 判的是版本号，不是文件内容 —— 忘了抬，商店里那个条目永远是"已是最新"，用户拿不到你的改动（开发期可以直接删掉重装绕过，但那不是发布流程）。
 - **图标只当形状用**：平台拿它当 CSS 遮罩、用 `currentColor` 上色，所以 SVG 里 `fill` 写什么色都行，深色浅色自动对。也因此**永远不要**把组件的 SVG 内容直接塞进主窗口的 DOM（第三方内容，`<script>` 会跟着跑），只让它以图片身份参与遮罩。
 - **不要用原生表单控件**。沙箱文档的 `color-scheme` 被强制成 `normal`，原生 checkbox/radio 会按浅色主题画，在深色卡片上几乎看不见。用 `appearance: none` 自绘。
 - **"整行可拖"和"整行可点"必须分得开**。`lattice.todo` 的行既能拖起来排序，又能点一下勾掉：判据是 4px 阈值，且抬手后浏览器补的那次 `click` 要吃掉（`suppressClick` 用 `setTimeout(..., 0)` 复位 —— click 在它之前同步派发）。别用 HTML5 拖放：沙箱是不透明源，跨文档的 `dataTransfer` 靠不住；自己算还能控制让位动画。
@@ -291,6 +317,19 @@ public/widgets/<id>/
 1. `App.tsx::installFromPaths` —— webview 的 `onDragDropEvent` 给的是真实路径，直接丢给 `install_widget`
 2. `widgets.rs::install_widget` —— 校验 id、删旧目录、递归复制
 3. `registry.ts::loadRegistry` —— 重新扫描，`source === "user"` 的包自动算已安装
+
+### 发一个版本 / 换目录地址
+
+```
+1. 改组件，把 manifest.json 的 version 往上抬（必须三段，`1.2` 会被清单校验拒掉）
+2. npm run store:index        # 打包 + 签名 + 写 public/store/registry.json
+3. 把 public/store/ 整个传上去；内置目录则跟着应用一起发
+```
+
+- **签名只有一份实现**：`scripts/sign-widget.mjs` 用 Node 的 `crypto.sign(null, bytes, key)`，Rust 侧 `signature.rs` 用 `ed25519-dalek` —— 同一套算法。要换其中一边，先跑 `npm run sign:widget -- --selftest`，它里面有一条两边都认的向量。
+- **`publisher` 写在目录根上**（一处写、所有条目共用），条目级也可以覆盖。`parseCatalogue` 是"条目级优先、没有就继承根级" —— 改格式时两处一起改，只改一边的症状是"每个条目都说没有 publisher key"。
+- **换目录地址**走设置菜单的 `Widget catalogue`（`store.catalogueSource`：`bundled` 或 `{ kind: "remote", url }`）。远端地址只允许 http/https，取目录走 `store_fetch_text`（2MB 上限），取包走 `store_download`（16MB，缓存到 `store-cache/<sha256>.lattice`）。**别在渲染进程里直接 `fetch` 远端目录**：那样 CSP 和出网白名单都得为平台自己开一个口子。
+- 本地钉住的钥匙在 `store.trustedKeys`（`widgetId → key`），跟着 `state.json` 走。要重来一遍"第一次安装"，删掉那个组件再装。
 
 ### 改窗口行为
 
@@ -319,6 +358,19 @@ public/widgets/<id>/
 | **`widget_close` 会莫名其妙被调** | 开发期撞到过**三次**"卡片自己没了、桌面窗口也没了"。加了 `reason` + 日志后抓到：都是 `reason: user`，宿主页里那层鼠标探针也抓到 `isTrusted: true` 的 `mousedown`，落点正是那颗 22×22 的 ✕ 中心 —— 是**真输入**，不是代码派发。但**不是人**：有一轮在没人碰鼠标的几分钟里，四个窗口各发了一条。干净环境盯 70 秒又一次都不来。所以这条坑没结：`✕` 的 click 有个还没找到的派发方 | **架构上的毛病已修**（第 11 条不变量）：非 `user` 来路只关窗口不删 placement；`reason: user` 这一路仍然会删，但**已经可撤销**（`lastClosed` + 8 秒 Undo 条）。剩下的线索：`widget_close` 现在会打出点击特征，实测一次真点击是 `trusted detail=1 pointer=mouse at=140,20`，和那几次的 `(203,15)`（220 宽窗口 ✕ 的中心）同形；而窗饰透明时点击会被手滑保护丢掉 —— 所以那几次**窗饰是可见的、指针就停在组件窗口上**。下一步是查"指针停在组件窗口上时，系统为什么把别处的点击投给了它" |
 | **CSP 只盖用户组件** | 内置组件走前端资源管线、拿不到 CSP 头（它们随二进制分发，信任级别和平台本体一样）。同一份代码装成内置和装进用户目录，**联网**行为不一样 —— 错误上报不在此列，那条已经两条路都注入了 | 要么让内置组件也走 `lattice-widget://`，要么接受这个不对称 —— 已经在 `docs/WIDGET_SPEC.md` 5.2 里对组件作者写清楚了。别在宿主页想办法补，头只能在发文档的那一端加 |
 | **混合 DPI 只验了一半** | 夹紧链路已改成全程物理像素，但**这台机器两块屏都是 96 DPI**（1728×1080 ×2），"跨到不同缩放的屏"这条路径只走了代码、没走过真机 | 找一台接 4K 屏（150% 或 175%）的机器，把组件拖过去再拖回来，看锚点是不是还跟着指针；`screen-fit.ts` 的纯几何部分已经被 `tests/screen-fit.html` 钉住，要补的是 `widgetHost.ts` 里那几处 `scaleFactor()` 重取 |
+| **商店没有服务端** | 目录得手工重发（`npm run store:index` 再上传）；评分只是本地字段，不汇总；举报写成一个文件，**不会自动送到作者手上**，得用户自己发出去 | 这是有意的（见不变量 15 与 ROADMAP 的四个取舍）。真接后端时替换的是"目录从哪儿取"和"举报写到哪儿"，`parseCatalogue` / `planInstall` / 验签那一层一行都不用动 |
+| **没有吊销列表** | 一把钥匙被钉住之后本地只认它。作者的私钥泄露，已经装过的人只能手动删了重装（那才算重新 TOFU） | 要么加一份签名过的吊销清单（又回到"谁来签这份清单"），要么在换钥匙流程里留一个"上一把可能泄露了"的分支。**别做成静默信任**：那等于把第三道校验删了 |
+| **签名没有时效** | 包没有有效期、没有时间戳，一个两年前的包今天照样验得过；"回滚到旧版本"在密码学层看不出来 | 目录里加 `publishedAt` 只是索引层字段（可改），真要防降级得靠版本单调 —— 现在靠的是"只往更高的版本装"，但用户可以手动装旧包 |
+| **回滚只有一代** | 连着更新两次之后回不到第一版 | 用户真正需要的是"回到刚才那个"，多代备份是个没有正确答案的配置项。真要加，先把 `widget-backups/<id>` 变成 `<id>/<version>`，再把"交换"改成"指针移动" |
+| **权限复核只在主窗口** | 那条横幅挂在主窗口底部；用户一直不开主窗口，就一直看不到 | 已经有的兜底是卡片上的 `Review` 标记（`LibraryPanel`），但同样要打开主窗口才看得见。可以考虑让托盘图标带状态 |
+
+已修（别再改回去）：**覆盖安装之前先备份，回滚是交换**。`package::extract` 与 `widgets::install_widget` 都调 `backup::save_existing`，旧目录整份复制到 `widget-backups/<id>`，只留一代；`widget_rollback` 走 `backup::swap`（两个方向各改一次名），不是复制回来。四条：**三条安装路径都要备份**（目录安装 / 拖文件夹 / `.lattice`），少一条就有一种装法回不去；**卸载连备份一起删**（`uninstall_widget`）—— 那是用户明确说的"不要了"；**没有备份时回滚必须明确报错**（`there is no previous version to roll back to`），不要静默成功，真机探针专门验了这一条；**备份失败只记日志、不阻断安装**（备份是保险，不是前提）。
+
+已修（别再改回去）：**目录的 `publisher` 可以写在根上**。`store-index.mjs` 一处写、六个条目共用，`parseCatalogue` 是"条目级优先、没有就继承根级"。第一版只认条目级，真机跑出来的结果是"六个组件全都没有 publisher key" —— 单测里没有这个样本，只有真机才看得见。改目录格式时两边一起改。
+
+已修（别再改回去）：**下载包这条路上不许出现字符串**。`network::send` 返回 `Vec<u8>` + 调用方给上限，`network_fetch` 只在最后一步 `String::from_utf8_lossy`。中间任何一次"顺手转成 String"，非 UTF-8 字节就变成 U+FFFD，sha256 必然对不上 —— 症状是"每个包都下载损坏"，而你会去查网络、查缓存、查目录，就是不查那一行转换。
+
+已修（别再改回去）：**换钥匙必须让用户看见两把指纹**。`planInstall` 先验签名再看版本（反过来的话，换了钥匙的包会被当成一次普通更新装进去），返回 `untrusted` 时 `CatalogueSection` 印出本地钥匙和新钥匙的指纹，点确认才走 `trustKey` + 安装。别加"检测到新钥匙就自动信任"的分支 —— 那等于把第三道校验删了。
 
 已修（别再改回去）：**改组件文件不用再手动重载**。`watch.rs` 用 `ReadDirectoryChangesW` 盯两个根（用户组件目录 + `public/widgets`），递归，合并成一条 `lattice:widgets-changed` 发给主窗口；`widgetHost.ts` 按 `${config.widgetId}/` 前缀过滤后自己 `reloadWidget()`。四条别踩回去：**去抖按"静默 300ms"算、不是固定 300ms**（存一次盘会连出三四个事件，固定窗口会把一次保存切成两次重载，组件闪两下）；**必须有 `MAX_HOLD` 上限（2000ms）**——一直存盘的话"静默"永远等不到，没有上限就永不触发；**安装/卸载期间要抑制**（`SUPPRESS` 那个 `AtomicBool` + `Suppress` RAII），装一个组件是几十个文件的批量拷贝，不抑制就是十几次重载；**只重载受影响的组件**，别的组件跟着刷新等于把用户正在打的字清掉。
 
@@ -429,6 +481,11 @@ public/widgets/<id>/
 - 改了协议 / 安装链路：拿 `examples/counter` 当样本 —— 拖进窗口 → 出现在「已安装」→ 放到画布 → 授权 `storage` → 点几下 → 看 `%APPDATA%\com.iron-tom.lattice\widget-data\demo.counter.json` 有没有写进去。协议本身只能在应用里探（浏览器态没有 Rust，`lattice-widget.localhost` 压根不解析）：预期真文件 200 + 正确 `Content-Type`，`..` / 大写 id / 不存在的组件全部 404。
 - 改了 **SDK**（`packages/sdk/lattice.js`）：改完**立刻** `npm run sdk:sync`，再 `npm run test:sdk`（2 条，`node:test`，不需要 dev server：所有内嵌副本必须和源字节一致、`SUPPORTED_SDK` 的主次版本必须和 SDK 包版本对得上）。行为本身看 `tests/sdk.html`（34 条）—— 它自带一个假宿主，覆盖请求配对、超时、`permission_denied`、主题长名 / 别名、存储往返、`store-changed`、`config-changed`、`tick` 路由、`stop()`、网络透传、顶层窗口立刻失败。**跨窗口的断言要用 `waitFor` 轮询**：`postMessage` 是宏任务，`await` 子窗口的 promise 只排微任务，直接断言会偶发失败。
 - 改了 **`.lattice` 打包 / 安装**：`npm run pack:widget -- examples/counter`，产物在 `dist-packs/`（已 gitignore）。打包要验**确定性**：连打两次，`sha256` 必须一样。解包侧用壳子跑 `package_policy.rs` + `package.rs` 的 15 条（含篡改 CRC、路径穿越、绝对路径），装完看 `%APPDATA%\com.iron-tom.lattice\widgets\<id>\` 里是不是原样。交叉验一下更稳：Node 打的包用 Python 的 `zipfile.ZipFile(...).testzip()` 读一遍。
+- 改了**商店 / 签名 / 更新**：
+  - 纯逻辑：`tests/semver.html`（44 条）+ `tests/catalogue.html`（43 条）+ `tests/store-ui.html`（17 条，挂的是真的 `LibraryPanel`）。前两个是纯函数，第三个验的是"接上 React 之后还对不对"（按钮接没接上回调、文案用的是不是过滤后的数据）。
+  - 签名两侧：`npm run sign:widget -- --selftest`（一条 Node 自己签、自己验的向量）；Rust 侧那条向量是**用 Node 生成后贴进去的**，别凭印象写。
+  - 端到端只有真机：`npm run store:index` 之后起 `tauri:dev`，在设置里把目录切成 Bundled，装一个 → 改版本再装一次（看 `widget-backups/` 出现）→ 回滚（看两个版本互换）→ 举报（看 `%APPDATA%\com.iron-tom.lattice\reports\<id>-<时间戳>.json`）。**验签失败的三条要各自单独造**：改目录里的 `sha256`（摘要不符）、改包里的一个字节（同上）、把 `publisher.key` 换成另一把（签名不符）。三条报的错必须**不一样**，否则等于没验。
+  - 界面上"该不该装"的判断全在 `planInstall` 里，别在 JSX 里再写一份 —— 两份判断的后果是"卡片说能装、点了报错"。
 - 改了**调试面板**：`tests/debug.html`（43 条，总线 + 过滤 / 统计纯函数）+ `tests/debug-panel.html`（15 条，把真组件挂起来点按钮）。后者**必须 `import "../src/styles.css"`**，否则面板渲染成裸 HTML。它同时也是一张验收图：`--screenshot` 出来的就是面板长什么样。
 - 改了**媒体控制**：`tests/media.html`（33 条）自带假宿主，覆盖"有会话 / 没会话 / 权限被拒 / 直播没时长 / 点按钮 / 改轮询间隔"。它替身的坑记住一条：`setConfig()` 要 `Object.assign` 到 handler 捕获的那个对象上，否则 `config.get` 回的还是启动时那份，用例会假通过。
 - 改了组件库（列表 / 搜索 / 安装态）：`tests/library-search.html` 钉的是**判定规则**（空查询不筛、大小写与空白归一、多词 AND、权限名算命中、不做模糊匹配）。搜索的边界只在 `runtime/library-search.ts` 里写一份，组件里别再复制一遍 —— 复制的后果是"测试过了，界面上还是不对"。
@@ -451,8 +508,8 @@ public/widgets/<id>/
   #[path = "../src-tauri/src/network_policy.rs"] mod network_policy;
   ```
   `rustc --test 壳子.rs -o 壳子.exe && ./壳子.exe`。**这就是"纯逻辑要单独拆成一个文件"的原因 —— 拆出来才测得到**。断言只有一份（`#[cfg(test)] mod tests` 在模块内部），壳子别复制。
-  能这么跑的只有不依赖 tauri / windows-sys / serde 的那几个：`diagnostics.rs`（14）、`package_policy.rs`（11）、`network_policy.rs`（9）、`crash_policy.rs`（9）、`watch_policy.rs`（5）、`autostart_policy.rs`（5），共 53 条。剩下 19 条（`csp.rs` 3、`egress.rs` 3、`protocol.rs` 6、`widget_store.rs` 5、`media.rs` 2）在带依赖的模块里，只有 `cargo test` 能跑，本机跑不了 —— 改动它们时靠 review 和真机验证。
-  `package.rs` 要用到 `flate2` / `serde_json`，壳子得额外指路：`rustc --edition 2024 --test 壳子.rs --extern flate2=<rlib> --extern serde_json=<rlib> -L dependency=src-tauri/target/debug/deps -o 壳子.exe`（rlib 从 `target/debug/deps/` 里按 `libflate2-*.rlib` 找）。只给 `--extern` 不给 `-L dependency` 会报 `can't find crate`。
+  能这么跑的现在是 68 条：`diagnostics.rs`（14）、`package_policy.rs`（11）、`network_policy.rs`（9）、`crash_policy.rs`（9）、`signature_policy.rs`（8）、`watch_policy.rs`（5）、`autostart_policy.rs`（5）、`signature.rs`（4）、`csp.rs`（3，要桩一个 `protocol::SCHEME` 常量）。剩下 21 条（`protocol.rs` 6、`widget_store.rs` 5、`backup.rs` 4、`egress.rs` 3、`media.rs` 2、`store.rs` 1）在带依赖的模块里，只有 `cargo test` 能跑，本机跑不了 —— 改动它们时靠 review 和真机验证。
+  `package.rs` 要用到 `flate2` / `serde_json`，`signature.rs` 要用到 `ed25519_dalek` / `sha2`，壳子得额外指路：`rustc --edition 2024 --test 壳子.rs -L src-tauri/target/debug/deps --extern flate2=<rlib> --extern serde_json=<rlib> -o 壳子.exe`（rlib 从 `target/debug/deps/` 里按 `libflate2-*.rlib` 找）。只给 `--extern` 不给 `-L` 会报 `can't find crate`。`csp.rs` 那个桩的值要抄对（`"lattice-widget"`，不是 `"lattice"`），抄错了单测会红 —— 这次正好被它抓了一下。
   **别把纯逻辑塞回带依赖的模块里**：`watch.rs` / `autostart.rs` 的解析和拼串本来就是搬出去的，搬回去等于这 10 条断言从此没人跑。
 - **CDP 选 target 必须认"完全相等"，不能只认"包含"**：主窗口是 `http://127.0.0.1:1420/`，宿主页是 `http://127.0.0.1:1420/widget-host.html` —— 后者**包含**前者的前缀，`url.includes(selector)` 会把主窗口的探针静默跑到宿主页上，返回空值也不报错（真踩过：以为桥坏了，其实是在一个已经卸载的页面上 `evaluate`）。所以先 `t.url === selector`，找不到再退到 `includes`。
 - **宿主页在 CDP 里没有唯一 URL**：所有桌面窗口都是同一个 `widget-host.html`，靠 URL 分不出是谁。按 `host:<widgetId>` 取的办法是先连上每个 `widget-host.html` target，`evaluate("document.querySelector('iframe')?.getAttribute('src')")`，再按里面的组件 id 挑。想验崩溃隔离就 `Page.crash` 那个 target（组件 iframe 是 `type: "iframe"`，宿主页才是 `type: "page"`）。

@@ -10,7 +10,7 @@
 
 ## 现状
 
-v0.4 是**能真的贴到桌面上的 demo**，而且写组件这件事开始顺手了：平台开箱是空白的，安装官方组件包后把组件摆到画布上，组件在沙箱 iframe 里真实运行，通过 RPC 桥调用平台能力，权限逐项授予。点"投放到桌面"，每个组件变成一个独立的无边框窗口，主窗口最小化退场。
+v0.5 是**能分发**的版本：写组件、装组件、更新组件这三件事现在都有正经的路。平台开箱是空白的，安装官方组件包后把组件摆到画布上，组件在沙箱 iframe 里真实运行，通过 RPC 桥调用平台能力，权限逐项授予。点"投放到桌面"，每个组件变成一个独立的无边框窗口，主窗口最小化退场。
 
 落到桌面上之后，窗口能拖、能缩、能用别针锁住，布局与组件数据重启不丢。顶栏右上角是设置：明暗、网格吸附、重启恢复、开机自启、暂停全部组件、本机档案——登录只写本地 `state.json`，不上传、不联网。
 
@@ -33,6 +33,19 @@ v0.4 补的是**写组件那一侧**，不是用组件那一侧：
 - **`npm run pack:widget -- <目录>`** —— 把目录打成一个 `.lattice`（确定性的 zip），谁都能拖进自己窗口装上
 - **媒体控制** —— 组件能读也能按 Windows 的媒体会话（SMTC）：现在在放什么、播放/暂停、上一首、下一首
 - **调试面板**（`Ctrl+Shift+D`）—— 每一次桥调用（耗时、错误码）和沙箱里每一条 `console.log`，实时滚在一条抽屉里
+
+v0.5 补的是**分发**。这个平台没有服务端，所以答案不是"搭一个商店后台"，而是"目录是一份静态 JSON，包是签名过的文件"：
+
+- **组件商店** —— 一份 `registry.json` + 一批 `.lattice` 包，内置目录跟着应用发；也可以把整个目录扔到任何静态托管上，在设置里填地址换成远端的
+- **签名是三道校验** —— 包的摘要对得上 → ed25519 签名验得过 → 那把钥匙等于**这个组件第一次安装时钉在本地的**。前两道挡损坏和伪造，第三道才挡得住"另起一把钥匙、连目录一起换掉"。换钥匙要用户点头，界面上同时印出两把指纹
+- **更新与回滚** —— 覆盖安装前把旧版本备份成一代，卡片上出现 `Back to x.y.z`。回滚是**交换**不是复制，所以按钮可以按两次、两个方向都成立
+- **评分与举报** —— 五颗星，加一份写在本地的报告文件。没有服务端，所以没有"提交"这回事：对话框直接告诉你文件存在哪儿，你自己发给作者
+- **新权限要重新确认** —— 更新后多出来的权限不自动授予，也不禁用组件：照旧能用，底部弹一条不会自己消失的横幅，直到你点 `Allow` 或 `×`
+
+```bash
+npm run store:index                              # 打包 + 签名 + 写目录
+npm run sign:widget -- --gen-key --out my.key    # 生成你自己的发布密钥
+```
 
 现在的界面（设置菜单展开）：
 
@@ -147,8 +160,10 @@ v0.4 补的是**写组件那一侧**，不是用组件那一侧：
 
 ```
 %APPDATA%\com.iron-tom.lattice\
-  state.json                  摆放、已安装、授权、主题、桌面矩形
+  state.json                  摆放、已安装、授权、主题、桌面矩形、目录地址、钉住的发布者钥匙、评分
   widget-data\lattice.note.json   组件私有存储，一个包一个文件
+  widget-backups\lattice.clock\   上一代（回滚用），一个组件一代
+  reports\lattice.clock-1712.json 举报与评分，存成文件，不会自动上传
 ```
 
 写入走"临时文件 + 原子替换"，写到一半断电也不会留下半截 JSON。组件私有存储也走同一条路（`storage.get / set / remove` 三个桥方法背后是 Rust 的文件读写），所以便签里的字、待办里的勾，重启之后都还在。
@@ -166,10 +181,11 @@ v0.4 补的是**写组件那一侧**，不是用组件那一侧：
 | v0.2 | 用户组件协议、可输入、存储同步、设置、面板收起与组件图标 | 3 433 / 1 649 / 1 834 |
 | v0.3 | 托盘、自启、暂停全部、存盘即重载、崩溃自恢复、联网白名单、混合 DPI 夹紧 | 6 469 / 5 716 / 2 561 |
 | v0.4 | SDK、脚手架、`.lattice` 打包、媒体控制、调试面板 | 7 119 / 6 488 / 2 791 |
+| v0.5 | 商店目录、签名校验、更新与回滚、评分与举报、新权限复核 | 9 026 / 7 477 / 3 102 |
 
-比数字更有意思的是**六个被推翻的决定**：逐像素透明做不出来、`localStorage` 不落盘、`NOACTIVATE` 让便签打不了字、宿主页拼不对用户组件的路径、两个实例各持一份列表把待办吃掉、自己维护窗口表把自己锁死。每一个都写着当初为什么这么选、被什么撞翻、现在怎么补、代价是什么。
+比数字更有意思的是**八个被推翻的决定**：逐像素透明做不出来、`localStorage` 不落盘、`NOACTIVATE` 让便签打不了字、宿主页拼不对用户组件的路径、两个实例各持一份列表把待办吃掉、自己维护窗口表把自己锁死……每一个都写着当初为什么这么选、被什么撞翻、现在怎么补、代价是什么。
 
-那 73 条「踩过的坑」是同一个过程的副产品，也是这个仓库最值钱的部分——它记的是这台机器的脾气，不是通用教条。其中有一条花了一个下午：`WinHttpSendRequest` 的头长度收的是**字符数**，而隔壁那几个注册表 API 收的是**字节数**；传成字节数，每个带自定义头的请求都失败，`GetLastError()` 只给一个 `ERROR_INVALID_PARAMETER (87)`。
+那 67 条「踩过的坑」是同一个过程的副产品，也是这个仓库最值钱的部分——它记的是这台机器的脾气，不是通用教条。其中有一条花了一个下午：`WinHttpSendRequest` 的头长度收的是**字符数**，而隔壁那几个注册表 API 收的是**字节数**；传成字节数，每个带自定义头的请求都失败，`GetLastError()` 只给一个 `ERROR_INVALID_PARAMETER (87)`。
 
 ## 平台是空白的
 
@@ -216,7 +232,7 @@ npm run tauri:build   # 出安装包：src-tauri/target/release/bundle/nsis
 
 > 只想看 demo 的话用 `npm run dev`，不需要 Rust。桌面端目前需要 `windres`（mingw binutils）或 MSVC 工具链，见 ROADMAP 的环境说明。
 
-接手这个仓库（或者换个模型 / 换个人接手）先读 [AGENTS.md](./AGENTS.md)：一页纸的项目地图、十四条不变量、常见改动的配方、以及"别修一半"的已知缺口。
+接手这个仓库（或者换个模型 / 换个人接手）先读 [AGENTS.md](./AGENTS.md)：一页纸的项目地图、十五条不变量、常见改动的配方、以及"别修一半"的已知缺口。
 
 ## 目录
 
@@ -224,17 +240,21 @@ npm run tauri:build   # 出安装包：src-tauri/target/release/bundle/nsis
 AGENTS.md            接手文档：换模型 / 换人时先读这一页
 LICENSE              MIT
 src/
-  platform/          平台外壳：画布、组件库、属性面板、设置、自启、平台状态
-  runtime/           组件运行时：manifest 校验、注册表、RPC 桥、调度器、屏幕夹紧
+  platform/          平台外壳：画布、组件库、商店、属性面板、设置、自启、平台状态
+  runtime/           组件运行时：manifest 校验、注册表、RPC 桥、调度器、屏幕夹紧、版本号、目录解析
 public/widgets/      官方组件包（未安装前只是"可安装"）
+public/store/        内置商店目录（构建期生成：registry.json + 签名过的包）
 examples/counter/    第三方组件样本（拖进窗口即安装）
-tests/               自检页：12 页、216 条断言，全在浏览器里跑
-scripts/             构建辅助（生成组件索引、补工具链 PATH、注入上报脚本）
+tests/               自检页：19 页、445 条断言，全在浏览器里跑
+scripts/             构建辅助（组件索引、商店索引、签名、补工具链 PATH、注入上报脚本）
 src-tauri/
   src/widgets.rs     组件包扫描 / 安装 / 卸载
   src/runner.rs      运行态：Placement → 真实窗口的增量同步、窗口控件回传、暂停开关
   src/protocol.rs    lattice-widget:// 静态文件服务（用户组件的 HTML/CSS/JS）
   src/network.rs     出网代理（WinHTTP）：权限 → 主机白名单 → 请求形状
+  src/signature.rs   ed25519 验签 + sha256（装包时的前两道闸）
+  src/backup.rs      覆盖安装前的备份与回滚（回滚是交换，只留一代）
+  src/store.rs       商店命令：取目录、下载包、验签安装、写举报
   src/crash.rs       进程失败处理：认类型、记账、重载、放弃、告诉用户
   src/watch.rs       组件目录监听（ReadDirectoryChangesW + 去抖）
   src/autostart.rs   HKCU Run 注册表项：读、写、修路径漂移
@@ -245,7 +265,7 @@ src-tauri/
   installer-hooks.nsh NSIS 钩子：卸载时删掉 Run 注册表项
 docs/
   ARCHITECTURE.md    架构与取舍
-  WIDGET_SPEC.md     组件规范（写组件看这个）
+  WIDGET_SPEC.md     组件规范（写组件看这个，发布与签名见 §9）
   ROADMAP.md         进度、迭代时间线、被推翻的决定、踩过的坑
 ```
 
@@ -275,6 +295,8 @@ public/widgets/lattice.hello/
 组件里用 `parent.postMessage({ __lattice: 1, type: "request", id, method, params }, "*")` 调平台能力，完整协议见 [WIDGET\_SPEC](./docs/WIDGET_SPEC.md)。改完执行 `npm run widgets:index` 让平台发现新组件。
 
 这些样板可以不写：`npm run create:widget -- demo.mine` 会一次写好清单、页面、样式、图标和已经带心跳的组件脚本；`@lattice/sdk`（`packages/sdk`）把桥包成 `await`——写一次存储不用再自己维护一张 promise 表。SDK **是可选的**，`public/widgets` 下的官方组件全部手写，它们就是"不装 SDK 也能写"的证明。
+
+写完了要发出去：`npm run pack:widget -- <目录>` 打成一个 `.lattice`（确定性 zip，谁都能拖进自己窗口装上）；要进商店就 `npm run store:index`，它会打包、签名、写目录。**版本号决定一切** —— 抬了 `version` 用户才会看到"可更新"，签名和换钥匙的规矩见 [WIDGET_SPEC §9](./docs/WIDGET_SPEC.md#9-发布版本与签名)。
 
 **不随应用分发的组件不用改仓库**：把整个目录从资源管理器拖进棂的窗口就装好了，文件会复制到 `%APPDATA%\com.iron-tom.lattice\widgets\<id>\`，由自定义协议 `lattice-widget://` 直接加载。[`examples/counter`](./examples/counter) 是一个可以直接拖进去的样本。
 
