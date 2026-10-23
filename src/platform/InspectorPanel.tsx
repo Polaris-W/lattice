@@ -6,6 +6,7 @@
  * 因为权限是"你信不信任这个组件的代码"，跟摆了几份无关。
  */
 
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 import {
   MAX_BLUR,
@@ -17,7 +18,7 @@ import {
   type Appearance,
 } from "../runtime/appearance";
 import { PERMISSION_LABELS, type Permission } from "../runtime/manifest";
-import type { WidgetRecord } from "../runtime/registry";
+import { isTauri, type WidgetRecord } from "../runtime/registry";
 import { PanelGlyph, WidgetIconMark } from "./icons";
 import { useLattice } from "./store";
 
@@ -230,7 +231,22 @@ export function InspectorPanel({ records, open, onToggle }: InspectorPanelProps)
 
   /** 只改底板，别动 placement 上的其它字段 */
   const patchAppearance = (patch: Partial<Appearance>) => {
-    update(placement.instanceId, { appearance: { ...appearance, ...patch } });
+    const next = { ...appearance, ...patch };
+    update(placement.instanceId, { appearance: next });
+    /*
+     * 滑杆要跟手，所以这里直接推一份给桌面窗口。
+     *
+     * 光靠 store 不够：App 那条同步是 120ms 防抖的，而且每次改动都会把计时器
+     * 重新起算 —— 一路拖下去，桌面窗口要等到松手才动，滑杆看起来就是死的。
+     *
+     * 推失败不要紧（组件还在画布上、没有桌面窗口），下次同步照样会带上它。
+     */
+    if (isTauri()) {
+      void invoke("widget_set_appearance", {
+        instanceId: placement.instanceId,
+        appearance: next,
+      }).catch(() => {});
+    }
   };
 
   /** 拖动任一 R/G/B 滑杆 = 从"跟随主题"变成"就用这个颜色"，起点是当前看起来的颜色 */
