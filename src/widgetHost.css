@@ -215,3 +215,133 @@ body.is-pinned .lw-edge {
 body.is-dragging iframe {
   pointer-events: none;
 }
+
+/* ------------------------------------------------------------------ *
+ * 组件出错时贴底的那张说明卡
+ *
+ * 故意不盖满整个窗口：上面留出的那一截还能看见组件坏成什么样。
+ * z-index 在 iframe（2）之上、窗饰（10）之下 —— 右上角那排按钮还得点得着。
+ * ------------------------------------------------------------------ */
+.lw-error {
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  z-index: 6;
+  max-height: 70%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 11px;
+  border: 1px solid rgb(226 86 77 / 45%);
+  border-radius: 9px;
+  /* 和窗饰用同一档色：底板调过的时候它才是中性色，压得住底下的花 */
+  background: var(--lattice-chrome, var(--lattice-surface-2));
+  color: var(--lattice-chrome-fg, var(--lattice-text));
+  box-shadow: 0 10px 26px rgb(0 0 0 / 26%);
+  font: 11.5px/1.45 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+  cursor: default;
+}
+
+.lw-error-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lw-error-kind {
+  font-size: 11px;
+  font-weight: 600;
+  color: #e2564d;
+}
+
+/* "还有 2 条" —— 悬停能看全部。它只是个提示，不抢主错误的注意力 */
+.lw-error-more {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgb(226 86 77 / 16%);
+  color: #e2564d;
+  font-size: 10px;
+  line-height: 15px;
+  cursor: help;
+}
+
+.lw-error-close {
+  margin-left: auto;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.55;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lw-error-close:hover {
+  opacity: 1;
+  background: var(--lattice-border);
+}
+
+.lw-error-message {
+  margin: 0;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  word-break: break-word;
+}
+
+.lw-error-where {
+  margin: 0;
+  font-size: 10.5px;
+  opacity: 0.6;
+  word-break: break-all;
+}
+
+.lw-error-details {
+  font-size: 10.5px;
+}
+
+.lw-error-details summary {
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.lw-error-details pre {
+  margin: 4px 0 0;
+  padding: 6px 7px;
+  max-height: 120px;
+  overflow: auto;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 14%);
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.lw-error-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.lw-error-action {
+  padding: 3px 9px;
+  border: 1px solid var(--lattice-border);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.lw-error-action:hover {
+  background: var(--lattice-border);
+}

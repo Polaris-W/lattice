@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>diagnostics test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      /*
+       * 错误通道的纯逻辑。
+       *
+       * 这段代码唯一的工作是"从一条 postMessage 里认出组件报的错"，
+       * 认错和漏认都很贵：
+       *   - 漏认 → 组件崩了还是白屏，这一整件事白做
+       *   - 认错 → 桥的响应被当成错误画出来，或者反过来，组件能靠伪造
+       *           一条消息骗到宿主的一次回话
+       * 所以下面钉的都是边界，不是好路径。
+       */
+      import {
+        ERROR_KIND_LABEL,
+        REPORT_TAG,
+        errorSignature,
+        isWidgetErrorReport,
+        pickPrimary,
+      } from "/src/runtime/diagnostics.ts";
+
+      const lines = [];
+      const log = (pass, text) => lines.push(`${pass ? "PASS" : "FAIL"}  ${text}`);
+      const eq = (actual, expected, text) =>
+        log(JSON.stringify(actual) === JSON.stringify(expected), `${text} → ${JSON.stringify(actual)}`);
+
+      // ---- 标记 ----
+      // 这个字符串在 Rust 的 REPORTER 里也写了一份（src-tauri/src/diagnostics.rs），
+      // 改了那边不改这边，错误就永远到不了宿主。钉住它，改的时候会被绊一下。
+      eq(REPORT_TAG, "__lattice_diag", "上报标记没被改动");
+
+      // ---- 好路径 ----
+      const script = { tag: REPORT_TAG, kind: "script", message: "x is not defined", where: "widget.js:12:5" };
+      log(isWidgetErrorReport(script), "标准的一条脚本错误认得出来");
+      log(
+        isWidgetErrorReport({ tag: REPORT_TAG, kind: "promise", message: "boom" }),
+        "没有 where / stack 也认（未处理的 rejection 常常没有位置）",
+      );
+      log(
+        isWidgetErrorReport({ tag: REPORT_TAG, kind: "resource", message: "Failed to load img", where: "http://x/a.png" }),
+        "资源加载失败认得出来",
+      );
+
+      // ---- 三种 kind 都得有名字 ----
+      for (const kind of ["script", "promise", "resource"]) {
+        log(typeof ERROR_KIND_LABEL[kind] === "string" && ERROR_KIND_LABEL[kind].length > 0, `${kind} 有展示用的标题`);
+      }
+
+      // ---- 坏路径 ----
+      log(!isWidgetErrorReport(null), "null 不是");
+      log(!isWidgetErrorReport(undefined), "undefined 不是");
+      log(!isWidgetErrorReport("boom"), "裸字符串不是");
+      log(!isWidgetErrorReport([]), "数组不是");
+      log(!isWidgetErrorReport({}), "空对象不是");
+      log(!isWidgetErrorReport({ ...script, tag: "__lattice" }), "换了标记就不是（桥的消息不能被当成错误）");
+      log(!isWidgetErrorReport({ ...script, message: 42 }), "message 不是字符串就不是");
+      log(!isWidgetErrorReport({ ...script, message: undefined }), "缺 message 就不是");
+      log(!isWidgetErrorReport({ tag: REPORT_TAG, kind: "explosion", message: "x" }), "没见过的 kind 不是");
+
+      // ---- 两条通道不能撞 ----
+      // 桥的 ready 消息带 __lattice: 1，它没有 tag，所以不会被这里认领
+      log(
+        !isWidgetErrorReport({ __lattice: 1, type: "ready" }),
+        "桥的 ready 不会被当成错误（否则每次加载都会弹一张错误卡）",
+      );
+      log(
+        !isWidgetErrorReport({ __lattice: 1, type: "response", id: 3, ok: true }),
+        "桥的响应不会被当成错误",
+      );
+
+      // ---- 去重指纹 ----
+      const a = { kind: "script", message: "x is not defined", where: "widget.js:12:5", stack: "at a\nat b" };
+      const b = { kind: "script", message: "x is not defined", where: "widget.js:12:5", stack: "at c" };
+      const c = { kind: "script", message: "y is not defined", where: "widget.js:12:5" };
+      const d = { kind: "script", message: "x is not defined", where: "widget.js:99:1" };
+      eq(errorSignature(a), errorSignature(b), "堆栈不同但错误相同 → 同一个指纹（渲染循环里别刷屏）");
+      log(errorSignature(a) !== errorSignature(c), "消息不同 → 不同指纹");
+      log(errorSignature(a) !== errorSignature(d), "位置不同 → 不同指纹");
+      eq(
+        errorSignature({ kind: "promise", message: "x" }),
+        "promise|x|",
+        "没有 where 时补空串，不会拼出 undefined",
+      );
+
+      // ---- 主错误的选择 ----
+      // 真机上撞到过：脚本先抛，接着 <img> 加载失败，只显示后到的那条的话
+      // 用户看到的是 "Failed to load img"，真正的原因被盖掉
+      const res = { kind: "resource", message: "Failed to load img", where: "a.png" };
+      const scr = { kind: "script", message: "boom", where: "index.html:15:25" };
+      const rej = { kind: "promise", message: "Unhandled rejection: nope" };
+      eq(pickPrimary([res, scr]).message, "boom", "脚本异常压过资源缺失，哪怕它先到");
+      eq(pickPrimary([scr, res]).message, "boom", "顺序反过来结论一样");
+      eq(pickPrimary([res]).message, "Failed to load img", "只有资源错误时就是它");
+      eq(pickPrimary([]), null, "一条都没有时返回 null");
+      eq(pickPrimary([scr, rej]).message, "boom", "脚本和未处理拒绝同级，先来的赢");
+      eq(pickPrimary([rej, scr]).message, "Unhandled rejection: nope", "同级里后到的不会抢位");
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>

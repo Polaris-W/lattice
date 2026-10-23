@@ -30,19 +30,19 @@
       /*
        * 这页盯的是「便签正文被窗饰压住」这个 bug。
        *
-       * 桌面窗口的四个功能图标（拖动/层级/别针/收回）是浮层，位置写死在
-       * src/widgetHost.css 的 .lw-pill 上：top 6、right 6、约 97×28 ——
-       * 也就是下沿在 34px、右边缘占掉 103px。组件里任何从顶上就开始排的
+       * 桌面窗口的功能图标（拖动/层级/别针/重载/收回）是浮层，位置写死在
+       * src/widgetHost.css 的 .lw-pill 上：top 6、right 6、约 120×28 ——
+       * 也就是下沿在 34px、右边缘占掉 126px。组件里任何从顶上就开始排的
        * 内容都会钻到它下面去，而它只在指针进窗口时现身，所以"截图上没有、
        * 用起来就挡"。
        *
-       * 便签的解法是顶上留一条 24px 的状态条（padding-right: 96px）：
-       * 正文从 40px 处起排，状态条自己把 96px 让出来。这里就把这两条量死。
+       * 便签的解法是顶上留一条 24px 的状态条（padding-right: 120px）：
+       * 正文从 40px 处起排，状态条自己把 120px 让出来。这里就把这两条量死。
        */
 
       // 与 widgetHost.css 的 .lw-pill 保持一致
       const PILL_BOTTOM = 34; // top 6 + 22px 按钮 + 2×2 内边距 + 2×1 描边
-      const PILL_WIDTH = 97; // 4×22 + 3×1 间距 + 2×2 内边距 + 2×1 描边
+      const PILL_WIDTH = 120; // 5×22 + 4×1 间距 + 2×2 内边距 + 2×1 描边
 
       const lines = [];
       const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);

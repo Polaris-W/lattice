@@ -66,6 +66,18 @@ Text, muted text, borders and the accent colour all flip together based on how b
 
 Under the hood the host page stacks three layers: a bitmap of the desktop (`PrintWindow(Progman)`, wallpaper and icons only, cropped to the window) blurred with CSS `filter: blur()`, an `rgba(tint, fill)` veil over it, and the widget iframe on top. The chrome pill keeps its own fixed neutral palette instead of following the backplate — it is platform UI, not your canvas.
 
+## When a widget breaks, you can see why
+
+![A missing file and a thrown exception](docs/screenshot-diagnostics.png)
+
+A blank card used to be the only symptom, and it never told you whether the entry file was missing or your first line threw. Now there are two different answers:
+
+- **A readable page instead of a blank body.** `File not found` / `Widget not installed` / `File could not be read`, with the widget id, the requested path, the folder that was searched, and what to fix. Sub-resource requests still get an empty body — handing HTML to `fetch("data.json")` only trades one confusing failure for another.
+- **An error card for anything your script throws.** The host page can't read errors inside a sandboxed iframe (opaque origin), so the protocol injects a small reporter into the HTML it serves. Errors come back with message, `file:line:column` and a collapsible stack. Script exceptions outrank missing images — the image usually failed *because* of the exception.
+- **Reload without restarting anything.** Fifth button in the chrome pill, plus `Reload` on the error card and on the canvas strip. Save the file, hit reload, see the change.
+
+The reporter is compressed to a single line before injection, because `event.lineno` counts lines in the document — a multi-line snippet would push every inline script's line numbers down (a real bug here: line 15 reported as `index.html:67:25`).
+
 ## The layout is genuinely remembered
 
 The platform does not persist through `localStorage`: on this machine WebView2 keeps it entirely in memory, and it is gone the moment the process exits. So state is written to files:

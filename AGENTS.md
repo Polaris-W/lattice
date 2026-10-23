@@ -56,6 +56,8 @@ src/
     manifest.ts           清单校验与归一化；Permission 类型与中文标签（唯一真源）
     registry.ts           组件发现：bundled（public/widgets）+ user（%APPDATA%）；入口地址解析
     bridge.ts             RPC 桥：方法表、权限闸门、平台内置方法
+    appearance.ts         底板外观模型：归一化、合成色、亮度阈值
+    diagnostics.ts        错误通道：认出组件报上来的错、去重指纹、挑主错误
 public/widgets/           官方组件包（未安装前只是"可发现"）
 examples/counter/         第三方组件的参考实现，拖进窗口即可安装
 scripts/
@@ -64,6 +66,7 @@ scripts/
 src-tauri/src/
   lib.rs                  命令注册、WebView2 启动参数、自定义协议注册
   protocol.rs             lattice-widget:// 静态文件服务（用户组件的 HTML/CSS/JS）
+  diagnostics.rs          组件坏了给人看的东西：兜底页 + 注入的错误上报脚本
   runner.rs               Placement → 真实窗口的增量同步、宿主页配置、事件回传
   desktop.rs              Win32：WorkerW 挂载、HWND_BOTTOM/TOPMOST、圆角裁剪、扩展样式、底层守卫
   state.rs                平台状态落盘（state.json，原子替换）
@@ -72,12 +75,13 @@ src-tauri/src/
 src-tauri/capabilities/
   default.json            主窗口权限
   widget.json             组件窗口权限（widget-* 标签）
+tests/                    纯逻辑与布局的浏览器断言（tests/*.html，跑在 dev server 上）
 docs/                     架构、组件规范、路线图与踩坑
 ```
 
 ---
 
-## 4. 六条不变量（改代码前必读）
+## 4. 七条不变量（改代码前必读）
 
 1. **零内置**。平台本身不含任何组件。随应用分发的包（`bundled`）必须显式"安装"（记进 `installedIds`）才可用；用户目录里的包（`user`）在磁盘上即已装。不要为了"体验好一点"让 bundled 自动可用，那会把扩展平台退化成桌面工具。
 
@@ -90,6 +94,8 @@ docs/                     架构、组件规范、路线图与踩坑
 5. **落盘不用 localStorage**。这台机器上 WebView2 把 localStorage 放内存里，进程一退就没了。所有持久化都走文件（`state.json` / `widget-data/*.json`），写入用"临时文件 + 原子替换"。
 
 6. **底板是平台的，组件只读令牌**。颜色 / 浓度 / 磨砂由宿主页画（`wallpaper.rs` 截壁纸 + `widgetHost.ts` 三层叠），组件一行代码都不参与。所以：`html, body` 必须保持透明；组件里**不许写死颜色**，字色、强调色、描边全部取 `--lattice-text` / `--lattice-accent` / `--lattice-border` —— 底板一变浅，平台会把它们整体翻一遍，写死的值不会跟着翻。出厂外观（`auto / 1 / 0`）下平台**不覆盖任何令牌**，默认样子必须跟没有这个功能时一像素不差。
+
+7. **错误通道不是桥**。`__lattice_diag`（组件报错）和 `__lattice`（桥请求/响应）是两条独立的消息，两个宿主都必须**先认错误、再认桥**，而且 `isWidgetErrorReport` 只认结构不认来源 —— 来源校验（`event.source === iframe.contentWindow`）在它之前做。混在一起的后果不是崩溃，是**组件能靠伪造一条"错误"骗到宿主的一次回话**，或者反过来每次加载都弹一张错误卡。改 `diagnostics.rs` 里的 `tag` 就要同步改 `runtime/diagnostics.ts` 的 `REPORT_TAG`，`tests/diagnostics.html` 钉住了这个字面量。
 
 ---
 
@@ -233,13 +239,18 @@ public/widgets/<id>/
 | --- | --- | --- |
 | **撤销授权不同步到已开窗口** | `Applied` 不含 permissions，宿主页的 `granted` 在 `boot()` 时固定 | 给 `Applied` 加 permissions 签名，变了就重载宿主页 |
 | **没有每实例配置** | 组件想加"字号 / 显示日期 / 每页几条"只能自己画设置 UI、自己存 | 清单声明 schema，属性面板按 schema 渲染表单 |
-| 组件加载失败没有兜底页 | 白屏，用户看不出是 404 还是组件自己的 JS 崩了 | 协议 404 时返回一页可读的错误 HTML；或宿主页监听 iframe 的 error |
+| **官方组件不上报错误** | 错误上报靠协议层往 HTML 里注入脚本，而内置组件的文件走应用自己的源（dev 是 vite、打包后是 tauri 资源协议），协议层碰不到。结果：官方组件抛错既不弹错误卡，也不出兜底页 —— 它们靠自己的测试兜着 | 要么让内置组件也走 `lattice-widget://`（会丢掉 vite 的静态服务），要么在 `scripts/widget-index.mjs` 里给每个内置包塞一段引用。别指望在宿主页解决：沙箱 iframe 的异常它读不到 |
+| **没有文件系统监听** | 改完组件文件必须手动重载（窗饰第 5 颗按钮 / 错误卡上的 `Reload`），不会自动刷新 | 监听组件目录，存盘即重载；注意别把"安装"那一刻的批量拷贝触发成十次重载 |
 | **底板透不出后面的窗口** | 磨砂层是"壁纸"，不是"压在组件后面的浏览器窗口"——系统的模糊半径写死，做不成滑杆，二者只能选一个 | 要么接受，要么换 `SetWindowCompositionAttribute` 并放弃连续滑杆（见 ROADMAP 被推翻的决定 7） |
 | **动态壁纸会滞后** | 截图有 2s 缓存，壁纸幻灯片 / Wallpaper Engine 最多晚 2 秒 | 换成壁纸变更通知（`SystemEvents`）后主动失效缓存 |
 | **画布预览只是近似** | 画布没有壁纸可采样，只用 `color-mix` 算"底色盖在主题底色上"的合成色，模糊完全看不出来 | 要看得准只能投放出去；别试图在画布里模拟模糊 |
 | 无托盘、无重启恢复运行态、无 PerMonitorV2 | 重启回到设计态（刻意的，先让用户看见画布） | 见 ROADMAP v0.2 / v0.3 |
 
 已修（别再改回去）：用户组件能加载了。`protocol.rs` 提供 `lattice-widget://`，`registry.ts` 按来源分流入口地址，`buildSpecs` 传绝对地址。**不要再让宿主页自己拼前缀**，也不要给协议放宽路径校验。
+
+已修（别再改回去）：组件加载失败不再是白屏。协议层失败时按请求类型分流 —— **文档导航**（`Sec-Fetch-Dest: document` / `iframe`）拿一页可读 HTML（`diagnostics.rs`），**子资源请求**拿空 body。这条分流不能省：组件 `fetch("x.json")` 拿到 HTML 会抛一个和真实原因无关的解析错误，比空 body 更难查。`wants_document()` 里那两个 `Sec-Fetch-*` 值是浏览器生成的，组件伪造不了。
+
+已修（别再改回去）：注入的上报脚本必须**压成一行**。`event.lineno` 数的是文档里的行，注入多占一行，组件里所有内联脚本的行号就整体错位（真撞到过：第 15 行抛的错报成 `index.html:67:25`）。`snippet()` 负责压行，`reporter_source_has_no_line_comments` 这条单测保证源码里没有 `//`（压成一行时它会把后面全注释掉）。
 
 已修（别再改回去）：卸载组件要连 `placements` 一起清。只删 `installedIds` 会留下一个指向不存在组件的幽灵实例 —— 计数多一个，画不出来也点不到，只能手改 `state.json` 才能收拾。
 
@@ -255,7 +266,7 @@ public/widgets/<id>/
 
 已修（别再改回去）：iframe 的沙箱必须带 `allow-forms`。少了这一位，浏览器会把表单提交整条拦掉 —— `submit` 事件不触发、控制台不报错，组件里"输入框 + 回车"这种最普通的写法静默失效（待办清单就这么空转了一整版：字打得进去，回车没反应，列表永远是"Nothing here yet"）。`tests/todo-add.html` 钉住了这件事：同一条提交路径，有 `allow-forms` 就写盘，没有就 0 次写盘。改沙箱属性时两处一起改：`src/widgetHost.ts`（桌面窗口）和 `src/platform/WidgetFrame.tsx`（画布）。
 
-已修（别再改回去）：右上角那块地方要让给窗饰。桌面窗口的功能图标浮在 `top: 6px; right: 6px`，大约 97×28，鼠标一进卡片就淡入，而且**真的能点**。组件把输入框、按钮、可点列表项摆在那儿，用户点下去点到的是"收回"。待办清单的解法是顶部先放一条 22px 标题栏（`padding-right: 96px`），窗饰正好落在标题栏右端。新组件照抄这条，或者整块内容避开右上角。
+已修（别再改回去）：右上角那块地方要让给窗饰。桌面窗口的功能图标浮在 `top: 6px; right: 6px`，大约 120×28（五颗按钮），鼠标一进卡片就淡入，而且**真的能点**。组件把输入框、按钮、可点列表项摆在那儿，用户点下去点到的是"收回"。待办清单的解法是顶部先放一条 22px 标题栏（`padding-right: 120px`），窗饰正好落在标题栏右端。新组件照抄这条，或者整块内容避开右上角。**给窗饰加按钮时，两个组件的 `padding-right` 和 `tests/note-layout.html` 的 `PILL_WIDTH` 要一起加**，否则正文又被压住。
 
 同一条规矩还有个"看不见"的版本：**正文从顶上就开始排的组件**（便签）不会"点错"，而是正在写的那一行被压住 —— 打字的人手不离键盘、指针一动不动，窗饰也就不动。所以那 24px 里别留空带，放一条真信息（便签放的是保存状态）。判据是正文起点 `y ≥ 34`（窗饰下沿），`tests/note-layout.html` 直接量这个数。
 
@@ -300,6 +311,7 @@ public/widgets/<id>/
 - 改了桥 / 组件存储：`tests/bridge-storage.html` 与 `tests/note-save.html` 是自检页（`npm run dev` 后打开 `http://localhost:1420/tests/bridge-storage.html`）。前者验证并发写不丢键、跨窗口读到最新值；后者验证便签的保存顺序与载入竞态。动过存储或便签保存逻辑，先看这两个页面是不是全绿。
 - 改了窗口行为：只能 `npm run tauri:dev` 实机看。注意**改 Rust 会重启应用，桌面上的组件会被收回**（`desktopMode` 不持久化），重新点一次「投放到桌面」即可，摆放和数据都在。
 - 改了协议 / 安装链路：拿 `examples/counter` 当样本 —— 拖进窗口 → 出现在「已安装」→ 放到画布 → 授权 `storage` → 点几下 → 看 `%APPDATA%\com.iron-tom.lattice\widget-data\demo.counter.json` 有没有写进去。协议本身只能在应用里探（浏览器态没有 Rust，`lattice-widget.localhost` 压根不解析）：预期真文件 200 + 正确 `Content-Type`，`..` / 大写 id / 不存在的组件全部 404。
-- **驱动真机 UI 用键盘，不要用合成鼠标**。`SendInput` 的键盘事件能进 WebView2（`SetForegroundWindow` 之后发 `Ctrl+R` 能刷新、往输入框打字能落盘），但 `mouse_event` 的点击进不去：悬停生效（tooltip 会弹）、click 不生效。另外 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=…` 对 Tauri 无效（Tauri 自己设了 additional args，覆盖掉了），端口不会起来，别指望用 CDP 连真机。要验 UI 就在 `npm run dev` 的浏览器态用 CDP，真机只用来看"实际长什么样"。
+- 改了错误通道 / 兜底页：`tests/diagnostics.html`（识别边界、两条通道不撞、去重指纹、主错误选择）。Rust 那边 14 条单测在 `diagnostics.rs` 里，但**这台机器跑不了 `cargo test`**（安全策略拦 `target/debug/deps` 下新写的 exe，见 ROADMAP 坑表）。绕法：写个只有一行的壳子 `#[path = "../src-tauri/src/diagnostics.rs"] mod diagnostics;`，然后 `rustc --test 壳子.rs -o 壳子.exe && ./壳子.exe` —— 断言还是模块里那一份，不复制。
+- **驱动真机 UI**：键盘事件能进 WebView2（`SetForegroundWindow` 之后发 `Ctrl+R` 能刷新、往输入框打字能落盘）；`mouse_event` 的点击**在宿主页的窗饰和错误卡上是生效的**（重载按钮就是这么验的），只是要先 `SetCursorPos` 再等 200–400ms —— 窗饰是 `body:hover` 才淡入的，移过去立刻点会点在还没出现的按钮上。往组件 iframe 里点则不可靠。另外 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=…` 对 Tauri 无效（Tauri 自己设了 additional args，覆盖掉了），端口不会起来，别指望用 CDP 连真机。要验 UI 逻辑就在 `npm run dev` 的浏览器态用 CDP，真机只用来看"实际长什么样"。
 - 抓真机窗口用 `PrintWindow(hwnd, hdc, 2 /*PW_RENDERFULLCONTENT*/)`，被别的窗口盖住也能抓到；配合 `ShowWindow(h, 4 /*SHOWNOACTIVATE*/)` 不抢用户焦点。
 - 提交信息用 `feat:` / `fix:` / `docs:` / `chore:` 前缀，一句话说清"改了什么"，不写"update file"。

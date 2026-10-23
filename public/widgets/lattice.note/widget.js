@@ -96,7 +96,7 @@
   function setStatus(text, kind) {
     statusEl.textContent = text;
     statusEl.className = kind ? "is-" + kind : "";
-    // 状态条只有 140px 宽（右边 96px 留给窗饰），长文案会被省略号截掉；
+    // 状态条只有 140px 宽（右边 120px 留给窗饰），长文案会被省略号截掉；
     // 截掉了才挂 title，没截就别挂 —— 不然"Saved"上也会凭空弹出个提示
     if (statusEl.scrollWidth > statusEl.clientWidth) statusEl.title = text;
     else statusEl.removeAttribute("title");

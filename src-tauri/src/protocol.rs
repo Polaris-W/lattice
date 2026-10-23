@@ -14,12 +14,17 @@
 //! 路径规则只有一条：**第一段是组件 id，剩下的全部是组件目录内的相对路径**。
 //! 任何想跳出自己目录的请求（`..`、盘符、反斜杠）一律 404 ——
 //! 一个组件只能读到自己的文件，读不到别的组件，更读不到用户的磁盘。
+//!
+//! 失败的时候不再回一个空 body：文档导航（`<iframe src>`）会拿到一页说明，
+//! 见 `diagnostics.rs`。子资源请求还是空 body —— 往一张图的位置塞 HTML
+//! 只会让组件拿到一个和真实原因无关的解析错误。
 
 use std::path::{Path, PathBuf};
 
 use tauri::http::{header, Request, Response, StatusCode};
 use tauri::{Runtime, UriSchemeContext};
 
+use crate::diagnostics::{self, Failure};
 use crate::widgets;
 
 /// 协议名。前端 `registry.ts` 里有一份同名常量，改这里要一起改。
@@ -29,29 +34,58 @@ pub fn handle<R: Runtime>(
     ctx: UriSchemeContext<'_, R>,
     request: Request<Vec<u8>>,
 ) -> Response<Vec<u8>> {
-    let method = request.method().as_str();
+    let method = request.method().as_str().to_owned();
+    /*
+     * 失败时给不给一页说明，取决于这次请求是不是"文档导航"。
+     *
+     * 组件 fetch 一张不存在的图、一个不存在的 json 时，绝不能收到 HTML：
+     * `await res.json()` 会抛一个和真实原因毫无关系的语法错误，
+     * 排查起来比空 body 还难。所以先判断，再决定失败的形状。
+     */
+    let document = wants_document(&request);
+
     if method != "GET" && method != "HEAD" {
-        return empty(StatusCode::METHOD_NOT_ALLOWED);
+        return failure_response(Failure::BadMethod, document, "", "", None);
     }
 
-    let Some((id, relative)) = split_path(request.uri().path()) else {
-        return empty(StatusCode::NOT_FOUND);
+    let path = request.uri().path().to_owned();
+    let Some((id, relative)) = split_path(&path) else {
+        return failure_response(Failure::BadPath, document, "", &path, None);
+    };
+    // 组件目录里用反斜杠的情况不存在，统一成正斜杠再给人看
+    let requested = relative.to_string_lossy().replace('\\', "/");
+
+    let root = match widgets::user_widgets_dir(ctx.app_handle()) {
+        Ok(dir) => dir,
+        Err(_) => return failure_response(Failure::NoStorage, document, &id, &requested, None),
     };
 
-    let Ok(root) = widgets::user_widgets_dir(ctx.app_handle()) else {
-        return empty(StatusCode::INTERNAL_SERVER_ERROR);
-    };
-
-    let Some(file) = resolve(&root, &id, &relative) else {
-        return empty(StatusCode::NOT_FOUND);
+    let file = match resolve(&root, &id, &relative) {
+        Ok(file) => file,
+        Err(failure) => {
+            return failure_response(failure, document, &id, &requested, Some(&root))
+        }
     };
 
     let Ok(bytes) = std::fs::read(&file) else {
-        return empty(StatusCode::NOT_FOUND);
+        return failure_response(Failure::Unreadable, document, &id, &requested, Some(&root));
     };
-    let length = bytes.len();
+
+    // 组件文档里塞一段错误上报脚本 —— 沙箱 iframe 的错宿主看不见，只能这么办
+    let mut body = bytes;
+    if mime_of(&file).starts_with("text/html") {
+        let injected = std::str::from_utf8(&body)
+            .ok()
+            .map(|text| diagnostics::inject_reporter(text).into_bytes());
+        if let Some(injected) = injected {
+            body = injected;
+        }
+        // 不是合法 UTF-8 的 HTML 原样发：lossy 转换会把字节改掉
+    }
+
+    let length = body.len();
     // HEAD 只要头，不必把文件读出来再丢掉
-    let body = if method == "HEAD" { Vec::new() } else { bytes };
+    let body = if method == "HEAD" { Vec::new() } else { body };
 
     Response::builder()
         .status(StatusCode::OK)
@@ -64,6 +98,55 @@ pub fn handle<R: Runtime>(
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .header("X-Content-Type-Options", "nosniff")
         .body(body)
+        .unwrap_or_else(|_| empty(StatusCode::INTERNAL_SERVER_ERROR))
+}
+
+/// 这次请求是不是要把结果当文档渲染（而不是组件代码在取资源）。
+///
+/// `Sec-Fetch-*` 由浏览器生成，属于禁止脚本修改的请求头，所以可以信它。
+/// 老一点的 WebView 不发这组头，退回看 `Accept`。
+fn wants_document(request: &Request<Vec<u8>>) -> bool {
+    if let Some(dest) = request
+        .headers()
+        .get("sec-fetch-dest")
+        .and_then(|value| value.to_str().ok())
+    {
+        // 顶层导航是 document，`<iframe src>` 是 iframe
+        return matches!(dest, "document" | "iframe" | "frame");
+    }
+    request
+        .headers()
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|accept| accept.contains("text/html"))
+}
+
+/// 失败时的响应：导航给一页说明，其余给空 body。
+fn failure_response(
+    failure: Failure,
+    document: bool,
+    id: &str,
+    relative: &str,
+    root: Option<&Path>,
+) -> Response<Vec<u8>> {
+    let status = StatusCode::from_u16(failure.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    if !document {
+        return empty(status);
+    }
+
+    let mut builder = Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        // 说明页随状态变，缓存下来只会让人看到过期的原因
+        .header(header::CACHE_CONTROL, "no-store")
+        .header("X-Content-Type-Options", "nosniff");
+    if failure == Failure::BadMethod {
+        builder = builder.header(header::ALLOW, "GET, HEAD");
+    }
+
+    // 故意不发 CORS 头：这一页只给导航看。万一被组件 fetch 到了也读不出内容
+    builder
+        .body(diagnostics::error_document(failure, id, relative, root).into_bytes())
         .unwrap_or_else(|_| empty(StatusCode::INTERNAL_SERVER_ERROR))
 }
 
@@ -120,14 +203,27 @@ fn is_safe_id(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-')
 }
 
-/// 把相对路径拼到组件目录下，并确认拼完还在目录里
-fn resolve(root: &Path, id: &str, relative: &Path) -> Option<PathBuf> {
-    let dir = root.join(id).canonicalize().ok()?;
-    let candidate = dir.join(relative).canonicalize().ok()?;
-    if !candidate.starts_with(&dir) || !candidate.is_file() {
-        return None;
+/// 把相对路径拼到组件目录下，并确认拼完还在目录里。
+///
+/// 失败要分类，不能一律 404 —— 兜底页要告诉用户到底是"组件没装"
+/// 还是"目录在但文件不在"，这两件事的修法完全不同。
+fn resolve(root: &Path, id: &str, relative: &Path) -> Result<PathBuf, Failure> {
+    let dir = root
+        .join(id)
+        .canonicalize()
+        .map_err(|_| Failure::MissingWidget)?;
+    let candidate = dir
+        .join(relative)
+        .canonicalize()
+        .map_err(|_| Failure::MissingFile)?;
+    // 符号链接能绕过上面的分段检查，canonicalize 之后再比一次
+    if !candidate.starts_with(&dir) {
+        return Err(Failure::BadPath);
     }
-    Some(candidate)
+    if !candidate.is_file() {
+        return Err(Failure::MissingFile);
+    }
+    Ok(candidate)
 }
 
 fn mime_of(path: &Path) -> &'static str {

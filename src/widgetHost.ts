@@ -37,6 +37,13 @@ import {
   isBridgeRequest,
   readThemeTokens,
 } from "./runtime/bridge";
+import {
+  ERROR_KIND_LABEL,
+  errorSignature,
+  isWidgetErrorReport,
+  pickPrimary,
+  type WidgetErrorReport,
+} from "./runtime/diagnostics";
 import type { Permission } from "./runtime/manifest";
 
 interface HostConfig {
@@ -75,6 +82,10 @@ const ICON = {
   </svg>`,
   close: `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
     <path d="M4.6 4.6l6.8 6.8M11.4 4.6l-6.8 6.8"/>
+  </svg>`,
+  reload: `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M13 8a5 5 0 1 1-1.7-3.8"/>
+    <path d="M13.2 2.4v3.1h-3.1"/>
   </svg>`,
 };
 
@@ -417,6 +428,140 @@ function clampAnchor(x: number, y: number, w: number, screens: ScreenBox[]): { x
   return { x: x + (targetX - anchorX), y: y + (targetY - anchorY) };
 }
 
+/* ------------------------------------------------------------------ *
+ * 组件出错了怎么办
+ *
+ * 组件在沙箱 iframe 里，它的异常宿主看不见（不透明源）。协议层在发组件
+ * HTML 时注了一段脚本，把 `error` / `unhandledrejection` 转成一条
+ * postMessage 送过来 —— 见 src/runtime/diagnostics.ts。
+ *
+ * 拿到之后不整屏盖住组件：卡片贴着底边，上面还能看见组件坏成什么样。
+ * 这是"排查"和"使用"之间唯一的折中 —— 全遮住就不知道是哪一块炸的，
+ * 不显示就还是白屏。
+ * ------------------------------------------------------------------ */
+
+/** 组件 iframe。`reloadWidget` 要够得着它，所以在模块作用域里留一份 */
+let widgetFrame: HTMLIFrameElement | null = null;
+let errorSheet: HTMLDivElement | null = null;
+/** 报上来的错按到达顺序留着，显示哪一条由 `pickPrimary` 挑 */
+let errorReports: WidgetErrorReport[] = [];
+
+/** 一次最多记这么多条。再多就说明组件在循环里抛，列表救不了 */
+const MAX_REPORTS = 6;
+
+function clearWidgetError() {
+  errorReports = [];
+  errorSheet?.remove();
+  errorSheet = null;
+}
+
+/**
+ * 重新加载组件。
+ *
+ * 为什么是给 `src` 加一个时间戳，而不是 `contentWindow.location.reload()`：
+ * 跨源（沙箱把源变成不透明）读不到 `contentWindow.location`，会直接抛。
+ * 而把同样的 `src` 再赋一次不保证触发导航，加个每次不同的查询串最稳 ——
+ * 协议层按 path 解析（`split_path` 只看 `uri().path()`），查询串会被忽略。
+ */
+function reloadWidget() {
+  const frame = widgetFrame;
+  if (!frame) return;
+  clearWidgetError();
+  const url = new URL(frame.src, window.location.href);
+  url.searchParams.set("__lattice_reload", String(Date.now()));
+  frame.src = url.href;
+}
+
+/** 收一条错误：去重、限量，然后重画 */
+function showWidgetError(report: WidgetErrorReport) {
+  // 组件可能在渲染循环里抛错，一秒六十条。同一个错只记一次
+  const signature = errorSignature(report);
+  if (errorReports.some((item) => errorSignature(item) === signature)) return;
+  errorReports.push(report);
+  if (errorReports.length > MAX_REPORTS) errorReports.shift();
+  paintWidgetError();
+}
+
+function paintWidgetError() {
+  const primary = pickPrimary(errorReports);
+  if (!primary) return;
+
+  // 主错误和条数都没变就别重建 DOM：卡片会跟着抖，按钮也点不中
+  const key = `${errorSignature(primary)}#${errorReports.length}`;
+  if (errorSheet?.dataset.key === key) return;
+
+  if (!errorSheet) {
+    errorSheet = document.createElement("div");
+    errorSheet.className = "lw-error";
+    errorSheet.setAttribute("role", "alert");
+    document.body.appendChild(errorSheet);
+  }
+  errorSheet.dataset.key = key;
+  // 错误消息是组件的字符串，永远走 textContent，别拼 innerHTML
+  errorSheet.replaceChildren();
+
+  const head = document.createElement("div");
+  head.className = "lw-error-head";
+
+  const kind = document.createElement("span");
+  kind.className = "lw-error-kind";
+  kind.textContent = ERROR_KIND_LABEL[primary.kind];
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "lw-error-close";
+  close.textContent = "×";
+  close.title = "Dismiss";
+  close.setAttribute("aria-label", "Dismiss error");
+  close.addEventListener("click", clearWidgetError);
+
+  head.append(kind, close);
+
+  // 还有别的错时给个计数，点开能看到全部 —— 不占地方，也不会让人以为只有这一条
+  const rest = errorReports.filter((item) => item !== primary);
+  if (rest.length > 0) {
+    const more = document.createElement("span");
+    more.className = "lw-error-more";
+    more.textContent = `+${rest.length}`;
+    more.title = rest.map((item) => `${ERROR_KIND_LABEL[item.kind]}: ${item.message}`).join("\n");
+    head.insertBefore(more, close);
+  }
+
+  const message = document.createElement("p");
+  message.className = "lw-error-message";
+  message.textContent = primary.message;
+
+  errorSheet.append(head, message);
+
+  if (primary.where) {
+    const where = document.createElement("p");
+    where.className = "lw-error-where";
+    where.textContent = primary.where;
+    errorSheet.append(where);
+  }
+
+  if (primary.stack) {
+    const details = document.createElement("details");
+    details.className = "lw-error-details";
+    const summary = document.createElement("summary");
+    summary.textContent = "Stack trace";
+    const pre = document.createElement("pre");
+    pre.textContent = primary.stack;
+    details.append(summary, pre);
+    errorSheet.append(details);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "lw-error-actions";
+  const reload = document.createElement("button");
+  reload.type = "button";
+  reload.className = "lw-error-action";
+  reload.textContent = "Reload";
+  reload.addEventListener("click", reloadWidget);
+  actions.append(reload);
+  errorSheet.append(actions);
+}
+
 function buildChrome(config: HostConfig) {
   const chrome = document.createElement("div");
   chrome.className = "lw-chrome";
@@ -425,6 +570,7 @@ function buildChrome(config: HostConfig) {
       <button type="button" class="lw-btn lw-grip" data-act="drag" title="Drag to move" aria-label="Drag to move">${ICON.grip}</button>
       <button type="button" class="lw-btn" data-act="layer" aria-label="Toggle layer"></button>
       <button type="button" class="lw-btn" data-act="pin" aria-label="Pin position"></button>
+      <button type="button" class="lw-btn" data-act="reload" title="Reload widget" aria-label="Reload widget">${ICON.reload}</button>
       <button type="button" class="lw-btn" data-act="close" title="Close widget" aria-label="Close widget">${ICON.close}</button>
     </div>
     ${["n", "s", "w", "e", "nw", "ne", "sw", "se"]
@@ -435,6 +581,7 @@ function buildChrome(config: HostConfig) {
   const grip = chrome.querySelector<HTMLButtonElement>('[data-act="drag"]')!;
   const layerBtn = chrome.querySelector<HTMLButtonElement>('[data-act="layer"]')!;
   const pinBtn = chrome.querySelector<HTMLButtonElement>('[data-act="pin"]')!;
+  const reloadBtn = chrome.querySelector<HTMLButtonElement>('[data-act="reload"]')!;
   const closeBtn = chrome.querySelector<HTMLButtonElement>('[data-act="close"]')!;
 
   let pinned = config.pinned;
@@ -567,7 +714,7 @@ function buildChrome(config: HostConfig) {
     });
   });
 
-  // ---- 层级 / 别针 / 收回 ----
+  // ---- 层级 / 别针 / 重载 / 收回 ----
   layerBtn.addEventListener("click", () => {
     layer = layer === "top" ? "desktop" : "top";
     paint();
@@ -579,6 +726,14 @@ function buildChrome(config: HostConfig) {
     paint();
     void invoke("widget_set_pinned", { pinned });
   });
+
+  /*
+   * 重载只给按钮，不绑快捷键。
+   *
+   * 组件 iframe 铺满整个窗口，键盘焦点几乎总在它里面 —— 宿主页收不到
+   * keydown，绑了也按不着。真要做快捷键得由组件自己转告，那是另一件事。
+   */
+  reloadBtn.addEventListener("click", reloadWidget);
 
   closeBtn.addEventListener("click", () => {
     // 先让窗口自己消失，再走 IPC 去真正销毁。
@@ -657,6 +812,7 @@ async function boot() {
   const absolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(config.entry);
   iframe.src = absolute ? config.entry : base + config.entry;
   document.body.appendChild(iframe);
+  widgetFrame = iframe;
 
   buildChrome(config);
 
@@ -667,6 +823,17 @@ async function boot() {
     if (event.source !== iframe.contentWindow) return;
 
     const data = event.data as Record<string, unknown> | null;
+
+    /*
+     * 组件脚本自己抛的错，由协议层注进去的那段脚本转过来。
+     * 它不带 `__lattice` 标记，所以必须排在前面的桥分支之前认掉 ——
+     * 掉进桥分支只会被 `isBridgeRequest` 丢掉，错误就静默了。
+     */
+    if (isWidgetErrorReport(data)) {
+      showWidgetError(data);
+      return;
+    }
+
     if (data && data[BRIDGE_TAG] === 1 && data.type === "ready") {
       post({ [BRIDGE_TAG]: 1, type: "theme", payload: readThemeTokens() });
       return;

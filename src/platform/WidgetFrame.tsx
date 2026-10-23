@@ -19,9 +19,19 @@ import {
 } from "../runtime/bridge";
 import { PERMISSION_LABELS, type Permission } from "../runtime/manifest";
 import { normalizeAppearance } from "../runtime/appearance";
+import {
+  ERROR_KIND_LABEL,
+  errorSignature,
+  isWidgetErrorReport,
+  pickPrimary,
+  type WidgetErrorReport,
+} from "../runtime/diagnostics";
 import { isTauri, type WidgetRecord } from "../runtime/registry";
 import { WidgetIconMark } from "./icons";
 import { snap, useLattice, type Placement } from "./store";
+
+/** 画布上最多记几条。这里只显示一条，其余靠 +N 提示，不需要留太多 */
+const MAX_CANVAS_ERRORS = 6;
 
 interface WidgetFrameProps {
   record: WidgetRecord;
@@ -55,6 +65,13 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
     setReloadKey((value) => value + 1);
   }, [grantSignature]);
 
+  /*
+   * 组件报上来的错。换一份 iframe（授权变了、手动重载）就清空 ——
+   * 不清的话旧错误会挂在新内容上面，看着像还没修好。
+   */
+  const [errors, setErrors] = useState<WidgetErrorReport[]>([]);
+  useEffect(() => setErrors([]), [reloadKey]);
+
   // 权限会在运行期被用户改动，用 ref 让监听器始终读到最新值
   const grantedRef = useRef<ReadonlySet<Permission>>(new Set());
   grantedRef.current = new Set(grants ?? []);
@@ -70,6 +87,22 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
       if (!frame || event.source !== frame.contentWindow) return;
 
       const data = event.data as Record<string, unknown> | null;
+
+      /*
+       * 组件自己抛的错。桌面窗口那边由协议层注入的脚本报上来，
+       * 画布这一份 iframe 走的是同一个入口地址，所以同样会报 ——
+       * 以前这里没有读者，错误就静默丢了。
+       */
+      if (isWidgetErrorReport(data)) {
+        const signature = errorSignature(data);
+        setErrors((prev) =>
+          prev.some((item) => errorSignature(item) === signature)
+            ? prev
+            : [...prev, data].slice(-MAX_CANVAS_ERRORS),
+        );
+        return;
+      }
+
       if (data && data[BRIDGE_TAG] === 1 && data.type === "ready") {
         post({ [BRIDGE_TAG]: 1, type: "theme", payload: readThemeTokens() });
         return;
@@ -213,6 +246,9 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
       ? undefined
       : `color-mix(in srgb, ${appearance.tint} ${Math.round(appearance.alpha * 100)}%, var(--lattice-surface))`;
 
+  const primaryError = pickPrimary(errors);
+  const otherErrors = primaryError ? errors.filter((item) => item !== primaryError) : [];
+
   return (
     <div
       className={`lattice-widget${selected ? " is-selected" : ""}${
@@ -257,6 +293,38 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
           <span className="lattice-pending-title">Entry URL is empty</span>
           <p className="lattice-hint">The manifest entry could not be resolved — check manifest.json.</p>
           <code className="lattice-mono lattice-path">{record.dir}</code>
+        </div>
+      )}
+
+      {primaryError && (
+        /*
+         * 绝对定位，不挤 iframe：组件该占多大还是多大，报错不该改变它自己的布局。
+         * 画布上只给一行 —— 完整的堆栈在桌面窗口那张卡里，这里够判断"是不是它炸了"。
+         */
+        <div
+          className="lattice-widget-error"
+          title={[
+            `${ERROR_KIND_LABEL[primaryError.kind]}: ${primaryError.message}`,
+            primaryError.where,
+            ...otherErrors.map((item) => `${ERROR_KIND_LABEL[item.kind]}: ${item.message}`),
+          ]
+            .filter(Boolean)
+            .join("\n")}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <span className="lattice-widget-error-kind">{ERROR_KIND_LABEL[primaryError.kind]}</span>
+          <span className="lattice-widget-error-message">{primaryError.message}</span>
+          {otherErrors.length > 0 && (
+            <span className="lattice-widget-error-more">+{otherErrors.length}</span>
+          )}
+          <button
+            type="button"
+            className="lattice-widget-error-reload"
+            title="Reload widget"
+            onClick={() => setReloadKey((value) => value + 1)}
+          >
+            Reload
+          </button>
         </div>
       )}
 

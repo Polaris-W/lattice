@@ -10,6 +10,7 @@
 //! 主窗口最小化退场，组件就留在桌面上。
 
 pub mod desktop;
+pub mod diagnostics;
 pub mod protocol;
 pub mod runner;
 pub mod state;
