@@ -18,6 +18,7 @@ import {
   type BridgeResponseMessage,
 } from "../runtime/bridge";
 import { PERMISSION_LABELS, type Permission } from "../runtime/manifest";
+import { normalizeAppearance } from "../runtime/appearance";
 import { isTauri, type WidgetRecord } from "../runtime/registry";
 import { WidgetIconMark } from "./icons";
 import { snap, useLattice, type Placement } from "./store";
@@ -198,6 +199,20 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
     (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
   };
 
+  /*
+   * 画布上的底板预览。
+   *
+   * 画布没有壁纸可采样，所以只能算"底色盖在主题底色上"的合成色 —— 模糊和
+   * 壁纸纹理都欠奉，只是让拖滑杆时能立刻看到颜色变了，别对着一个不动的卡片调。
+   * 用 color-mix 而不是在 JS 里算：主题一换，CSS 自己就跟着重算，没有读不到
+   * 新值的时序问题；浏览器不支持这条声明时会被丢掉，退回原来的主题底色。
+   */
+  const appearance = normalizeAppearance(placement.appearance ?? record.manifest.appearance);
+  const previewBackdrop =
+    appearance.tint === "auto"
+      ? undefined
+      : `color-mix(in srgb, ${appearance.tint} ${Math.round(appearance.alpha * 100)}%, var(--lattice-surface))`;
+
   return (
     <div
       className={`lattice-widget${selected ? " is-selected" : ""}${
@@ -208,6 +223,7 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
         top: placement.y,
         width: placement.w,
         height: placement.h,
+        background: previewBackdrop,
       }}
       onPointerDown={() => select(placement.instanceId)}
     >

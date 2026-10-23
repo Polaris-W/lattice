@@ -13,6 +13,7 @@ pub mod desktop;
 pub mod protocol;
 pub mod runner;
 pub mod state;
+pub mod wallpaper;
 pub mod widget_store;
 pub mod widgets;
 
@@ -59,6 +60,8 @@ pub fn run() {
             runner::widget_set_layer,
             runner::widget_close,
             runner::widget_set_theme,
+            runner::widget_set_appearance,
+            wallpaper::widget_wallpaper,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Lattice");

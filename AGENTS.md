@@ -77,7 +77,7 @@ docs/                     架构、组件规范、路线图与踩坑
 
 ---
 
-## 4. 五条不变量（改代码前必读）
+## 4. 六条不变量（改代码前必读）
 
 1. **零内置**。平台本身不含任何组件。随应用分发的包（`bundled`）必须显式"安装"（记进 `installedIds`）才可用；用户目录里的包（`user`）在磁盘上即已装。不要为了"体验好一点"让 bundled 自动可用，那会把扩展平台退化成桌面工具。
 
@@ -88,6 +88,8 @@ docs/                     架构、组件规范、路线图与踩坑
 4. **权限按 `widgetId` 授予，不按实例**。语义是"你信不信任这段代码"，跟桌面上摆了几份无关。
 
 5. **落盘不用 localStorage**。这台机器上 WebView2 把 localStorage 放内存里，进程一退就没了。所有持久化都走文件（`state.json` / `widget-data/*.json`），写入用"临时文件 + 原子替换"。
+
+6. **底板是平台的，组件只读令牌**。颜色 / 浓度 / 磨砂由宿主页画（`wallpaper.rs` 截壁纸 + `widgetHost.ts` 三层叠），组件一行代码都不参与。所以：`html, body` 必须保持透明；组件里**不许写死颜色**，字色、强调色、描边全部取 `--lattice-text` / `--lattice-accent` / `--lattice-border` —— 底板一变浅，平台会把它们整体翻一遍，写死的值不会跟着翻。出厂外观（`auto / 1 / 0`）下平台**不覆盖任何令牌**，默认样子必须跟没有这个功能时一像素不差。
 
 ---
 
@@ -117,6 +119,8 @@ App.tsx  placements ──► buildSpecs() ──► invoke("sync_widget_windows
 - **不要维护 `Mutex<窗口表>`**。窗口存在性交给 `app.get_webview_window`；Runner 只存极轻的 `HostConfig`，且必须在 `build()` **之前**写入，宿主页随时来问都能立刻拿到。
 - **同步是增量的**。`Runner::diff` 只写变化的维度（pos / size / layer）。无条件 `set_position` 会把用户正在拖的窗口拽回去。
 - **两套坐标**。`placement.x/y` 是画布坐标，`desktopRects[instanceId]` 是屏幕坐标。投放时优先用后者。主窗口最小化后 `screenX/screenY` 是 `-32000` 这类哨兵值，`desktop.ts` 里有缓存兜底，别删。
+- **宿主页是三层，不是一层**。`canvas`（壁纸，`filter: blur`）在 z=0，`veil`（底色 rgba）在 z=1，`iframe`（组件）在 z=2，内描边在 `body::after`（z=5）。往宿主页加任何全屏元素之前先想清楚它该落在哪一层 —— 内描边当初就因为画在 `body` 上被壁纸层盖掉了。
+- **外观变更走 `Appearance` 这一个字段**，随 `sync_widget_windows` 一起下发；`Runner::set_appearance` 只在真的变了才 `emit`，所以拖滑杆 120ms 一次全量同步不会把组件刷成幻灯片。别另开一条"设置外观"的高频通道。
 - **入口地址是算好的绝对地址，下游不要再拼**。`registry.ts::resolveEntryUrl` 负责分流：`bundled` → `<应用源>/widgets/<id>/<entry>`，`user` → `http://lattice-widget.localhost/<id>/<entry>`。`buildSpecs` 原样塞进 spec，宿主页拿到什么就 `iframe.src` 什么。以前宿主页自己 `base + entry`，接上用户组件后必然拼错。
 - **组件存储是"落盘 + 广播"两件事**。Rust 每次写完 `widget_store_*` 都 `emit("lattice:widget-store")`，两个宿主（`WidgetFrame.tsx` / `widgetHost.ts`）把它转成 `{ type: "store-changed", payload: { key } }` 推给 iframe，组件收到重读。少了广播，画布和桌面的两个实例就各持一份内存列表，谁后写谁把对方的新增整块抹掉 —— 用户看到的是"加了几条，回头只剩一条"。新增写存储的组件必须处理这条推送（写法见 WIDGET_SPEC）。
 
@@ -230,6 +234,9 @@ public/widgets/<id>/
 | **撤销授权不同步到已开窗口** | `Applied` 不含 permissions，宿主页的 `granted` 在 `boot()` 时固定 | 给 `Applied` 加 permissions 签名，变了就重载宿主页 |
 | **没有每实例配置** | 组件想加"字号 / 显示日期 / 每页几条"只能自己画设置 UI、自己存 | 清单声明 schema，属性面板按 schema 渲染表单 |
 | 组件加载失败没有兜底页 | 白屏，用户看不出是 404 还是组件自己的 JS 崩了 | 协议 404 时返回一页可读的错误 HTML；或宿主页监听 iframe 的 error |
+| **底板透不出后面的窗口** | 磨砂层是"壁纸"，不是"压在组件后面的浏览器窗口"——系统的模糊半径写死，做不成滑杆，二者只能选一个 | 要么接受，要么换 `SetWindowCompositionAttribute` 并放弃连续滑杆（见 ROADMAP 被推翻的决定 7） |
+| **动态壁纸会滞后** | 截图有 2s 缓存，壁纸幻灯片 / Wallpaper Engine 最多晚 2 秒 | 换成壁纸变更通知（`SystemEvents`）后主动失效缓存 |
+| **画布预览只是近似** | 画布没有壁纸可采样，只用 `color-mix` 算"底色盖在主题底色上"的合成色，模糊完全看不出来 | 要看得准只能投放出去；别试图在画布里模拟模糊 |
 | 无托盘、无重启恢复运行态、无 PerMonitorV2 | 重启回到设计态（刻意的，先让用户看见画布） | 见 ROADMAP v0.2 / v0.3 |
 
 已修（别再改回去）：用户组件能加载了。`protocol.rs` 提供 `lattice-widget://`，`registry.ts` 按来源分流入口地址，`buildSpecs` 传绝对地址。**不要再让宿主页自己拼前缀**，也不要给协议放宽路径校验。

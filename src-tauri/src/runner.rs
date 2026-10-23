@@ -59,6 +59,36 @@ pub struct WidgetWindowSpec {
     /// 平台当前解析出来的明暗，桌面窗口据此上色，
     /// 不跟随系统 —— 否则用户把平台切成深色，桌面卡片还是白的
     pub theme: String,
+    /// 底板外观。老前端不带这个字段时按默认值（跟随主题、不透明、不模糊）走
+    #[serde(default)]
+    pub appearance: Appearance,
+}
+
+/// 底板外观。三个值一起决定卡片长什么样：
+///
+/// - `tint`：`"auto"` 表示跟随明暗主题，否则是 `#rrggbb`
+/// - `alpha`：底色的浓度，0 = 只剩磨砂，1 = 纯色实心
+/// - `blur`：磨砂半径（逻辑像素），0 = 不磨砂
+///
+/// 注意这里不是"窗口透明度"：窗口始终不透明，透出来的其实是宿主页自己画的
+/// 那块模糊壁纸（见 wallpaper.rs）。所以 alpha 调到 0 看到的是"糊掉的桌面"，
+/// 而不是"压在后面的窗口"。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Appearance {
+    pub tint: String,
+    pub alpha: f64,
+    pub blur: f64,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            tint: "auto".to_string(),
+            alpha: 1.0,
+            blur: 0.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -75,6 +105,8 @@ pub struct HostConfig {
     pub layer: WindowLayer,
     pub click_through: bool,
     pub interactive: bool,
+    /// 底板外观，宿主页拿它上色与糊背景
+    pub appearance: Appearance,
 }
 
 #[derive(Clone, Serialize)]
@@ -176,6 +208,20 @@ impl Runner {
         }
     }
 
+    /// 换外观，返回 true 表示确实变了（没变就别再发一遍事件）
+    fn set_appearance(&self, label: &str, appearance: Appearance) -> bool {
+        if let Ok(mut map) = self.configs.lock() {
+            if let Some(config) = map.get_mut(label) {
+                if config.appearance == appearance {
+                    return false;
+                }
+                config.appearance = appearance;
+                return true;
+            }
+        }
+        false
+    }
+
     /// 比对并记录：返回 None 表示这一轮什么都不用做。
     ///
     /// 只写变化的部分不只是省开销 —— 用户在桌面上拖动组件时，
@@ -235,6 +281,7 @@ fn create(app: &AppHandle, spec: &WidgetWindowSpec, runner: &Runner) -> Result<(
             layer: spec.layer,
             click_through: spec.click_through,
             interactive: spec.interactive,
+            appearance: spec.appearance.clone(),
         },
     );
 
@@ -332,6 +379,12 @@ pub async fn sync_widget_windows(
 
     for spec in specs {
         let label = label_for(&spec.instance_id);
+        // 外观不进 diff（那个结构只管 Win32 的 pos / size / layer）：
+        // 单独记一份，变了才 emit —— 拖滑杆时每 120ms 一次全量同步，
+        // 无条件推的话宿主页每 120ms 重算一遍壁纸层
+        if runner.set_appearance(&label, spec.appearance.clone()) {
+            let _ = app.emit_to(&label, "lattice:appearance", &spec.appearance);
+        }
         match app.get_webview_window(&label) {
             Some(window) => {
                 let next = Applied {
@@ -541,5 +594,22 @@ pub async fn widget_close(
 #[tauri::command]
 pub fn widget_set_theme(app: AppHandle, theme: String) -> Result<(), String> {
     let _ = app.emit("lattice:theme", theme);
+    Ok(())
+}
+
+/// 属性面板拖滑杆时走的轻量通道：只推一个外观对象，不重建窗口、不动位置。
+///
+/// 组件可能只在画布上、没有桌面窗口，这时候 emit 会失败，忽略即可 ——
+/// 面板改的是 store，下次投放时 `sync_widget_windows` 会把它带上。
+#[tauri::command]
+pub async fn widget_set_appearance(
+    app: AppHandle,
+    runner: State<'_, Runner>,
+    instance_id: String,
+    appearance: Appearance,
+) -> Result<(), String> {
+    let label = label_for(&instance_id);
+    runner.set_appearance(&label, appearance.clone());
+    let _ = app.emit_to(&label, "lattice:appearance", appearance);
     Ok(())
 }

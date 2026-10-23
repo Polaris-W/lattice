@@ -7,6 +7,15 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import {
+  MAX_BLUR,
+  hexFromRgb,
+  isPlainAppearance,
+  normalizeAppearance,
+  themeSurfaceRgb,
+  tintRgb,
+  type Appearance,
+} from "../runtime/appearance";
 import { PERMISSION_LABELS, type Permission } from "../runtime/manifest";
 import type { WidgetRecord } from "../runtime/registry";
 import { PanelGlyph, WidgetIconMark } from "./icons";
@@ -29,6 +38,82 @@ function clampSize(raw: string, min: number, fallback: number): number {
   return Math.max(min, Math.min(MAX_SIZE, Math.round(value)));
 }
 
+interface SliderRowProps {
+  /** 左侧那一列，越短越好，面板只有两百多像素宽 */
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  /** 数值框显示几位小数，0 表示取整 */
+  decimals?: number;
+  onChange: (value: number) => void;
+  ariaLabel: string;
+}
+
+/**
+ * 一条滑杆 + 一个数字框。
+ *
+ * 数字框跟尺寸框一样是"草稿 + 提交"：拖滑杆求手感，输数字求准确，
+ * 但边打字边提交的话，输入 "0." 的那一瞬间值就被夹成 0 了。
+ */
+function SliderRow({
+  label,
+  value,
+  min,
+  max,
+  step,
+  decimals = 0,
+  onChange,
+  ariaLabel,
+}: SliderRowProps) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = decimals > 0 ? value.toFixed(decimals) : String(Math.round(value));
+
+  const commit = () => {
+    if (draft === null) return;
+    const parsed = Number(draft);
+    setDraft(null);
+    if (!Number.isFinite(parsed)) return;
+    onChange(Math.min(max, Math.max(min, parsed)));
+  };
+
+  return (
+    <div className="lattice-slider-row">
+      <span className="lattice-slider-key">{label}</span>
+      <input
+        type="range"
+        className="lattice-slider"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        aria-label={ariaLabel}
+      />
+      <input
+        type="number"
+        className="lattice-slider-num"
+        inputMode="decimal"
+        min={min}
+        max={max}
+        step={step}
+        value={draft ?? shown}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Escape") {
+            setDraft(null);
+            event.currentTarget.blur();
+          }
+        }}
+        aria-label={`${ariaLabel} value`}
+      />
+    </div>
+  );
+}
+
 export function InspectorPanel({ records, open, onToggle }: InspectorPanelProps) {
   const selectedId = useLattice((state) => state.selectedInstanceId);
   const placements = useLattice((state) => state.placements);
@@ -39,6 +124,7 @@ export function InspectorPanel({ records, open, onToggle }: InspectorPanelProps)
   const remove = useLattice((state) => state.removePlacement);
   const grant = useLattice((state) => state.grant);
   const revoke = useLattice((state) => state.revoke);
+  const theme = useLattice((state) => state.theme);
 
   const placement = placements.find((item) => item.instanceId === selectedId);
   const record = placement ? records.get(placement.widgetId) : undefined;
@@ -54,6 +140,16 @@ export function InspectorPanel({ records, open, onToggle }: InspectorPanelProps)
     if (editingRef.current || !placement) return;
     setDraft({ w: String(placement.w), h: String(placement.h) });
   }, [placement?.instanceId, placement?.w, placement?.h]);
+
+  /*
+   * "跟随主题"时滑杆也要有个数字，所以要读一次主题底色。等一帧再读，
+   * 见 themeSurfaceRgb 的注释。
+   */
+  const [surfaceRgb, setSurfaceRgb] = useState<[number, number, number]>([255, 255, 255]);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setSurfaceRgb(themeSurfaceRgb()));
+    return () => cancelAnimationFrame(raf);
+  }, [theme]);
 
   /**
    * 改尺寸要同时写两处：画布上的 placement，和桌面窗口记下的矩形。
@@ -126,6 +222,24 @@ export function InspectorPanel({ records, open, onToggle }: InspectorPanelProps)
   const manifest = record.manifest;
   const granted = grants[manifest.id] ?? [];
 
+  // 实例覆盖优先，没有就退回清单的出厂值 —— 跟 buildSpecs 用的是同一套规则
+  const appearance = normalizeAppearance(placement.appearance ?? manifest.appearance);
+  const tintHex = appearance.tint === "auto" ? hexFromRgb(...surfaceRgb) : appearance.tint;
+  const tint = tintRgb(tintHex) ?? surfaceRgb;
+  const isAuto = appearance.tint === "auto";
+
+  /** 只改底板，别动 placement 上的其它字段 */
+  const patchAppearance = (patch: Partial<Appearance>) => {
+    update(placement.instanceId, { appearance: { ...appearance, ...patch } });
+  };
+
+  /** 拖动任一 R/G/B 滑杆 = 从"跟随主题"变成"就用这个颜色"，起点是当前看起来的颜色 */
+  const setChannel = (index: 0 | 1 | 2, raw: number) => {
+    const next: [number, number, number] = [...tint];
+    next[index] = Math.round(Math.min(255, Math.max(0, raw)));
+    patchAppearance({ tint: hexFromRgb(...next) });
+  };
+
   return (
     <aside className="lattice-panel lattice-panel-right">
       <header className="lattice-panel-head">
@@ -190,6 +304,87 @@ export function InspectorPanel({ records, open, onToggle }: InspectorPanelProps)
             <span>Click-through</span>
           </label>
           <p className="lattice-hint">Mouse events pass straight through — useful for purely decorative widgets.</p>
+        </section>
+
+        <section className="lattice-field">
+          <div className="lattice-field-head">
+            <span className="lattice-label">Backplate</span>
+            <button
+              type="button"
+              className="lattice-link-btn"
+              onClick={() => update(placement.instanceId, { appearance: undefined })}
+              disabled={isPlainAppearance(appearance)}
+            >
+              Reset to theme
+            </button>
+          </div>
+
+          <div className="lattice-tint-row">
+            <label
+              className="lattice-swatch"
+              style={{ background: tintHex }}
+              title="Pick a colour"
+            >
+              <input
+                type="color"
+                value={tintHex}
+                onChange={(event) => patchAppearance({ tint: event.target.value })}
+                aria-label="Backplate colour"
+              />
+            </label>
+            <code className="lattice-mono lattice-tint-code">{isAuto ? "auto" : tintHex}</code>
+            <button
+              type="button"
+              className="lattice-chip"
+              onClick={() => patchAppearance({ tint: "auto" })}
+              aria-pressed={isAuto}
+              title="Follow the light / dark theme"
+            >
+              Auto
+            </button>
+          </div>
+
+          {(["R", "G", "B"] as const).map((channel, index) => (
+            <SliderRow
+              key={channel}
+              label={channel}
+              value={tint[index]}
+              min={0}
+              max={255}
+              step={1}
+              onChange={(value) => setChannel(index as 0 | 1 | 2, value)}
+              ariaLabel={`Backplate ${channel === "R" ? "red" : channel === "G" ? "green" : "blue"}`}
+            />
+          ))}
+
+          <SliderRow
+            label="Fill"
+            value={appearance.alpha}
+            min={0}
+            max={1}
+            step={0.01}
+            decimals={2}
+            onChange={(value) => patchAppearance({ alpha: value })}
+            ariaLabel="Backplate fill"
+          />
+          <SliderRow
+            label="Blur"
+            value={appearance.blur}
+            min={0}
+            max={MAX_BLUR}
+            step={0.5}
+            decimals={1}
+            onChange={(value) => patchAppearance({ blur: value })}
+            ariaLabel="Backplate blur"
+          />
+
+          <p className="lattice-hint">
+            {appearance.alpha === 1 && appearance.blur > 0
+              ? "Fill is at 100%, so nothing shows through — lower Fill to see the frosted wallpaper."
+              : appearance.blur === 0 && appearance.alpha < 1
+                ? "The wallpaper shows through but is still sharp — raise Blur to frost it."
+                : "Fill is how much of the colour covers the backplate, not window transparency. At 0 you get only the frosted wallpaper."}
+          </p>
         </section>
 
         <section className="lattice-field">

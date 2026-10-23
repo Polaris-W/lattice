@@ -8,6 +8,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { normalizeAppearance, type Appearance } from "../runtime/appearance";
 import type { Permission } from "../runtime/manifest";
 import type { WidgetRecord } from "../runtime/registry";
 import type { DesktopRect, Placement } from "./store";
@@ -30,6 +31,8 @@ export interface WidgetWindowSpec {
   pinned: boolean;
   /** 平台当前解析出的明暗，桌面窗口据此上色 */
   theme: "light" | "dark";
+  /** 底板外观：实例覆盖优先，其次清单出厂值 */
+  appearance: Appearance;
 }
 
 /** 上一次算出来的、可信的画布原点 */
@@ -91,6 +94,7 @@ export function buildSpecs(
       clickThrough: placement.clickThrough,
       pinned: placement.pinned ?? false,
       theme,
+      appearance: normalizeAppearance(placement.appearance ?? record.manifest.appearance),
     });
   }
 

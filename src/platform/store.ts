@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 import type { Permission, WidgetLayer } from "../runtime/manifest";
+import type { Appearance } from "../runtime/appearance";
 
 /**
  * 状态存哪儿。
@@ -85,6 +86,13 @@ export interface Placement {
    * 老版本存下来的 placement 没有这个字段，读的时候按 false 处理。
    */
   pinned: boolean;
+  /**
+   * 底板外观的实例覆盖（颜色 / 浓度 / 磨砂）。
+   *
+   * 没设过就走清单里的出厂值；设过就整个覆盖 —— 不存"只改了哪一项"，
+   * 因为三个值是一起调的，部分覆盖只会让"重置"变得没法解释。
+   */
+  appearance?: Appearance;
 }
 
 /** 桌面态下某个实例的真实窗口矩形（屏幕坐标，逻辑像素） */

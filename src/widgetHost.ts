@@ -23,6 +23,15 @@ import {
 import "./styles.css";
 import "./widgetHost.css";
 import {
+  DEFAULT_APPEARANCE,
+  MAX_BLUR,
+  hexFromRgb,
+  isPlainAppearance,
+  luminance,
+  normalizeAppearance,
+  type Appearance,
+} from "./runtime/appearance";
+import {
   BRIDGE_TAG,
   handleBridgeRequest,
   isBridgeRequest,
@@ -41,6 +50,7 @@ interface HostConfig {
   minH: number;
   layer: "desktop" | "top";
   clickThrough: boolean;
+  appearance: Appearance;
 }
 
 const win = getCurrentWindow();
@@ -120,7 +130,222 @@ async function reportRect() {
     w: Math.round(size.width),
     h: Math.round(size.height),
   });
+  // 窗口挪过地方，"我背后那块桌面"就变了，磨砂底得重截一张
+  void refreshWallpaper();
 }
+
+/* ------------------------------------------------------------------ *
+ * 底板外观：底色 + 浓度 + 磨砂
+ *
+ * 三层叠起来就是一张卡片：
+ *
+ *   canvas  壁纸（按窗口位置从桌面截下来的一块），filter: blur(Npx)
+ *   veil    底色，rgba(tint, alpha)
+ *   iframe  组件内容
+ *
+ * 为什么要自己截壁纸：窗口是不透明的，系统 acrylic 的半径又写死，
+ * 只有自己糊才能做出连续滑杆。代价是"透出来的"是壁纸而不是后面的窗口，
+ * 这条取舍写在 src/runtime/appearance.ts 的注释里。
+ * ------------------------------------------------------------------ */
+
+/** 壁纸层要比卡片大一圈：模糊的边缘落在卡片外面，四条边才不会发黑 */
+const WALLPAPER_PAD = MAX_BLUR * 2;
+
+let appearance: Appearance = { ...DEFAULT_APPEARANCE };
+let wallpaperCanvas: HTMLCanvasElement | null = null;
+let wallpaperVeil: HTMLDivElement | null = null;
+/** 壁纸的平均色，用来算"底色盖上去之后到底有多亮" */
+let wallpaperAvg: [number, number, number] | null = null;
+let wallpaperSeq = 0;
+let wallpaperLoading = false;
+/** 截图中途又有人要 —— 收工后再补一张，别丢最后一次位置 */
+let wallpaperDirty = false;
+
+let surfaceCache: { theme: string; value: string } | null = null;
+
+/**
+ * 读主题自己的 `--lattice-surface`。
+ *
+ * 直接 `getComputedStyle` 读到的是我们上一轮写进去的内联覆盖（也就是合成后的
+ * 颜色），越读越偏。所以先把覆盖摘掉再读，读完放回去。
+ */
+function themeSurface(theme: string): string {
+  if (surfaceCache?.theme === theme) return surfaceCache.value;
+  const root = document.documentElement;
+  const saved = root.style.getPropertyValue("--lattice-surface");
+  root.style.removeProperty("--lattice-surface");
+  const value = getComputedStyle(root).getPropertyValue("--lattice-surface").trim();
+  if (saved) root.style.setProperty("--lattice-surface", saved);
+  const resolved = value || (theme === "light" ? "#fbfaf8" : "#15151a");
+  surfaceCache = { theme, value: resolved };
+  return resolved;
+}
+
+function parseHex(value: string): [number, number, number] {
+  const match = /^#?([0-9a-f]{6})$/i.exec(value.trim());
+  if (!match) return [29, 29, 33];
+  const n = parseInt(match[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/** 由 boot() 接上：把最新的令牌推给 iframe */
+let pushTheme: (() => void) | null = null;
+
+function postTheme() {
+  pushTheme?.();
+}
+
+/** 底色 / 磨砂一变，这里就把三层的样式和给组件的令牌一起重算 */
+function applyAppearance(next: Appearance) {
+  appearance = next;
+  const theme = (document.documentElement.dataset.theme as string) || "dark";
+  const tint = parseHex(next.tint === "auto" ? themeSurface(theme) : next.tint);
+  const behind = wallpaperAvg ?? parseHex(themeSurface(theme));
+
+  // 底色盖在"背后那一层"上，看起来是什么颜色 —— 字色和边框都按它定
+  const composite: [number, number, number] = [
+    tint[0] * next.alpha + behind[0] * (1 - next.alpha),
+    tint[1] * next.alpha + behind[1] * (1 - next.alpha),
+    tint[2] * next.alpha + behind[2] * (1 - next.alpha),
+  ];
+  const light = luminance(composite) > 0.55;
+
+  const root = document.documentElement;
+  if (isPlainAppearance(next)) {
+    /*
+     * 出厂外观：一个令牌都不改，让卡片跟没有这个功能时一模一样。
+     * 覆盖值只是"近似"主题（比如描边更重一点、surface-2 差得多一档），
+     * 没道理为了一个没人调过的底板把默认样子换掉。
+     */
+    for (const token of [
+      "--lattice-surface",
+      "--lattice-surface-2",
+      "--lattice-text",
+      "--lattice-text-muted",
+      "--lattice-border",
+      "--lattice-accent",
+      "--lattice-chrome",
+      "--lattice-chrome-fg",
+    ]) {
+      root.style.removeProperty(token);
+    }
+  } else {
+    root.style.setProperty("--lattice-surface", hexFromRgb(...composite));
+    root.style.setProperty("--lattice-text", light ? "#141418" : "#ecebe6");
+    root.style.setProperty("--lattice-text-muted", light ? "#5b5b55" : "#97978f");
+    root.style.setProperty(
+      "--lattice-border",
+      light ? "rgba(0,0,0,0.14)" : "rgba(255,255,255,0.12)",
+    );
+    /*
+     * 强调色也得跟着翻。组件里的状态字（便签的 "Saved"、待办的计数）用的就是
+     * 它：深色主题那支薄荷绿压在浅色底板上几乎看不见，反过来同理。
+     * 两支都是主题里现成的值，不另造色。
+     */
+    root.style.setProperty("--lattice-accent", light ? "#0f6e56" : "#5dcaa5");
+
+    /*
+     * 窗饰那排按钮浮在底板上面，颜色不能跟着底板算。
+     *
+     * 底板是"底色盖在**壁纸平均色**上"，而按钮底下压着的是**那一小块**壁纸 ——
+     * 绿底板上摆一枚按全局平均色算出来的橄榄色按钮，看着就像没对准。窗饰是
+     * 平台的界面，不是用户调的底板，所以给它一对固定的中性色：卡片浅就白，
+     * 卡片深就炭，图标永远压得住。
+     */
+    root.style.setProperty("--lattice-chrome", light ? "#f7f6f3" : "#23232a");
+    root.style.setProperty("--lattice-chrome-fg", light ? "#141418" : "#ecebe6");
+  }
+
+  // 卡片本体（body 的底色）读的就是 --lattice-surface，上面已经改成合成色了。
+  // 壁纸层到位时它被盖住，没到位时（blur=0 / 截失败）它就是兜底的那一层。
+
+  if (wallpaperVeil && wallpaperCanvas) {
+    const ready = wallpaperAvg !== null;
+    wallpaperVeil.style.display = ready ? "block" : "none";
+    wallpaperVeil.style.background = `rgba(${tint[0]}, ${tint[1]}, ${tint[2]}, ${next.alpha})`;
+    wallpaperCanvas.style.filter = `blur(${next.blur}px)`;
+    wallpaperCanvas.style.opacity = ready ? "1" : "0";
+  }
+
+  // 组件拿到的令牌变了，推一份过去（主题切换、拖滑杆都走这里）
+  postTheme();
+}
+
+/** 底色 / 磨砂真的需要壁纸时才去截：纯色实心卡片不该为一张图付 500KB */
+function needsWallpaper(): boolean {
+  return appearance.blur > 0 || appearance.alpha < 1;
+}
+
+async function refreshWallpaper() {
+  if (!needsWallpaper()) return;
+  await loadWallpaper();
+}
+
+async function loadWallpaper() {
+  if (!wallpaperCanvas) return;
+  // 正在截的时候又来一次（拖窗口是高频的）：别排队，只记一个"还得再来一趟"，
+  // 否则排十几张图等，拖完看到的还是最开始那一眼的桌面
+  if (wallpaperLoading) {
+    wallpaperDirty = true;
+    return;
+  }
+  wallpaperLoading = true;
+  const token = ++wallpaperSeq;
+  try {
+    const buffer = await invoke<ArrayBuffer>("widget_wallpaper", { pad: WALLPAPER_PAD });
+    if (token !== wallpaperSeq) return;
+
+    const view = new DataView(buffer);
+    const width = view.getUint32(0, true);
+    const height = view.getUint32(4, true);
+    if (!width || !height) return;
+
+    const pixels = new Uint8ClampedArray(buffer, 8, width * height * 4);
+    const context = wallpaperCanvas.getContext("2d");
+    if (!context) return;
+    wallpaperCanvas.width = width;
+    wallpaperCanvas.height = height;
+    context.putImageData(new ImageData(pixels, width, height), 0, 0);
+
+    // 图是物理像素，CSS 盒子是逻辑像素：交给浏览器缩一次，顺带把 DPI 吃掉
+    wallpaperCanvas.style.width = `${window.innerWidth + WALLPAPER_PAD * 2}px`;
+    wallpaperCanvas.style.height = `${window.innerHeight + WALLPAPER_PAD * 2}px`;
+    wallpaperCanvas.style.left = `${-WALLPAPER_PAD}px`;
+    wallpaperCanvas.style.top = `${-WALLPAPER_PAD}px`;
+
+    wallpaperAvg = averageColor(pixels, width * height);
+    applyAppearance(appearance);
+  } catch (error) {
+    // 截不到桌面（远程桌面、权限、PrintWindow 失败）就退回纯色卡片
+    wallpaperAvg = null;
+    console.warn("[lattice] 拿不到桌面背景，底板退回纯色：", error);
+    applyAppearance(appearance);
+  } finally {
+    wallpaperLoading = false;
+    if (wallpaperDirty) {
+      wallpaperDirty = false;
+      void refreshWallpaper();
+    }
+  }
+}
+
+/** 平均色：每 64 个像素采一个就够，壁纸那么大，差不了几度 */
+function averageColor(pixels: Uint8ClampedArray, count: number): [number, number, number] {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let n = 0;
+  for (let i = 0; i < count; i += 64) {
+    const at = i * 4;
+    r += pixels[at];
+    g += pixels[at + 1];
+    b += pixels[at + 2];
+    n += 1;
+  }
+  if (!n) return [29, 29, 33];
+  return [r / n, g / n, b / n];
+}
+
 
 /*
  * 拖动按钮在窗口右上角的落点：距右边 30px、距顶边 20px。
@@ -382,6 +607,34 @@ async function boot() {
   const config = await invoke<HostConfig>("widget_host_config");
   applyTheme(config.theme);
 
+  /*
+   * 底板三层，从下往上：
+   *   canvas  壁纸（模糊半径由 CSS filter 给，脚本只管截）
+   *   veil    底色 rgba(tint, alpha)
+   *   iframe  组件内容
+   * 卡片本体（body 的底色、圆角、描边）还是由 widget-host.html 负责。
+   */
+  wallpaperCanvas = document.createElement("canvas");
+  wallpaperCanvas.className = "lw-wallpaper";
+  wallpaperVeil = document.createElement("div");
+  wallpaperVeil.className = "lw-veil";
+  document.body.append(wallpaperCanvas, wallpaperVeil);
+  applyAppearance(normalizeAppearance(config.appearance));
+  // 上次退出时就是磨砂底的话，建窗口这一刻就得把壁纸补上
+  void refreshWallpaper();
+
+  /*
+   * 尺寸变了要重铺壁纸：canvas 的 CSS 盒子是按窗口大小算的，缩小时它多出来
+   * 一截（无所谓，被圆角裁掉），放大时就会露出没铺到的边 —— 得重新截一张，
+   * 因为"窗口背后那块桌面"也跟着变大了。
+   */
+  window.addEventListener("resize", () => {
+    if (!wallpaperCanvas) return;
+    wallpaperCanvas.style.width = `${window.innerWidth + WALLPAPER_PAD * 2}px`;
+    wallpaperCanvas.style.height = `${window.innerHeight + WALLPAPER_PAD * 2}px`;
+    void refreshWallpaper();
+  });
+
   const granted = new Set<Permission>(config.permissions as Permission[]);
 
   const iframe = document.createElement("iframe");
@@ -408,6 +661,7 @@ async function boot() {
   buildChrome(config);
 
   const post = (payload: unknown) => iframe.contentWindow?.postMessage(payload, "*");
+  pushTheme = () => post({ [BRIDGE_TAG]: 1, type: "theme", payload: readThemeTokens() });
 
   window.addEventListener("message", (event) => {
     if (event.source !== iframe.contentWindow) return;
@@ -437,7 +691,16 @@ async function boot() {
   // 平台切明暗时跟着换，否则桌面上的组件会一直停在建窗口那一刻的主题
   void listen<string>("lattice:theme", (event) => {
     applyTheme(event.payload === "light" ? "light" : "dark");
-    post({ [BRIDGE_TAG]: 1, type: "theme", payload: readThemeTokens() });
+    // 主题换了，"跟随主题"的底色和字色都得跟着重算
+    applyAppearance(appearance);
+  });
+
+  /*
+   * 属性面板在拖滑杆。只换外观，不重建窗口 —— 这是三个滑杆能跟手的前提。
+   */
+  void listen<Appearance>("lattice:appearance", (event) => {
+    applyAppearance(normalizeAppearance(event.payload));
+    void refreshWallpaper();
   });
 
   /*

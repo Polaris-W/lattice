@@ -6,6 +6,8 @@
  * 避免各处的兜底逻辑互相漂移。
  */
 
+import { normalizeAppearance, type Appearance } from "./appearance";
+
 /** 组件在桌面上的层级 */
 export type WidgetLayer = "desktop" | "top";
 
@@ -61,6 +63,11 @@ export interface WidgetManifest {
   permissions: Permission[];
   /** 声明所依赖的 SDK 版本区间，便于将来做兼容性拦截 */
   sdk: string;
+  /**
+   * 底板的出厂外观（颜色 / 浓度 / 磨砂）。属性面板里可以按实例覆盖，
+   * 组件本身不参与 —— 底板是平台画的。
+   */
+  appearance: Appearance;
 }
 
 export const DEFAULT_SIZE: WidgetSize = { w: 240, h: 140, minW: 120, minH: 80 };
@@ -127,6 +134,7 @@ export function normalizeManifest(raw: unknown, dirName: string): WidgetManifest
     interactive,
     permissions: normalizePermissions(input.permissions),
     sdk: optionalString(input.sdk) || SUPPORTED_SDK,
+    appearance: normalizeAppearance(input.appearance),
   };
 }
 

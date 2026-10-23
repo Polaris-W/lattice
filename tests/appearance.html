@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>appearance model test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      /*
+       * 底板外观的纯逻辑。这页不碰 DOM 渲染 —— 渲染靠真机截图验，
+       * 这里只钉住"用户拖滑杆时写进 state.json 的到底是什么"。
+       *
+       * 三条规矩最容易写坏：
+       *   1. 非法值不许崩，也不许悄悄变成 0 —— 退回出厂值
+       *   2. 范围必须夹住（alpha 0..1，blur 0..40），否则窗口建出来是黑的
+       *   3. "出厂外观"的判定要和 applyAppearance 里那个 if 完全一致：
+       *      判错了就会给没调过的组件也套一层覆盖色
+       */
+      import {
+        DEFAULT_APPEARANCE,
+        MAX_BLUR,
+        compositeHex,
+        hexFromRgb,
+        isPlainAppearance,
+        luminance,
+        normalizeAppearance,
+        normalizeTint,
+        tintRgb,
+      } from "/src/runtime/appearance.ts";
+
+      const lines = [];
+      const log = (pass, text) => lines.push(`${pass ? "PASS" : "FAIL"}  ${text}`);
+      const eq = (actual, expected, text) =>
+        log(JSON.stringify(actual) === JSON.stringify(expected), `${text} → ${JSON.stringify(actual)}`);
+      // 亮度是浮点乘加，0.2126 + 0.7152 + 0.0722 算出来是 0.9999999999999999
+      const near = (actual, expected, text) =>
+        log(Math.abs(actual - expected) < 1e-9, `${text} → ${actual}`);
+
+      // ---- 默认值 ----
+      eq(normalizeAppearance(undefined), DEFAULT_APPEARANCE, "缺省 / 非对象 → 出厂值");
+      eq(normalizeAppearance({}), DEFAULT_APPEARANCE, "空对象 → 出厂值");
+      eq(DEFAULT_APPEARANCE, { tint: "auto", alpha: 1, blur: 0 }, "出厂值是 auto / 1 / 0");
+
+      // ---- 颜色 ----
+      eq(normalizeTint("#ABC"), "#aabbcc", "#abc 摊成 #aabbcc 并转小写");
+      eq(normalizeTint("#A1B2C3"), "#a1b2c3", "#rrggbb 只转小写");
+      eq(normalizeTint("AUTO"), "auto", "auto 大小写不敏感");
+      eq(normalizeTint("red"), "auto", "颜色名不认 → 退回 auto");
+      eq(normalizeTint("#12345"), "auto", "位数不对 → 退回 auto");
+      eq(normalizeAppearance({ tint: "#FF0000", alpha: 1, blur: 0 }).tint, "#ff0000", "整份归一化也走同一套颜色规则");
+
+      // ---- 夹范围 ----
+      eq(normalizeAppearance({ alpha: 1.7 }).alpha, 1, "alpha 上限夹到 1");
+      eq(normalizeAppearance({ alpha: -0.2 }).alpha, 0, "alpha 下限夹到 0");
+      eq(normalizeAppearance({ alpha: 0.456 }).alpha, 0.46, "alpha 保留两位");
+      eq(normalizeAppearance({ blur: 999 }).blur, MAX_BLUR, `blur 上限夹到 ${MAX_BLUR}`);
+      eq(normalizeAppearance({ blur: -5 }).blur, 0, "blur 下限夹到 0");
+      eq(normalizeAppearance({ blur: 12.34 }).blur, 12.3, "blur 保留一位");
+      eq(normalizeAppearance({ alpha: "0.5" }).alpha, 1, "字符串不是数字 → 退回出厂值，不当 0 用");
+      eq(normalizeAppearance({ blur: Number.NaN }).blur, 0, "NaN → 退回出厂值");
+
+      // ---- 出厂外观的判定 ----
+      log(isPlainAppearance(DEFAULT_APPEARANCE), "auto / 1 / 0 算出厂外观");
+      log(!isPlainAppearance({ tint: "auto", alpha: 1, blur: 0.1 }), "只要 blur 不为 0 就不是出厂");
+      log(!isPlainAppearance({ tint: "#ffffff", alpha: 1, blur: 0 }), "只要换了颜色就不是出厂");
+      log(!isPlainAppearance({ tint: "auto", alpha: 0.99, blur: 0 }), "只要浓度不满就不是出厂");
+
+      // ---- 颜色合成 ----
+      eq(hexFromRgb(255, 0, 16), "#ff0010", "hexFromRgb 补零");
+      eq(hexFromRgb(-5, 300, 127.6), "#00ff80", "hexFromRgb 自己也会夹并四舍五入");
+      eq(tintRgb("#ffffff"), [255, 255, 255], "tintRgb 拆三通道");
+      eq(tintRgb("#abc"), null, "tintRgb 只认摊开的六位（归一化之后才调它）");
+      eq(compositeHex("#ffffff", 1, [0, 0, 0]), "#ffffff", "浓度 1 = 纯底色");
+      eq(compositeHex("#ffffff", 0, [12, 34, 56]), "#0c2238", "浓度 0 = 纯背景");
+      eq(compositeHex("#ffffff", 0.5, [0, 0, 0]), "#808080", "浓度 0.5 = 各取一半");
+
+      // ---- 亮度阈值（决定字色翻不翻）----
+      near(luminance([255, 255, 255]), 1, "白 = 1");
+      near(luminance([0, 0, 0]), 0, "黑 = 0");
+      const lightCard = luminance([250, 248, 244]);
+      const darkCard = luminance([21, 21, 26]);
+      log(lightCard > 0.55 && darkCard <= 0.55, `出厂两种主题分别落在阈值两侧（${lightCard.toFixed(2)} / ${darkCard.toFixed(2)}）`);
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>

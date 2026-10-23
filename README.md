@@ -52,6 +52,20 @@ Eight resize handles hug the edges, with 18px of clearance at the corners: once 
 
 On release the window rect is reported back to the main window and stored in `desktopRects`, which **takes priority on the next send** instead of recomputing from canvas coordinates.
 
+## The backplate is yours to tune
+
+![Three backplates](docs/screenshot-backplate.png)
+
+Colour, fill and blur are per-instance sliders in the inspector — the widget itself never knows they exist:
+
+- **Colour** — a swatch (native picker) plus R / G / B sliders, or `Auto` to follow the light / dark theme
+- **Fill** — 0 to 1. Not window transparency: at `1` the card is solid, at `0` you see only frosted wallpaper
+- **Blur** — 0 to 40 px, continuous
+
+Text, muted text, borders and the accent colour all flip together based on how bright the resulting card is, so a white backplate gets dark type and a navy one gets light type — without touching widget code.
+
+Under the hood the host page stacks three layers: a bitmap of the desktop (`PrintWindow(Progman)`, wallpaper and icons only, cropped to the window) blurred with CSS `filter: blur()`, an `rgba(tint, fill)` veil over it, and the widget iframe on top. The chrome pill keeps its own fixed neutral palette instead of following the backplate — it is platform UI, not your canvas.
+
 ## The layout is genuinely remembered
 
 The platform does not persist through `localStorage`: on this machine WebView2 keeps it entirely in memory, and it is gone the moment the process exits. So state is written to files:

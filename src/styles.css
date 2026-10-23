@@ -1154,6 +1154,14 @@ button {
   color: var(--lattice-text);
 }
 
+/* 已经是出厂值了，再"恢复"一次没有意义 */
+.lattice-field-head .lattice-link-btn:disabled {
+  background: none;
+  color: var(--lattice-text-faint);
+  opacity: 0.55;
+  cursor: default;
+}
+
 .lattice-size-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1204,6 +1212,148 @@ button {
 }
 
 .lattice-size-input input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* 底板外观：一行色块 + 四条滑杆，全挤在 240px 里，所以每一列都要定宽 */
+.lattice-tint-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lattice-swatch {
+  position: relative;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  overflow: hidden;
+  border: 1px solid var(--lattice-border-strong);
+  border-radius: 9px;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 8%);
+}
+
+/* 原生取色器整块盖在色块上，只是看不见 —— 点哪儿都能开 */
+.lattice-swatch input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.lattice-tint-code {
+  flex: 1;
+  min-width: 0;
+  color: var(--lattice-text-muted);
+  font-size: 11px;
+}
+
+/*
+ * 胶囊按钮。基础样式沿用标题条上那枚 .lattice-chip 徽章（尺寸、圆角、字号），
+ * 这里只补"能点"和"按下"两件事 —— 用 aria-pressed 表达按下态，
+ * 免得再往这个已经很挤的命名空间里加修饰类。
+ */
+button.lattice-chip {
+  padding: 1px 7px;
+  background: var(--lattice-bg);
+  font: inherit;
+  font-size: 10px;
+  line-height: 16px;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
+}
+
+button.lattice-chip:hover {
+  border-color: var(--lattice-text-faint);
+}
+
+button.lattice-chip[aria-pressed="true"] {
+  border-color: transparent;
+  background: var(--lattice-accent-soft);
+  color: var(--lattice-accent);
+}
+
+.lattice-slider-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 46px;
+  align-items: center;
+  gap: 8px;
+}
+
+.lattice-slider-key {
+  color: var(--lattice-text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lattice-slider {
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  background: none;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.lattice-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--lattice-border-strong);
+}
+
+.lattice-slider::-webkit-slider-thumb {
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--lattice-text);
+  box-shadow: 0 0 0 1px var(--lattice-bg);
+  appearance: none;
+  -webkit-appearance: none;
+  transition: background 0.14s ease;
+}
+
+.lattice-slider:hover::-webkit-slider-thumb,
+.lattice-slider:focus-visible::-webkit-slider-thumb {
+  background: var(--lattice-accent);
+}
+
+.lattice-slider-num {
+  width: 100%;
+  height: 24px;
+  padding: 0 5px;
+  border: 1px solid var(--lattice-border-strong);
+  border-radius: 7px;
+  background: var(--lattice-bg);
+  color: var(--lattice-text);
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  outline: none;
+  transition: border-color 0.14s ease;
+}
+
+.lattice-slider-num:focus {
+  border-color: var(--lattice-accent);
+}
+
+/* 上下箭头会把这 24px 的小框撑坏，去掉；键盘上下键照样能用 */
+.lattice-slider-num::-webkit-outer-spin-button,
+.lattice-slider-num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.lattice-slider-num[type="number"] {
   -moz-appearance: textfield;
   appearance: textfield;
 }
