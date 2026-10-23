@@ -11,6 +11,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type { Permission } from "./manifest";
+import type { ConfigValues } from "./config";
+import type { Scheduler } from "./schedule";
 
 export const BRIDGE_TAG = "__lattice";
 
@@ -43,6 +45,17 @@ export interface BridgeContext {
   widgetId: string;
   /** 用户已授予的权限 */
   granted: ReadonlySet<Permission>;
+  /**
+   * 平台调度器。一个宿主页一份，组件的心跳全挂在这一条时间轴上。
+   * 宿主页换文档（重载 / 授权变化）时必须 `reset()`，否则会往已经销毁的
+   * 文档里发 tick。
+   */
+  schedule: Scheduler;
+  /**
+   * 这个实例的配置，已经按清单 schema 归一化过（缺的键用出厂值补）。
+   * 宿主页在配置变化时就地换掉这份对象，桥每次调用读最新值。
+   */
+  config: ConfigValues;
   /** 回话给组件（由宿主注入，负责 postMessage 到正确的窗口） */
   reply: (payload: BridgeResponseMessage) => void;
   /** 组件请求关闭自己 */
@@ -233,9 +246,133 @@ defineMethod("clipboard.write", "clipboard:write", async (params) => {
 
 defineMethod("theme.get", null, () => readThemeTokens());
 
+/*
+ * 这个实例的配置。
+ *
+ * 不需要权限：配置是用户在这台机器上、为这一份组件亲手填的值，不是系统能力。
+ * 返回的永远是**完整**对象 —— 没改过的键用清单里的出厂值补上，所以组件不用
+ * 自己写 `?? 默认值`，也不会因为平台升级多了一个字段就拿到 undefined。
+ *
+ * 除了启动时读一次，配置变化时宿主还会推一条 `config-changed`（见 WIDGET_SPEC
+ * 4.3）。只读一次是不够的：用户在属性面板里拨一下开关，组件不会自己知道。
+ */
+defineMethod("config.get", null, (_params, ctx) => ctx.config);
+
+/*
+ * 心跳交给平台管，不交给 setInterval。
+ *
+ * 组件自己开定时器的话，窗口被藏起来、画布被最小化时它照跑；同一个组件里
+ * 有几处需要心跳，就有几个计时器。挂到 `ctx.schedule` 上之后，一个宿主页
+ * 只有一条时间轴，页面不可见时整条停摆。
+ *
+ * 注册成功后，宿主会按间隔推 `{ type: "tick", payload: { id, at } }`。
+ * `id` 是订阅号，组件用它区分是哪一条心跳 —— 一条消息就可能同时喂给
+ * 时钟和指标轮询。
+ */
+defineMethod("schedule.every", null, (params, ctx) => {
+  const every = (params as { every?: unknown } | undefined)?.every;
+  if (typeof every !== "number" || !Number.isFinite(every)) {
+    throw new BridgeError("bad_params", "schedule.every requires a number parameter \"every\"");
+  }
+  const grant = ctx.schedule.every(every);
+  if (!grant) {
+    throw new BridgeError("bad_params", "too many timers for this widget (max 8)");
+  }
+  return grant;
+});
+
+defineMethod("schedule.clear", null, (params, ctx) => {
+  const id = (params as { id?: unknown } | undefined)?.id;
+  if (typeof id !== "number" || !Number.isFinite(id)) {
+    throw new BridgeError("bad_params", "schedule.clear requires a number parameter \"id\"");
+  }
+  ctx.schedule.clear(id);
+  return { ok: true };
+});
+
+/*
+ * 系统指标：CPU / 内存 / 磁盘 / 网络。
+ *
+ * 采样在 Rust 侧（`metrics.rs`），带 1 秒缓存 —— 五个组件同一秒各拉一次，
+ * 只会真采样一次。所以组件**不需要**自己去省，按自己的心跳调就行。
+ *
+ * 速率类字段（`cpu.usage`、`network.*PerSec`）靠两次采样做差，所以第一次
+ * 调用一定是 0；第二次起才有意义。这不是 bug，别在组件里"修"它。
+ */
+defineMethod("system.metrics", "system:monitor", async () => {
+  if (!bridgeInTauri()) {
+    throw new BridgeError("internal", "system metrics are only available in the desktop app");
+  }
+  return await invoke("system_metrics");
+});
+
 defineMethod("window.close", null, (_params, ctx) => {
   ctx.close();
   return { ok: true };
+});
+
+/**
+ * 联网。组件**不直连** —— 请求走这里，由 Rust 侧发出去。
+ *
+ * 为什么不做成"本地 HTTP 代理 + connect-src 指过去"：那样组件仍然可以直接
+ * `fetch`，白名单就只剩一层自觉。走 IPC 之后组件文档的 `connect-src` 里
+ * 只有它自己的协议源，浏览器层面就没有第二条出网的路。
+ *
+ * 三层闸门，从宽到严：
+ *   1. 用户授予 `network`（这一层由上面的 `spec.permission` 挡掉）
+ *   2. 清单里的 `network.hosts` —— 精确匹配主机（可钉端口），不支持通配符
+ *   3. 形状：只允许 http/https，方法限于 GET/HEAD/POST/PUT/PATCH/DELETE，
+ *      请求体 ≤ 256KB，响应 ≤ 1MB（超出截断并置 `truncated`）
+ *
+ * 重定向**不自动跟随**：`https://good.com` 302 到别处，跟着走就等于白名单
+ * 只检查了第一跳。3xx 原样返回，组件要跟就再调一次，那时会重新过白名单。
+ *
+ * 用法：
+ *   const res = await lattice.network.fetch({
+ *     url: "https://api.example.com/v1/now",
+ *     headers: { accept: "application/json" },
+ *   });
+ *   if (res.ok) render(JSON.parse(res.body));
+ *
+ * `headers` 收普通对象（组件作者写起来自然），这里转成 Rust 要的键值对数组。
+ */
+defineMethod("network.fetch", "network", async (params) => {
+  const input = (params ?? {}) as {
+    url?: unknown;
+    method?: unknown;
+    headers?: unknown;
+    body?: unknown;
+  };
+
+  if (typeof input.url !== "string" || !input.url.trim()) {
+    throw new BridgeError("bad_params", "network.fetch requires a string parameter \"url\"");
+  }
+  if (input.method !== undefined && typeof input.method !== "string") {
+    throw new BridgeError("bad_params", "\"method\" must be a string");
+  }
+  if (input.body !== undefined && typeof input.body !== "string") {
+    // 只收字符串：收对象就得在这里猜序列化方式，猜错了报错信息会很难懂
+    throw new BridgeError("bad_params", "\"body\" must be a string (JSON.stringify it yourself)");
+  }
+
+  const headers: [string, string][] = [];
+  if (input.headers && typeof input.headers === "object" && !Array.isArray(input.headers)) {
+    for (const [name, value] of Object.entries(input.headers as Record<string, unknown>)) {
+      if (typeof value !== "string") continue;
+      headers.push([name, value]);
+    }
+  }
+
+  if (!bridgeInTauri()) {
+    throw new BridgeError("internal", "network.fetch is only available in the desktop app");
+  }
+
+  return await invoke("network_fetch", {
+    url: input.url,
+    method: input.method ?? null,
+    headers,
+    body: input.body ?? null,
+  });
 });
 
 function readKey(params: unknown): string {

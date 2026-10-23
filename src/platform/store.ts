@@ -10,6 +10,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 import type { Permission, WidgetLayer } from "../runtime/manifest";
 import type { Appearance } from "../runtime/appearance";
+import type { ConfigValues } from "../runtime/config";
 
 /**
  * 状态存哪儿。
@@ -106,6 +107,29 @@ export interface DesktopRect {
 export type ThemeMode = "light" | "dark" | "system";
 
 /**
+ * 刚被删掉的那一个组件，留着给人反悔。
+ *
+ * 只活在内存里，**不进 `state.json`**：它是"这一次操作还能撤回"的状态，
+ * 不是用户配置。重启之后还弹一条"撤销刚才的删除"只会莫名其妙。
+ *
+ * `rect` 一起存下来，是因为桌面窗口的位置在 `desktopRects` 里，删 placement
+ * 时那份也跟着删了 —— 只把 placement 塞回去，组件会掉到画布坐标推算的位置上，
+ * 用户看到的还是"位置变了"。
+ */
+export interface ClosedPlacement {
+  placement: Placement;
+  rect?: DesktopRect;
+  /**
+   * 这个实例的配置。跟 `rect` 一样必须一起存：删 placement 时 `configs` 那条
+   * 也删了，只把 placement 塞回去的话，撤销回来的组件会变回出厂设置 ——
+   * 用户看到的还是"东西回来了，但我的设置没了"。
+   */
+  config?: ConfigValues;
+  /** 删除发生的时刻，提示条用它算"该消失了没有" */
+  at: number;
+}
+
+/**
  * 本机档案。
  *
  * 平台没有账号体系：这是一个纯本地应用，布局、授权、组件数据全部落在
@@ -139,8 +163,21 @@ interface LatticeState {
   /** 本机档案，未登录为 null */
   profile: Profile | null;
   selectedInstanceId: string | null;
-  /** 是否已把组件投放到真实桌面（运行态）。不持久化，重启回到设计态 */
+  /**
+   * 是否已把组件投放到真实桌面（运行态）。
+   *
+   * **要持久化**：桌面组件平台如果每次重启都把组件收回去，等于用户每天
+   * 早上都要重新摆一遍。下次启动时 `App` 看到这里还是 true 就自动把窗口
+   * 建回来（受 `restoreOnLaunch` 控制）。
+   */
   desktopMode: boolean;
+  /**
+   * 启动时要不要自动把组件放回桌面。
+   *
+   * 有人把 Lattice 当纯设计工具用，不想一开就有一堆窗口；也有人开机就要
+   * 看见自己的组件。默认开着，设置里能关。
+   */
+  restoreOnLaunch: boolean;
   /**
    * 桌面态下每个实例的窗口矩形，按 instanceId 索引。
    *
@@ -150,6 +187,18 @@ interface LatticeState {
    */
   desktopRects: Record<string, DesktopRect>;
   /**
+   * 每个实例的配置（清单 `config` 里声明的那些项）。
+   *
+   * **按 instanceId 存，不按 widgetId** —— 这一条跟 `grants` 正好相反，
+   * 因为它回答的是两个不同的问题：
+   *   - 权限问"你信不信任这段代码"，同一组件的两份当然一样
+   *   - 配置问"这一份要怎么显示"，两个时钟可以一个 24 小时制、一个 12 小时制
+   *
+   * 只存改过的键，没改过的由清单的 default 补（`resolveConfig` 负责合并）。
+   * 这样清单以后新增一项配置，老用户的实例会自动拿到出厂值，不需要迁移。
+   */
+  configs: Record<string, ConfigValues>;
+  /**
    * 左右两栏是不是展开的。
    *
    * 收起之后面板退成一条 40px 的竖条（按钮还在，随时能拉开），画布拿走剩下的
@@ -158,11 +207,32 @@ interface LatticeState {
    */
   libraryOpen: boolean;
   inspectorOpen: boolean;
+  /**
+   * 最近一次被删掉的组件，用来做"撤销"。
+   *
+   * 那两颗 ✕（宿主页窗饰上的、画布卡片上的）都是**不可逆删除**，而 ✕ 只有
+   * 22×22、还挂在会淡入的窗饰上 —— 手滑一次，用户的布局就少一块。所以删的
+   * 时候留一份快照，主窗口底部弹 8 秒的撤销条。
+   */
+  lastClosed: ClosedPlacement | null;
+  /**
+   * 桌面上那批组件窗口是不是被"暂停"了（藏起来了）。
+   *
+   * **不持久化**，和 `lastClosed` 一个道理：暂停是"现在先别动"，不是配置。
+   * 用户关掉应用、明天开机，期待是"组件在那儿"，不是"上次点了暂停所以还是空的"。
+   * 真相在 Rust 那边（`Runner::paused`），这里只是它的镜像，靠 `lattice:paused`
+   * 事件同步 —— 托盘菜单改了状态，主窗口得跟着变。
+   */
+  paused: boolean;
 
   setPanelOpen: (panel: "library" | "inspector", open: boolean) => void;
 
   addPlacement: (placement: Placement) => void;
   removePlacement: (instanceId: string) => void;
+  /** 把 `lastClosed` 塞回画布（含桌面窗口的矩形），然后清空它 */
+  restoreLastClosed: () => void;
+  /** 用户点了"不用了"或者提示条自己过期 */
+  dismissLastClosed: () => void;
   updatePlacement: (instanceId: string, patch: Partial<Omit<Placement, "instanceId" | "widgetId">>) => void;
   bringToFront: (instanceId: string) => void;
   select: (instanceId: string | null) => void;
@@ -171,7 +241,14 @@ interface LatticeState {
   signIn: (name: string, email: string) => void;
   signOut: () => void;
   setDesktopMode: (enabled: boolean) => void;
+  toggleRestoreOnLaunch: () => void;
+  /** 只改镜像，别在这里调 Rust —— 状态由托盘/设置菜单发起，再由事件回流 */
+  setPaused: (paused: boolean) => void;
   setDesktopRect: (instanceId: string, rect: DesktopRect) => void;
+  /** 改一项配置。值非法不用管：`resolveConfig` 会退回出厂值 */
+  setConfig: (instanceId: string, key: string, value: ConfigValues[string]) => void;
+  /** 清掉这个实例的全部配置，回到清单的出厂值 */
+  resetConfig: (instanceId: string) => void;
   installWidget: (widgetId: string) => void;
   /** 卸载时连带清掉这个组件在画布上的所有实例，避免留下"组件缺失" */
   uninstallWidget: (widgetId: string) => void;
@@ -196,9 +273,13 @@ export const useLattice = create<LatticeState>()(
       profile: null,
       selectedInstanceId: null,
       desktopMode: false,
+      restoreOnLaunch: true,
       desktopRects: {},
+      configs: {},
       libraryOpen: true,
       inspectorOpen: true,
+      lastClosed: null,
+      paused: false,
 
       setPanelOpen: (panel, open) =>
         set(panel === "library" ? { libraryOpen: open } : { inspectorOpen: open }),
@@ -211,15 +292,48 @@ export const useLattice = create<LatticeState>()(
 
       removePlacement: (instanceId) =>
         set((state) => {
+          const target = state.placements.find((item) => item.instanceId === instanceId);
           const nextRects = { ...state.desktopRects };
+          const rect = nextRects[instanceId];
           delete nextRects[instanceId];
+          const nextConfigs = { ...state.configs };
+          const config = nextConfigs[instanceId];
+          delete nextConfigs[instanceId];
           return {
             placements: state.placements.filter((item) => item.instanceId !== instanceId),
             desktopRects: nextRects,
+            configs: nextConfigs,
             selectedInstanceId:
               state.selectedInstanceId === instanceId ? null : state.selectedInstanceId,
+            // 留一份快照给人反悔。找不到目标（已经被删过）就保持原样，
+            // 别把上一次的撤销机会顺手丢掉
+            lastClosed: target ? { placement: target, rect, config, at: Date.now() } : state.lastClosed,
           };
         }),
+
+      restoreLastClosed: () =>
+        set((state) => {
+          const last = state.lastClosed;
+          if (!last) return state;
+          const { instanceId } = last.placement;
+          // 可能已经通过别的路回来了（重装、重新投放），别加出两份
+          if (state.placements.some((item) => item.instanceId === instanceId)) {
+            return { lastClosed: null };
+          }
+          return {
+            placements: [...state.placements, last.placement],
+            desktopRects: last.rect
+              ? { ...state.desktopRects, [instanceId]: last.rect }
+              : state.desktopRects,
+            configs: last.config
+              ? { ...state.configs, [instanceId]: last.config }
+              : state.configs,
+            selectedInstanceId: instanceId,
+            lastClosed: null,
+          };
+        }),
+
+      dismissLastClosed: () => set({ lastClosed: null }),
 
       updatePlacement: (instanceId, patch) =>
         set((state) => ({
@@ -257,6 +371,11 @@ export const useLattice = create<LatticeState>()(
 
       setDesktopMode: (enabled) => set({ desktopMode: enabled }),
 
+      toggleRestoreOnLaunch: () => set((state) => ({ restoreOnLaunch: !state.restoreOnLaunch })),
+
+      setPaused: (paused) =>
+        set((state) => (state.paused === paused ? state : { paused })),
+
       setDesktopRect: (instanceId, rect) =>
         set((state) => {
           const current = state.desktopRects[instanceId];
@@ -270,6 +389,21 @@ export const useLattice = create<LatticeState>()(
             return state;
           }
           return { desktopRects: { ...state.desktopRects, [instanceId]: rect } };
+        }),
+
+      setConfig: (instanceId, key, value) =>
+        set((state) => {
+          const current = state.configs[instanceId] ?? {};
+          if (current[key] === value) return state;
+          return { configs: { ...state.configs, [instanceId]: { ...current, [key]: value } } };
+        }),
+
+      resetConfig: (instanceId) =>
+        set((state) => {
+          if (!(instanceId in state.configs)) return state;
+          const next = { ...state.configs };
+          delete next[instanceId];
+          return { configs: next };
         }),
 
       installWidget: (widgetId) =>
@@ -286,7 +420,11 @@ export const useLattice = create<LatticeState>()(
           const nextGrants = { ...state.grants };
           delete nextGrants[widgetId];
           const nextRects = { ...state.desktopRects };
-          for (const item of removed) delete nextRects[item.instanceId];
+          const nextConfigs = { ...state.configs };
+          for (const item of removed) {
+            delete nextRects[item.instanceId];
+            delete nextConfigs[item.instanceId];
+          }
           const keepSelection = nextPlacements.some(
             (item) => item.instanceId === state.selectedInstanceId,
           );
@@ -294,6 +432,7 @@ export const useLattice = create<LatticeState>()(
             installedIds: state.installedIds.filter((id) => id !== widgetId),
             placements: nextPlacements,
             desktopRects: nextRects,
+            configs: nextConfigs,
             grants: nextGrants,
             selectedInstanceId: keepSelection ? state.selectedInstanceId : null,
           };
@@ -329,6 +468,9 @@ export const useLattice = create<LatticeState>()(
         snapToGrid: state.snapToGrid,
         profile: state.profile,
         desktopRects: state.desktopRects,
+        configs: state.configs,
+        desktopMode: state.desktopMode,
+        restoreOnLaunch: state.restoreOnLaunch,
         libraryOpen: state.libraryOpen,
         inspectorOpen: state.inspectorOpen,
       }),

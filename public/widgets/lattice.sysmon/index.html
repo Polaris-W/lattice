@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>System</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="sys">
+      <header class="sys-head">
+        <h1 class="sys-title">System</h1>
+        <span class="sys-meta" id="meta"></span>
+      </header>
+
+      <section class="sys-row">
+        <div class="sys-line">
+          <span class="sys-label">CPU</span>
+          <span class="sys-value" id="cpu">—</span>
+        </div>
+        <div class="sys-bar"><i id="cpu-bar"></i></div>
+      </section>
+
+      <section class="sys-row">
+        <div class="sys-line">
+          <span class="sys-label">Memory</span>
+          <span class="sys-value" id="mem">—</span>
+        </div>
+        <div class="sys-bar"><i id="mem-bar"></i></div>
+        <p class="sys-sub" id="mem-sub"></p>
+      </section>
+
+      <footer class="sys-foot">
+        <span class="sys-disk" id="disk">—</span>
+        <span class="sys-net">
+          <span id="down">—</span>
+          <span id="up">—</span>
+        </span>
+      </footer>
+
+      <p class="sys-hint" id="hint"></p>
+    </main>
+    <script src="widget.js"></script>
+  </body>
+</html>

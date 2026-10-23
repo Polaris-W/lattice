@@ -14,6 +14,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { isStaleTarget, readAutostart, writeAutostart, type AutostartState } from "./autostart";
 import { Glyph, ICON, ThemeGlyph } from "./icons";
 import { useLattice, type ThemeMode } from "./store";
 
@@ -45,9 +47,11 @@ function Avatar({ name, size }: { name?: string; size: number }) {
 interface SettingsMenuProps {
   installedCount: number;
   placementCount: number;
+  /** 真的退出应用。关主窗口只是收起来（桌面上还有组件时），退出走这里 */
+  onQuit: () => void;
 }
 
-export function SettingsMenu({ installedCount, placementCount }: SettingsMenuProps) {
+export function SettingsMenu({ installedCount, placementCount, onQuit }: SettingsMenuProps) {
   const profile = useLattice((state) => state.profile);
   const signIn = useLattice((state) => state.signIn);
   const signOut = useLattice((state) => state.signOut);
@@ -55,12 +59,26 @@ export function SettingsMenu({ installedCount, placementCount }: SettingsMenuPro
   const setTheme = useLattice((state) => state.setTheme);
   const snapToGrid = useLattice((state) => state.snapToGrid);
   const toggleSnap = useLattice((state) => state.toggleSnap);
+  const restoreOnLaunch = useLattice((state) => state.restoreOnLaunch);
+  const toggleRestoreOnLaunch = useLattice((state) => state.toggleRestoreOnLaunch);
+  const paused = useLattice((state) => state.paused);
+  const setPaused = useLattice((state) => state.setPaused);
 
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<View>("menu");
   const [draftName, setDraftName] = useState("");
   const [draftEmail, setDraftEmail] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
+  /**
+   * 开机自启的真实状态。
+   *
+   * `null` = 还不知道（浏览器预览 / 读取失败）。这时整行画成禁用，
+   * 而不是先画成"关闭"再跳成"开启"—— 开关自己抖一下，用户会以为点错了。
+   */
+  const [autostart, setAutostart] = useState<AutostartState | null>(null);
+  const [autostartKnown, setAutostartKnown] = useState(false);
+  const [autostartBusy, setAutostartBusy] = useState(false);
+  const [autostartError, setAutostartError] = useState<string | null>(null);
 
   const close = useCallback(() => {
     setOpen(false);
@@ -116,6 +134,56 @@ export function SettingsMenu({ installedCount, placementCount }: SettingsMenuPro
   );
 
   const signedIn = Boolean(profile);
+
+  /*
+   * 开机自启的状态只有注册表知道，所以菜单一打开就去问一次。
+   * 不在挂载时问：用户可能刚在任务管理器的"启动"页里把它关掉过，
+   * 缓存一份只会显示错的。
+   */
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    void readAutostart().then((state) => {
+      if (!alive) return;
+      setAutostart(state);
+      setAutostartKnown(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+
+  const toggleAutostart = useCallback(async () => {
+    if (!autostart || autostartBusy) return;
+    setAutostartBusy(true);
+    setAutostartError(null);
+    try {
+      const next = await writeAutostart(!autostart.enabled);
+      // 拿到的永远是"写完之后"的真实状态：写失败时 Rust 抛错，
+      // 不会出现开关显示已开、注册表里却没有的情况
+      if (next) setAutostart(next);
+    } catch (error) {
+      setAutostartError(String(error));
+    } finally {
+      setAutostartBusy(false);
+    }
+  }, [autostart, autostartBusy]);
+
+  const togglePaused = useCallback(async () => {
+    try {
+      // 真相在 Rust 那边（托盘菜单也会改它），所以按返回值落状态，不自己取反
+      setPaused(await invoke<boolean>("set_widgets_paused", { paused: !paused }));
+    } catch (error) {
+      console.error("Failed to pause or resume the desktop widgets", error);
+    }
+  }, [paused, setPaused]);
+
+  const staleAutostart = isStaleTarget(autostart);
+  const autostartHint = autostartError
+    ? autostartError
+    : staleAutostart
+      ? "Registered for a different build — flip this off and on to point it at this one."
+      : null;
 
   return (
     <div className="lattice-settings" ref={rootRef}>
@@ -204,6 +272,70 @@ export function SettingsMenu({ installedCount, placementCount }: SettingsMenuPro
                   </label>
                 </div>
 
+                <div className="lattice-menu-row is-static">
+                  <Glyph d={ICON.monitor} />
+                  <span className="lattice-menu-label">Restore on launch</span>
+                  <label
+                    className="lattice-switch"
+                    title="Put your desktop widgets back when Lattice starts"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={restoreOnLaunch}
+                      onChange={toggleRestoreOnLaunch}
+                      aria-label="Restore widgets on launch"
+                    />
+                  </label>
+                </div>
+
+                {/*
+                  开机自启。真正的状态在注册表里，这里只是它的镜像 ——
+                  所以开关要等读到了才可点，读到之前是禁用的灰。
+                */}
+                <div className="lattice-menu-row is-static">
+                  <Glyph d={ICON.startup} />
+                  <span className="lattice-menu-label">Start with Windows</span>
+                  <label
+                    className="lattice-switch"
+                    title="Launch Lattice when you sign in, so your widgets are already there"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={Boolean(autostart?.enabled)}
+                      disabled={!autostartKnown || autostartBusy}
+                      onChange={() => void toggleAutostart()}
+                      aria-label="Start Lattice with Windows"
+                    />
+                  </label>
+                </div>
+
+                {autostartHint ? (
+                  <p className={`lattice-menu-hint${autostartError ? " is-error" : ""}`}>{autostartHint}</p>
+                ) : null}
+
+                {/*
+                  暂停：把桌面上的组件窗口藏起来（不是只停动画）。藏起来之后
+                  `document.visibilityState` 会变成 hidden，调度器整条停摆 ——
+                  是真的不占 CPU。和托盘菜单那一项是同一个状态。
+                */}
+                {placementCount > 0 ? (
+                  <div className="lattice-menu-row is-static">
+                    <Glyph d={ICON.pause} />
+                    <span className="lattice-menu-label">Pause widgets</span>
+                    <label
+                      className="lattice-switch"
+                      title="Hide the widgets on your desktop and stop their timers, without closing Lattice"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={paused}
+                        onChange={() => void togglePaused()}
+                        aria-label="Pause desktop widgets"
+                      />
+                    </label>
+                  </div>
+                ) : null}
+
                 <button
                   type="button"
                   className="lattice-menu-row"
@@ -237,6 +369,23 @@ export function SettingsMenu({ installedCount, placementCount }: SettingsMenuPro
                   </button>
                 </>
               )}
+
+              {/*
+                退出只能从这里走：桌面上还有组件时，关主窗口只是把它收起来
+                （组件得留着，否则"贴桌面"这件事就不成立了）。
+              */}
+              <div className="lattice-menu-divider" />
+              <button
+                type="button"
+                className="lattice-menu-row is-danger"
+                onClick={() => {
+                  close();
+                  onQuit();
+                }}
+              >
+                <Glyph d={ICON.power} />
+                <span className="lattice-menu-label">Quit Lattice</span>
+              </button>
             </>
           )}
 

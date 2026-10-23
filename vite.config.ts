@@ -1,12 +1,15 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+// 内置组件的错误上报注入：用户组件走 Rust 协议层，内置组件走这里
+// @ts-expect-error 插件是 .mjs，没带类型声明
+import { widgetDiagnostics } from "./scripts/widget-diagnostics-plugin.mjs";
 // @ts-expect-error type error without @types/node package
 import process from "node:process";
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(() => ({
-  plugins: [react()],
+  plugins: [react(), widgetDiagnostics()],
 
   // 两个入口：主窗口的平台外壳，以及每个桌面组件窗口用的宿主页
   build: {

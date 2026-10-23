@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 use tauri::http::{header, Request, Response, StatusCode};
 use tauri::{Runtime, UriSchemeContext};
 
+use crate::csp;
 use crate::diagnostics::{self, Failure};
 use crate::widgets;
 
@@ -87,16 +88,27 @@ pub fn handle<R: Runtime>(
     // HEAD 只要头，不必把文件读出来再丢掉
     let body = if method == "HEAD" { Vec::new() } else { body };
 
-    Response::builder()
+    let mime = mime_of(&file);
+    let mut builder = Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, mime_of(&file))
+        .header(header::CONTENT_TYPE, mime)
         .header(header::CONTENT_LENGTH, length)
         // 组件是自己写的，改完刷新就得看到新内容，别缓存
         .header(header::CACHE_CONTROL, "no-cache")
         // iframe 是 sandbox="allow-scripts"，文档源是 opaque 的，
         // 组件 fetch 自己的 json/图片在浏览器看来是跨域 —— 放行
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-        .header("X-Content-Type-Options", "nosniff")
+        .header("X-Content-Type-Options", "nosniff");
+
+    /*
+     * CSP 只发给文档。浏览器对子资源响应上的 CSP 一律忽略，发给 .js/.css
+     * 只是白占几十字节；真正管事的是导航那一次。
+     */
+    if mime.starts_with("text/html") {
+        builder = builder.header(header::CONTENT_SECURITY_POLICY, csp::document_policy());
+    }
+
+    builder
         .body(body)
         .unwrap_or_else(|_| empty(StatusCode::INTERNAL_SERVER_ERROR))
 }
@@ -139,7 +151,10 @@ fn failure_response(
         .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
         // 说明页随状态变，缓存下来只会让人看到过期的原因
         .header(header::CACHE_CONTROL, "no-store")
-        .header("X-Content-Type-Options", "nosniff");
+        .header("X-Content-Type-Options", "nosniff")
+        // 说明页也是组件协议发出来的 HTML 文档，一样带上策略：
+        // 它自己不需要脚本，但"凡是文档都有 CSP"这条规矩别开口子
+        .header(header::CONTENT_SECURITY_POLICY, csp::document_policy());
     if failure == Failure::BadMethod {
         builder = builder.header(header::ALLOW, "GET, HEAD");
     }

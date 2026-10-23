@@ -160,18 +160,37 @@ body {
 }
 
 .todo-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 9px;
   min-height: 30px;
   padding: 5px 7px;
   border-radius: 7px;
-  cursor: default;
-  transition: background 0.12s ease;
+  /*
+   * grab 而不是 default：整行都能拖起来排序，光标是唯一的提示 ——
+   * 桌面组件上没地方再塞一个"六点手柄"。点一下仍然会勾掉这一条，
+   * 拖和点的分界在脚本里（4px 阈值），光标统一按"能拖"来说。
+   */
+  cursor: grab;
+  transition:
+    background 0.12s ease,
+    transform 0.14s ease;
 }
 
 .todo-item:hover {
   background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+/*
+ * 被拖起来的那一行：跟手要绝对跟手，所以关掉 transform 的过渡；
+ * 抬到上面一层，免得它从让位的行底下穿过去。
+ */
+.todo-item.is-dragging {
+  z-index: 2;
+  cursor: grabbing;
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
+  transition: none;
 }
 
 /* ---------- 优先级圆点 ---------- */
@@ -303,7 +322,8 @@ body {
   white-space: nowrap;
   line-height: 1.45;
   letter-spacing: 0.01em;
-  cursor: pointer;
+  /* 跟着整行走：光标写 pointer 会暗示"只能点"，而这里也能拖 */
+  cursor: inherit;
   user-select: none;
 }
 

@@ -81,6 +81,10 @@ pub fn widgets_dir(app: AppHandle) -> Result<String, String> {
 /// 从任意目录安装一个组件：校验 id 合法 → 递归复制到用户组件目录
 #[tauri::command]
 pub fn install_widget(app: AppHandle, source_dir: String) -> Result<String, String> {
+    // 拷贝期间把文件监听压住：几十个文件会各报一次变化，
+    // 而装完之后前端本来就会自己重扫一遍清单
+    let _quiet = crate::watch::Suppress::new();
+
     let source = PathBuf::from(&source_dir);
     if !source.is_dir() {
         return Err(format!("folder does not exist: {source_dir}"));
@@ -118,6 +122,7 @@ pub fn install_widget(app: AppHandle, source_dir: String) -> Result<String, Stri
 
 #[tauri::command]
 pub fn uninstall_widget(app: AppHandle, id: String) -> Result<(), String> {
+    let _quiet = crate::watch::Suppress::new();
     if id.is_empty() || id.contains(['/', '\\', ':']) || id.contains("..") {
         return Err("invalid widget id".to_string());
     }

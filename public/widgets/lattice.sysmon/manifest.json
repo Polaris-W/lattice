@@ -1,0 +1,13 @@
+{
+  "id": "lattice.sysmon",
+  "name": "System",
+  "version": "0.1.0",
+  "description": "CPU, memory, disk and network throughput, sampled once a second by the platform",
+  "author": "Lattice",
+  "entry": "index.html",
+  "icon": "icon.svg",
+  "size": { "w": 240, "h": 200, "minW": 200, "minH": 168 },
+  "layer": "top",
+  "permissions": ["system:monitor"],
+  "sdk": "^0.1"
+}

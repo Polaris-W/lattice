@@ -1,14 +1,29 @@
 {
   "id": "lattice.clock",
   "name": "Clock",
-  "version": "0.1.0",
-  "description": "A large clock with the date and time zone; 12/24-hour toggle",
+  "version": "0.2.0",
+  "description": "A large clock with the date; 12/24-hour and seconds are set per copy",
   "author": "Lattice",
   "entry": "index.html",
   "icon": "icon.svg",
   "size": { "w": 240, "h": 140, "minW": 160, "minH": 110 },
   "layer": "desktop",
   "interactive": false,
-  "permissions": ["clock", "storage"],
+  "permissions": ["clock"],
+  "config": [
+    {
+      "key": "hour12",
+      "type": "toggle",
+      "label": "12-hour clock",
+      "default": false,
+      "help": "Off means 24-hour, e.g. 21:40."
+    },
+    {
+      "key": "showSeconds",
+      "type": "toggle",
+      "label": "Show seconds",
+      "default": false
+    }
+  ],
   "sdk": "^0.1"
 }

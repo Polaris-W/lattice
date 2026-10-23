@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>sysmon render test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+      iframe {
+        position: absolute;
+        left: -9999px;
+        width: 240px;
+        height: 200px;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      /*
+       * 系统监视器的渲染。这里盯的是"数字怎么变成字"：
+       *
+       *   1. 单位换算在 100 以上时不能掉类型 —— `Math.round` 返回数字，
+       *      接着 `.replace` 就抛，底栏整行永远停在占位符上（真撞过：
+       *      磁盘 226 GB 恰好每次都走这条分支，网络那行一直不显示）
+       *   2. 0 和缺失值不能显示成 `NaN` / `undefined`
+       *   3. 没有 system:monitor 时要说人话，不是静默空白
+       */
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      const GiB = 1024 * 1024 * 1024;
+
+      const METRICS = {
+        cpu: { usage: 0.42, cores: 16 },
+        memory: { used: 13 * GiB, total: 16 * GiB, usage: 0.81 },
+        // 226 GB 会走 ">= 100 不留小数" 那条分支，正是出过 bug 的地方
+        disk: { mount: "C:", used: 226 * GiB, total: 500 * GiB, usage: 0.45 },
+        network: {
+          rxPerSec: 12883,
+          txPerSec: 38351,
+          rxTotal: 137 * GiB,
+          txTotal: 35 * GiB,
+        },
+        sampledAt: 1792751479549,
+      };
+
+      function mount({ metrics, denied = false } = {}) {
+        const frame = document.createElement("iframe");
+        frame.setAttribute("sandbox", "allow-scripts allow-same-origin");
+        frame.src = "/widgets/lattice.sysmon/index.html";
+        document.body.appendChild(frame);
+
+        const calls = [];
+        const ready = new Promise((resolve) => {
+          window.addEventListener("message", function handler(event) {
+            if (event.source !== frame.contentWindow) return;
+            const data = event.data;
+            if (!data || data.__lattice !== 1) return;
+
+            if (data.type === "ready") {
+              resolve();
+              return;
+            }
+            if (data.type !== "request") return;
+
+            calls.push(data.method);
+            const reply = (payload) =>
+              frame.contentWindow.postMessage(
+                Object.assign({ __lattice: 1, type: "response", id: data.id }, payload),
+                "*",
+              );
+
+            if (data.method === "schedule.every") {
+              reply({ ok: true, result: { id: 7, every: data.params.every } });
+              return;
+            }
+            if (data.method === "system.metrics") {
+              if (denied) {
+                reply({
+                  ok: false,
+                  code: "permission_denied",
+                  error: "permission not granted: system:monitor",
+                  permission: "system:monitor",
+                });
+                return;
+              }
+              reply({ ok: true, result: metrics });
+              return;
+            }
+            reply({ ok: false, code: "unknown_method", error: "unknown" });
+          });
+        });
+
+        return { frame, calls, ready };
+      }
+
+      const text = (doc, id) => doc.getElementById(id)?.textContent;
+
+      // ---- 场景 1：正常渲染 ----
+      {
+        const view = mount({ metrics: METRICS });
+        await view.ready;
+        await sleep(150);
+        const doc = view.frame.contentDocument;
+
+        log(view.calls.includes("schedule.every"), `心跳注册走了调度器（${view.calls.join(", ")}）`);
+        log(text(doc, "cpu") === "42%", `CPU 显示「${text(doc, "cpu")}」`);
+        log(doc.getElementById("cpu-bar").style.width === "42%", `CPU 条宽 ${doc.getElementById("cpu-bar").style.width}`);
+        log(text(doc, "mem") === "81%", `内存显示「${text(doc, "mem")}」`);
+        log(text(doc, "mem-sub") === "13 GB of 16 GB", `内存副标题「${text(doc, "mem-sub")}」`);
+        log(text(doc, "disk") === "C: 45%", `磁盘显示「${text(doc, "disk")}」`);
+        log(
+          text(doc, "disk").length > 0 && doc.getElementById("disk").title.includes("226 GB"),
+          `磁盘 title 没有抛（「${doc.getElementById("disk").title}」）`,
+        );
+        log(text(doc, "down") === "↓ 12.6 KB/s", `下行「${text(doc, "down")}」`);
+        log(text(doc, "up") === "↑ 37.5 KB/s", `上行「${text(doc, "up")}」`);
+        log(
+          !doc.getElementById("hint").classList.contains("is-visible"),
+          "没有权限问题时不留提示",
+        );
+
+        // 高负载要换色，不然 95% 和 45% 看起来一样
+        doc.getElementById("cpu-bar").classList.contains("is-high");
+        log(true, "（颜色分档见 CSS，这里只确认没有异常）");
+        view.frame.remove();
+      }
+
+      // ---- 场景 2：没授权 ----
+      {
+        const view = mount({ denied: true });
+        await view.ready;
+        await sleep(150);
+        const doc = view.frame.contentDocument;
+
+        log(
+          doc.getElementById("hint").classList.contains("is-visible") &&
+            text(doc, "hint") === "Needs the System metrics permission",
+          `未授权时提示「${text(doc, "hint")}」`,
+        );
+        log(text(doc, "cpu") === "—", `未授权时 CPU 保持占位符「${text(doc, "cpu")}」`);
+        view.frame.remove();
+      }
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>

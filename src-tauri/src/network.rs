@@ -1,0 +1,402 @@
+//! 网络白名单代理：`network` 权限真正的落地
+//!
+//! # 组件不直连
+//!
+//! 组件文档的 CSP 里 `connect-src` 只有它自己的协议源 —— `fetch("https://…")`
+//! 在浏览器层面就抛 `TypeError`。要联网，只能走桥上的 `network.fetch`，
+//! 由这里替它发请求。
+//!
+//! 这条路比"在本地起一个 HTTP 代理、把 `connect-src` 指向它"更严：
+//!
+//! - 没有本地端口，组件**没有办法**绕过代理直连（HTTP 代理总有 bypass 的缝：
+//!   `connect-src` 写 `http://127.0.0.1:PORT` 的同时还得放行别的，否则组件
+//!   连自己的 `data.json` 都读不了）
+//! - 白名单在 Rust 侧、按**实例**校验，组件改不了自己的清单
+//! - 每次请求都能留痕（`LATTICE_NET_TRACE=1`）
+//!
+//! # 三层闸门
+//!
+//! 1. **权限**：宿主页必须拿到 `network`（`HostConfig.permissions`），否则直接拒
+//! 2. **主机白名单**：清单里的 `network.hosts`，只认列出来的
+//! 3. **形状**：只允许 http/https、方法限于 GET/HEAD/POST/PUT/PATCH/DELETE、
+//!    请求体 ≤ 256KB、响应 ≤ 1MB、总超时 20 秒
+//!
+//! # 重定向必须关掉
+//!
+//! WinHTTP 默认自动跟随重定向 —— 那等于白名单形同虚设：`https://good.com`
+//! 302 到 `https://evil.com`，请求就出去了，而白名单只检查了第一跳。
+//! 所以 `WINHTTP_OPTION_REDIRECT_POLICY` 设成 `NEVER`，3xx 原样回给组件，
+//! 组件要跟就再发一次 —— 那时会重新过一遍白名单。
+
+use std::collections::BTreeMap;
+use std::ffi::OsStr;
+use std::os::windows::ffi::OsStrExt;
+
+use serde::Serialize;
+use tauri::State;
+
+use crate::network_policy::{host_allowed, parse_url, ALLOWED_METHODS, Target};
+use crate::runner::Runner;
+use windows_sys::Win32::Foundation::GetLastError;
+use windows_sys::Win32::Networking::WinHttp::{
+    WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_FLAG_SECURE, WINHTTP_OPTION_REDIRECT_POLICY,
+    WINHTTP_OPTION_REDIRECT_POLICY_NEVER, WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_RAW_HEADERS_CRLF,
+    WINHTTP_QUERY_STATUS_CODE, WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest,
+    WinHttpQueryHeaders, WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest,
+    WinHttpSetOption, WinHttpSetTimeouts,
+};
+
+/// 请求体上限。组件的用途是"取一段 JSON / 提交一小段数据"，不是传文件
+const MAX_REQUEST_BYTES: usize = 256 * 1024;
+/// 响应上限。超过就截断并标记，绝不把 20MB 的字符串塞进 postMessage
+const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkResponse {
+    pub status: u16,
+    pub ok: bool,
+    /// 头名统一小写；重名只留最后一个（`Set-Cookie` 这种多值头不展开）
+    pub headers: BTreeMap<String, String>,
+    pub body: String,
+    /// 响应超过 `MAX_RESPONSE_BYTES`，被截断了
+    pub truncated: bool,
+}
+
+fn wide(value: &str) -> Vec<u16> {
+    OsStr::new(value).encode_wide().chain(std::iter::once(0)).collect()
+}
+
+/// 句柄的 RAII 包装：WinHTTP 的 handle 关早关晚都会漏，包一层省心
+struct Handle(*mut core::ffi::c_void);
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: 句柄是本结构体持有的，只在这里关一次
+            unsafe { WinHttpCloseHandle(self.0) };
+        }
+    }
+}
+
+fn last_error(what: &str) -> String {
+    // SAFETY: 只是读线程局部错误码
+    let code = unsafe { GetLastError() };
+    format!("{what} failed (Win32 error {code})")
+}
+
+/// 发一次请求。阻塞 —— 调用方负责丢到线程池里。
+fn send(
+    target: &Target,
+    method: &str,
+    headers: &[(String, String)],
+    body: Option<&[u8]>,
+) -> Result<NetworkResponse, String> {
+    let agent = wide("Lattice/0.1");
+    // SAFETY: 字符串以 NUL 结尾；AUTOMATIC_PROXY 用系统代理设置（企业环境常见）
+    let session = Handle(unsafe {
+        WinHttpOpen(
+            agent.as_ptr(),
+            WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+        )
+    });
+    if session.0.is_null() {
+        return Err(last_error("opening a WinHTTP session"));
+    }
+
+    // SAFETY: 句柄有效。四个超时都设，缺一个就可能在 DNS 上挂住十几秒
+    unsafe { WinHttpSetTimeouts(session.0, 5_000, 5_000, 10_000, 15_000) };
+
+    let host = wide(&target.host);
+    // SAFETY: 同上
+    let connect = Handle(unsafe {
+        WinHttpConnect(session.0, host.as_ptr(), target.port, 0)
+    });
+    if connect.0.is_null() {
+        return Err(last_error("connecting to the host"));
+    }
+
+    let verb = wide(method);
+    let path = wide(&target.path);
+    let flags = if target.secure { WINHTTP_FLAG_SECURE } else { 0 };
+    // SAFETY: 同上；不接受自定义 Accept-Type（null）
+    let request = Handle(unsafe {
+        WinHttpOpenRequest(
+            connect.0,
+            verb.as_ptr(),
+            path.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            flags,
+        )
+    });
+    if request.0.is_null() {
+        return Err(last_error("opening the request"));
+    }
+
+    // 关掉自动重定向：否则 302 一出，白名单只检查了第一跳
+    let policy: u32 = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+    // SAFETY: 传的是 u32 的指针和长度，选项值就是这个 DWORD
+    unsafe {
+        WinHttpSetOption(
+            request.0,
+            WINHTTP_OPTION_REDIRECT_POLICY,
+            &policy as *const u32 as *const core::ffi::c_void,
+            std::mem::size_of::<u32>() as u32,
+        );
+    }
+
+    // 头拼成 CRLF 串。Host 由 WinHTTP 自己加，这里不要重复
+    let mut header_block = String::new();
+    for (name, value) in headers {
+        // 头里出现换行 = 头注入，直接拒
+        if name.contains(['\r', '\n']) || value.contains(['\r', '\n']) {
+            return Err("a request header contains a line break".to_string());
+        }
+        header_block.push_str(name.trim());
+        header_block.push_str(": ");
+        header_block.push_str(value.trim());
+        header_block.push_str("\r\n");
+    }
+    let header_wide = wide(&header_block);
+    /*
+     * 注意：`WinHttpSendRequest` 的 `dwHeadersLength` 是**字符数**，不是字节数。
+     *
+     * 这条和别的 Win32 字符串参数不一样（注册表那几个 API 收的是字节数，
+     * 见 autostart.rs），传成字节数不会报"参数不对"以外的任何线索 ——
+     * 真实症状是每个带自定义头的请求都失败，`GetLastError()` 只给一个
+     * `ERROR_INVALID_PARAMETER (87)`。只有不带头的请求能过，所以
+     * "组件联网时灵时不灵"会往错误的方向查很久。
+     */
+    let header_chars = (header_wide.len() - 1) as u32;
+    let body_len = body.map(|bytes| bytes.len()).unwrap_or(0) as u32;
+
+    // SAFETY: 指针与长度一一对应；body 为 None 时传空指针 + 0
+    let sent = unsafe {
+        WinHttpSendRequest(
+            request.0,
+            if header_block.is_empty() { std::ptr::null() } else { header_wide.as_ptr() },
+            if header_block.is_empty() { 0 } else { header_chars },
+            body.map(|bytes| bytes.as_ptr() as *const core::ffi::c_void)
+                .unwrap_or(std::ptr::null()),
+            body_len,
+            body_len,
+            0,
+        )
+    };
+    if sent == 0 {
+        return Err(last_error("sending the request"));
+    }
+
+    // SAFETY: 句柄有效
+    if unsafe { WinHttpReceiveResponse(request.0, std::ptr::null_mut()) } == 0 {
+        return Err(last_error("waiting for the response"));
+    }
+
+    let mut status: u32 = 0;
+    let mut status_len = std::mem::size_of::<u32>() as u32;
+    // SAFETY: 缓冲区是 u32，配合 QUERY_FLAG_NUMBER 拿到数字状态码
+    let ok = unsafe {
+        WinHttpQueryHeaders(
+            request.0,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            std::ptr::null(),
+            &mut status as *mut u32 as *mut core::ffi::c_void,
+            &mut status_len,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        return Err(last_error("reading the status code"));
+    }
+
+    let headers = read_headers(request.0);
+    let (body, truncated) = read_body(request.0)?;
+
+    Ok(NetworkResponse {
+        status: status as u16,
+        ok: (200..300).contains(&status),
+        headers,
+        body,
+        truncated,
+    })
+}
+
+/// 读原始头块，拆成小写名字的 map
+fn read_headers(request: *mut core::ffi::c_void) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let mut size: u32 = 0;
+
+    // 第一遍只问长度：这个 API 用"缓冲区不够"来告诉你该给多大
+    // SAFETY: 空缓冲区 + 长度指针是它的标准用法
+    unsafe {
+        WinHttpQueryHeaders(
+            request,
+            WINHTTP_QUERY_RAW_HEADERS_CRLF,
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+        )
+    };
+    if size == 0 {
+        return out;
+    }
+
+    let mut buffer = vec![0u16; (size as usize / 2) + 1];
+    // SAFETY: 缓冲区按上面问到的字节数分配
+    let ok = unsafe {
+        WinHttpQueryHeaders(
+            request,
+            WINHTTP_QUERY_RAW_HEADERS_CRLF,
+            std::ptr::null(),
+            buffer.as_mut_ptr() as *mut core::ffi::c_void,
+            &mut size,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        return out;
+    }
+
+    let raw = String::from_utf16_lossy(&buffer);
+    for line in raw.split("\r\n") {
+        // 第一行是 `HTTP/1.1 200 OK`，没有冒号
+        let Some((name, value)) = line.split_once(':') else { continue };
+        let name = name.trim().to_ascii_lowercase();
+        if name.is_empty() {
+            continue;
+        }
+        out.insert(name, value.trim().to_string());
+    }
+    out
+}
+
+/// 一直读到没有为止，超过上限就截断
+fn read_body(request: *mut core::ffi::c_void) -> Result<(String, bool), String> {
+    let mut collected: Vec<u8> = Vec::new();
+    let mut chunk = vec![0u8; 16 * 1024];
+
+    loop {
+        let mut read: u32 = 0;
+        // SAFETY: 缓冲区独占，长度对得上
+        let ok = unsafe {
+            WinHttpReadData(
+                request,
+                chunk.as_mut_ptr() as *mut core::ffi::c_void,
+                chunk.len() as u32,
+                &mut read,
+            )
+        };
+        if ok == 0 {
+            return Err(last_error("reading the response body"));
+        }
+        if read == 0 {
+            break;
+        }
+        collected.extend_from_slice(&chunk[..read as usize]);
+        if collected.len() >= MAX_RESPONSE_BYTES {
+            collected.truncate(MAX_RESPONSE_BYTES);
+            // 截断点可能落在多字节字符中间，from_utf8_lossy 会把它换成替换符，
+            // 不会 panic —— 这里要的是"能读"，不是"一字不差"
+            return Ok((String::from_utf8_lossy(&collected).to_string(), true));
+        }
+    }
+
+    Ok((String::from_utf8_lossy(&collected).to_string(), false))
+}
+
+/// 组件侧的入口。
+///
+/// 参数都走单独的名字而不是一个结构体：桥那边 `params` 的形状由组件决定，
+/// 少一层嵌套少一处校验。
+#[tauri::command]
+pub async fn network_fetch(
+    window: tauri::WebviewWindow,
+    runner: State<'_, Runner>,
+    url: String,
+    method: Option<String>,
+    headers: Option<Vec<(String, String)>>,
+    body: Option<String>,
+) -> Result<NetworkResponse, String> {
+    // 先在同步阶段把该查的都查完：State 不跨 await 持有
+    let config = runner
+        .get(window.label())
+        .ok_or_else(|| "this window is not a registered widget window".to_string())?;
+
+    if !config.permissions.iter().any(|item| item == "network") {
+        return Err("permission not granted: network".to_string());
+    }
+
+    let target = parse_url(&url)?;
+    if !host_allowed(&config.network, &target) {
+        // 这条日志很重要：组件"突然连不上了"和"清单里根本没写这个主机"
+        // 从外面看一模一样
+        eprintln!(
+            "[lattice] network blocked ({}): {} — not in the manifest's network.hosts",
+            config.widget_id,
+            target.host
+        );
+        return Err(format!(
+            "host \"{}\" is not listed in this widget's network.hosts",
+            target.host
+        ));
+    }
+
+    let method = method.unwrap_or_else(|| "GET".to_string()).to_ascii_uppercase();
+    if !ALLOWED_METHODS.contains(&method.as_str()) {
+        return Err(format!(
+            "method \"{method}\" is not allowed (use GET / HEAD / POST / PUT / PATCH / DELETE)"
+        ));
+    }
+
+    let headers = headers.unwrap_or_default();
+    if headers.len() > 32 {
+        return Err("too many request headers (max 32)".to_string());
+    }
+
+    let body = body.unwrap_or_default();
+    if body.len() > MAX_REQUEST_BYTES {
+        return Err(format!(
+            "the request body is larger than {} KB",
+            MAX_REQUEST_BYTES / 1024
+        ));
+    }
+
+    if std::env::var("LATTICE_NET_TRACE").is_ok_and(|value| value != "0") {
+        eprintln!(
+            "[lattice] network {} {} ({} bytes)",
+            method,
+            url,
+            body.len()
+        );
+    }
+
+    let widget_id = config.widget_id.clone();
+    let payload = if body.is_empty() || method == "GET" || method == "HEAD" {
+        None
+    } else {
+        Some(body.into_bytes())
+    };
+
+    // WinHTTP 是阻塞 API，扔到线程池里跑，别占着异步运行时的线程
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        send(&target, &method, &headers, payload.as_deref())
+    })
+    .await
+    .map_err(|error| format!("the network request task failed: {error}"))?;
+
+    match &result {
+        Ok(response) => {
+            if std::env::var("LATTICE_NET_TRACE").is_ok_and(|value| value != "0") {
+                eprintln!("[lattice] network <- {widget_id} {} {}", response.status, response.body.len());
+            }
+        }
+        Err(error) => eprintln!("[lattice] network failed ({widget_id}): {error}"),
+    }
+    result
+}

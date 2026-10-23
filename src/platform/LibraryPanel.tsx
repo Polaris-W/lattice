@@ -7,10 +7,16 @@
  *
  * 这个分界是产品定义的一部分，不是 UI 细节：没有安装这个动作，
  * 平台就退化成一个内置了几个组件的桌面工具，而不是扩展平台。
+ *
+ * 搜索只是**过滤视图**，不改变上面那个分界：查的时候"已安装 / 可安装"两段照旧分开，
+ * 只是各自只留命中的卡片。所以搜出来的是"这些东西里有几个是已装的"，
+ * 而不是把两种东西混成一列。
  */
 
+import { useMemo, useState } from "react";
 import type { WidgetLoadError, WidgetRecord } from "../runtime/registry";
-import { PERMISSION_LABELS } from "../runtime/manifest";
+import { matchesWidget, tokenize } from "../runtime/library-search";
+import { PERMISSION_LABELS, isPermissionReady } from "../runtime/manifest";
 import { Glyph, ICON, PanelGlyph, WidgetIconMark } from "./icons";
 
 /** 安装结果提示。成功的会自己消失，失败的留着等用户处理 */
@@ -52,9 +58,20 @@ export function LibraryPanel({
   open,
   onToggle,
 }: LibraryPanelProps) {
+  const [query, setQuery] = useState("");
+  // 按空格切成多个词，每个词都得命中（"clock 24" 这种组合才有意义）
+  const tokens = useMemo(() => tokenize(query), [query]);
+  const filtering = tokens.length > 0;
+
   const installed = widgets.filter((record) => installedIds.has(record.manifest.id));
   const available = widgets.filter((record) => !installedIds.has(record.manifest.id));
   const officialPack = available.filter((record) => record.source === "bundled");
+
+  const matches = (record: WidgetRecord) => matchesWidget(record, tokens);
+
+  const shownInstalled = installed.filter(matches);
+  const shownAvailable = available.filter(matches);
+  const nothingMatched = filtering && shownInstalled.length === 0 && shownAvailable.length === 0;
 
   const activate = (record: WidgetRecord) => {
     if (!installedIds.has(record.manifest.id)) {
@@ -117,7 +134,15 @@ export function LibraryPanel({
         {record.manifest.permissions.length > 0 && (
           <div className="lattice-perm-list">
             {record.manifest.permissions.map((permission) => (
-              <span key={permission} className="lattice-perm">
+              <span
+                key={permission}
+                className={`lattice-perm${isPermissionReady(permission) ? "" : " is-pending"}`}
+                title={
+                  isPermissionReady(permission)
+                    ? undefined
+                    : "Declared by the widget, but the platform has no bridge method for it yet"
+                }
+              >
                 {PERMISSION_LABELS[permission]}
               </span>
             ))}
@@ -213,6 +238,42 @@ export function LibraryPanel({
         </div>
       )}
 
+      {widgets.length > 0 && (
+        <div className="lattice-lib-search">
+          <span className="lattice-lib-search-icon" aria-hidden>
+            <Glyph d={ICON.search} size={13} />
+          </span>
+          <input
+            type="search"
+            className="lattice-lib-search-input"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              // Esc 不能漏到 window 上去：设置菜单也在听这个键
+              event.stopPropagation();
+              if (query) setQuery("");
+              else event.currentTarget.blur();
+            }}
+            placeholder="Search widgets"
+            aria-label="Search widgets"
+            spellCheck={false}
+            autoComplete="off"
+          />
+          {query && (
+            <button
+              type="button"
+              className="lattice-lib-search-clear"
+              onClick={() => setQuery("")}
+              aria-label="Clear search"
+              title="Clear search"
+            >
+              <Glyph d={ICON.close} size={11} />
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="lattice-panel-body">
         {loading && <p className="lattice-hint">Scanning widgets…</p>}
 
@@ -225,7 +286,7 @@ export function LibraryPanel({
           </div>
         )}
 
-        {!loading && widgets.length > 0 && installed.length === 0 && (
+        {!loading && !filtering && widgets.length > 0 && installed.length === 0 && (
           <div className="lattice-lib-note">
             <p className="lattice-lib-note-title">The platform is empty</p>
             <p className="lattice-hint">
@@ -243,21 +304,39 @@ export function LibraryPanel({
           </div>
         )}
 
-        {installed.length > 0 && (
+        {nothingMatched && (
+          <div className="lattice-lib-note">
+            <p className="lattice-lib-note-title">Nothing matches “{query.trim()}”</p>
+            <p className="lattice-hint">
+              Search covers names, ids, descriptions, authors and permissions.
+            </p>
+            <button type="button" className="lattice-btn is-small" onClick={() => setQuery("")}>
+              Clear search
+            </button>
+          </div>
+        )}
+
+        {shownInstalled.length > 0 && (
           <section className="lattice-lib-section">
             <h3 className="lattice-lib-section-title">
-              Installed<span>{installed.length}</span>
+              Installed
+              <span>
+                {filtering ? `${shownInstalled.length}/${installed.length}` : installed.length}
+              </span>
             </h3>
-            {installed.map(renderCard)}
+            {shownInstalled.map(renderCard)}
           </section>
         )}
 
-        {available.length > 0 && (
+        {shownAvailable.length > 0 && (
           <section className="lattice-lib-section">
             <h3 className="lattice-lib-section-title">
-              Available<span>{available.length}</span>
+              Available
+              <span>
+                {filtering ? `${shownAvailable.length}/${available.length}` : available.length}
+              </span>
             </h3>
-            {available.map(renderCard)}
+            {shownAvailable.map(renderCard)}
           </section>
         )}
 

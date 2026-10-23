@@ -22,7 +22,7 @@ crate-type = ["rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -38,4 +38,24 @@ panic = "abort"
 strip = true
 
 [target."cfg(windows)".dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell"] }
+# 出网闸门要用 WebView2 的 FrameNavigationStarting —— 那是 wry 不暴露的 COM 事件，
+# 只能自己拿 controller 挂。版本必须和 tauri/wry 依赖的那份一致（Cargo.lock 里
+# 是 0.39.1），否则同名类型会变成两个不兼容的 crate。
+webview2-com = "0.39"
+# PWSTR：读 COM 回填的字符串。windows 0.62 本来就在树里，加它不会多编一份
+windows = "0.62"
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_NetworkManagement_Ndis",
+  "Win32_Networking_WinHttp",
+  "Win32_Security",
+  "Win32_Storage_FileSystem",
+  "Win32_System_IO",
+  "Win32_System_Registry",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }

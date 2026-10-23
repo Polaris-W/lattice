@@ -7,6 +7,7 @@
  */
 
 import { normalizeAppearance, type Appearance } from "./appearance";
+import { normalizeConfig, type ConfigField } from "./config";
 
 /** 组件在桌面上的层级 */
 export type WidgetLayer = "desktop" | "top";
@@ -28,6 +29,21 @@ export interface WidgetSize {
   h: number;
   minW: number;
   minH: number;
+}
+
+/**
+ * 联网白名单。
+ *
+ * 光有 `network` 权限不够 —— 那只是"用户允许这个组件联网"。**能连哪儿**
+ * 写在清单里，由作者声明、用户在授权界面看到：一个天气组件没理由能连
+ * 银行的域名。
+ *
+ * 两种写法：`example.com`（只匹配 80/443）、`example.com:8080`（钉住端口）。
+ * 不支持通配符 —— `*.example.com` 的边界问题（`evil.example.com.attacker.net`）
+ * 靠人一遍遍想不划算，多列一行的成本几乎为零。
+ */
+export interface WidgetNetwork {
+  hosts: string[];
 }
 
 export interface WidgetManifest {
@@ -61,6 +77,14 @@ export interface WidgetManifest {
    */
   interactive: boolean;
   permissions: Permission[];
+  /**
+   * 联网白名单，只有授予 `network` 时才起作用。
+   *
+   * 空列表 = 哪儿都连不上。这看着苛刻，但方向是对的：漏写一行白名单，
+   * 症状是"组件拿不到数据"，一眼就能看出来；反过来（默认放开）漏写一行，
+   * 症状是"没人发现"。
+   */
+  network: WidgetNetwork;
   /** 声明所依赖的 SDK 版本区间，便于将来做兼容性拦截 */
   sdk: string;
   /**
@@ -68,6 +92,14 @@ export interface WidgetManifest {
    * 组件本身不参与 —— 底板是平台画的。
    */
   appearance: Appearance;
+  /**
+   * 这个组件可以被配置哪些项。
+   *
+   * 平台据此在属性面板里渲染表单，值按**实例**存（不是按组件），组件用
+   * `config.get` 读一份归一化好的完整对象。写坏的字段会被单独丢弃，
+   * 不会让整包加载失败 —— 规则见 runtime/config.ts。
+   */
+  config: ConfigField[];
 }
 
 export const DEFAULT_SIZE: WidgetSize = { w: 240, h: 140, minW: 120, minH: 80 };
@@ -133,8 +165,10 @@ export function normalizeManifest(raw: unknown, dirName: string): WidgetManifest
     layer,
     interactive,
     permissions: normalizePermissions(input.permissions),
+    network: normalizeNetwork(input.network),
     sdk: optionalString(input.sdk) || SUPPORTED_SDK,
     appearance: normalizeAppearance(input.appearance),
+    config: normalizeConfig(input.config),
   };
 }
 
@@ -158,10 +192,33 @@ function normalizePermissions(raw: unknown): Permission[] {
 }
 
 /**
+ * 白名单条目：`host` 或 `host:port`，小写、精确匹配。
+ *
+ * 写坏一条就丢一条，不整包失败 —— 和图标同一个理由。丢掉的后果是那个主机
+ * 连不上（明确的拒绝），而不是悄悄放宽（那才是真问题）。
+ */
+const NETWORK_HOST_RE = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::\d{1,5})?$/;
+
+function normalizeNetwork(raw: unknown): WidgetNetwork {
+  if (!raw || typeof raw !== "object") return { hosts: [] };
+  const input = raw as Record<string, unknown>;
+  if (!Array.isArray(input.hosts)) return { hosts: [] };
+
+  const hosts: string[] = [];
+  for (const item of input.hosts) {
+    if (typeof item !== "string") continue;
+    const host = item.trim().toLowerCase();
+    // `*` 会在这里被 NETWORK_HOST_RE 挡掉：不支持通配符
+    if (!host || !NETWORK_HOST_RE.test(host) || hosts.includes(host)) continue;
+    hosts.push(host);
+  }
+  return { hosts };
+}
+
+/**
  * 图标路径：只接受包内相对路径，其余一律当没声明。
  * 不抛错是刻意的 —— 图标是锦上添花，不该因为写错一个路径就整包加载失败。
- */
-function normalizeIconPath(value: unknown): string {
+ */function normalizeIconPath(value: unknown): string {
   const raw = optionalString(value).replace(/^\.\//, "").replace(/^\/+/, "");
   if (!raw || raw.includes("..") || !ICON_PATH_RE.test(raw)) return "";
   return raw;
@@ -191,3 +248,28 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   "system:monitor": "System metrics",
   "media:control": "Media control",
 };
+
+/**
+ * 桥里真的有方法可调的权限。
+ *
+ * 剩下的（`media:control`）目前只在清单里留了名字：`bridge.ts` 没有任何方法
+ * 认领它，勾了也不会有任何东西可用。授权界面把这几项画成不可勾选 —— 与其让
+ * 用户对着一个假开关点半天，不如直说"还没做"。做到哪一项，把它挪进这个集合，
+ * 再把桥方法一起加上。
+ *
+ * 注意：**不要**因为它们没实现就从 `Permission` 类型里删掉。清单里声明了
+ * 它们的组件应当照常通过校验，只是暂时拿不到 —— 静默丢弃声明比明确拒绝更糟。
+ */
+export const PERMISSION_READY: ReadonlySet<Permission> = new Set<Permission>([
+  "clock",
+  "storage",
+  "clipboard:write",
+  "system:monitor",
+  "network",
+]);
+
+/** 这个权限是不是已经有桥方法了 */
+export function isPermissionReady(permission: Permission): boolean {
+  return PERMISSION_READY.has(permission);
+}
+

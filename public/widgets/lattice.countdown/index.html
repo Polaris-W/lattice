@@ -6,14 +6,15 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
+    <!--
+      目标日期搬进了属性面板（清单里的 `config`）。原来这里是一个原生
+      <input type="date">，还得在 JS 里按底板亮度猜 color-scheme 才不至于
+      在深色卡片上变成一块黑药丸 —— 那件事平台窗口本来就会做对。
+    -->
     <main class="cd">
       <div class="cd-label" id="label">Loading…</div>
       <div class="cd-days"><span id="days">--</span><small>days</small></div>
       <div class="cd-clock" id="clock">--:--:--</div>
-      <label class="cd-pick">
-        <span>Target date</span>
-        <input type="date" id="target" />
-      </label>
     </main>
     <script src="widget.js"></script>
   </body>

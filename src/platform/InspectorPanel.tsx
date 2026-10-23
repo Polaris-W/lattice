@@ -17,7 +17,14 @@ import {
   tintRgb,
   type Appearance,
 } from "../runtime/appearance";
-import { PERMISSION_LABELS, type Permission } from "../runtime/manifest";
+import { PERMISSION_LABELS, isPermissionReady, type Permission } from "../runtime/manifest";
+import {
+  hasConfigOverrides,
+  resolveConfig,
+  type ConfigField,
+  type ConfigValue,
+  type NumberField,
+} from "../runtime/config";
 import { isTauri, type WidgetRecord } from "../runtime/registry";
 import { PanelGlyph, WidgetIconMark } from "./icons";
 import { useLattice } from "./store";
@@ -115,8 +122,135 @@ function SliderRow({
   );
 }
 
-export function InspectorPanel({ records, open, onToggle }: InspectorPanelProps) {
-  const selectedId = useLattice((state) => state.selectedInstanceId);
+interface ConfigControlProps {
+  field: ConfigField;
+  value: ConfigValue;
+  onChange: (value: ConfigValue) => void;
+}
+
+/**
+ * 一条配置项。
+ *
+ * 这五类控件都由**平台**画，组件一行代码都不参与 —— 跟底板、窗饰一样。
+ * 组件自己画设置 UI 有两个躲不开的毛病：卡片只有 240×140，塞一条设置就把
+ * 内容挤没了；而且组件自己的存储是按 `widgetId` 的，桌面上两个时钟会共享
+ * 同一份偏好。属性面板按**实例**渲染，正好是用户期望的粒度。
+ */
+function ConfigControl({ field, value, onChange }: ConfigControlProps) {
+  if (field.type === "toggle") {
+    return (
+      <div className="lattice-config">
+        <label className="lattice-switch is-row">
+          <input
+            type="checkbox"
+            checked={value === true}
+            onChange={(event) => onChange(event.target.checked)}
+          />
+          <span>{field.label}</span>
+        </label>
+        {field.help ? <p className="lattice-hint">{field.help}</p> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="lattice-config">
+      <span className="lattice-config-label">{field.label}</span>
+      {field.type === "select" ? (
+        <select
+          className="lattice-input"
+          value={String(value)}
+          onChange={(event) => onChange(event.target.value)}
+          aria-label={field.label}
+        >
+          {field.options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      ) : field.type === "number" ? (
+        <ConfigNumber field={field} value={Number(value)} onChange={onChange} />
+      ) : field.type === "date" ? (
+        /*
+         * 原生日期控件在这里是**对的**：属性面板在平台窗口里，`color-scheme`
+         * 跟着主题走，不会像组件的沙箱那样在深色卡片上变成一块黑药丸。
+         * 倒计时原来为了这件事在组件里写了一段按亮度猜明暗的补丁。
+         */
+        <input
+          type="date"
+          className="lattice-input"
+          value={String(value)}
+          onChange={(event) => onChange(event.target.value)}
+          aria-label={field.label}
+        />
+      ) : (
+        <input
+          type="text"
+          className="lattice-input"
+          value={String(value)}
+          placeholder={field.placeholder}
+          maxLength={field.maxLength}
+          onChange={(event) => onChange(event.target.value)}
+          aria-label={field.label}
+        />
+      )}
+      {field.help ? <p className="lattice-hint">{field.help}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * 数字配置项：草稿 + 提交，和尺寸框同一套规矩。
+ *
+ * 边打字边提交的话，输入 `0.` 的那一瞬间会被夹成 `0`，光标跟着跳；
+ * 而每一项改动都会推到桌面窗口，值一路跳就更明显。
+ */
+function ConfigNumber({
+  field,
+  value,
+  onChange,
+}: {
+  field: NumberField;
+  value: number;
+  onChange: (value: ConfigValue) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+
+  const commit = () => {
+    if (draft === null) return;
+    const parsed = Number(draft);
+    setDraft(null);
+    if (!Number.isFinite(parsed)) return;
+    onChange(Math.min(field.max, Math.max(field.min, parsed)));
+  };
+
+  return (
+    <label className="lattice-size-input">
+      <input
+        type="number"
+        inputMode="decimal"
+        min={field.min}
+        max={field.max}
+        step={field.step}
+        value={draft ?? String(value)}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Escape") {
+            setDraft(null);
+            event.currentTarget.blur();
+          }
+        }}
+        aria-label={field.label}
+      />
+      {field.unit ? <span>{field.unit}</span> : null}
+    </label>
+  );
+}
+
+export function InspectorPanel({ records, open, onToggle }: InspectorPanelProps) {  const selectedId = useLattice((state) => state.selectedInstanceId);
   const placements = useLattice((state) => state.placements);
   const grants = useLattice((state) => state.grants);
   const desktopRects = useLattice((state) => state.desktopRects);
@@ -125,6 +259,9 @@ export function InspectorPanel({ records, open, onToggle }: InspectorPanelProps)
   const remove = useLattice((state) => state.removePlacement);
   const grant = useLattice((state) => state.grant);
   const revoke = useLattice((state) => state.revoke);
+  const configs = useLattice((state) => state.configs);
+  const setConfig = useLattice((state) => state.setConfig);
+  const resetConfig = useLattice((state) => state.resetConfig);
   const theme = useLattice((state) => state.theme);
 
   const placement = placements.find((item) => item.instanceId === selectedId);
@@ -222,6 +359,10 @@ export function InspectorPanel({ records, open, onToggle }: InspectorPanelProps)
 
   const manifest = record.manifest;
   const granted = grants[manifest.id] ?? [];
+
+  // 实例覆盖优先，缺的键用清单的出厂值补 —— 和 buildSpecs / WidgetFrame 同一套规则
+  const configOverrides = configs[placement.instanceId];
+  const resolvedConfig = resolveConfig(manifest.config, configOverrides);
 
   // 实例覆盖优先，没有就退回清单的出厂值 —— 跟 buildSpecs 用的是同一套规则
   const appearance = normalizeAppearance(placement.appearance ?? manifest.appearance);
@@ -469,6 +610,37 @@ export function InspectorPanel({ records, open, onToggle }: InspectorPanelProps)
           </p>
         </section>
 
+        {manifest.config.length > 0 && (
+          <section className="lattice-field">
+            <div className="lattice-field-head">
+              <span className="lattice-label">Options</span>
+              <button
+                type="button"
+                className="lattice-link-btn"
+                onClick={() => resetConfig(placement.instanceId)}
+                disabled={!hasConfigOverrides(configOverrides)}
+                title="Back to the defaults this widget ships with"
+              >
+                Reset
+              </button>
+            </div>
+
+            {manifest.config.map((field) => (
+              <ConfigControl
+                key={field.key}
+                field={field}
+                value={resolvedConfig[field.key]}
+                onChange={(value) => setConfig(placement.instanceId, field.key, value)}
+              />
+            ))}
+
+            <p className="lattice-hint">
+              Options belong to this copy only — two widgets of the same kind can be set up
+              differently.
+            </p>
+          </section>
+        )}
+
         <section className="lattice-field">
           <span className="lattice-label">Permissions</span>
           {manifest.permissions.length === 0 ? (
@@ -476,11 +648,17 @@ export function InspectorPanel({ records, open, onToggle }: InspectorPanelProps)
           ) : (
             manifest.permissions.map((permission: Permission) => {
               const enabled = granted.includes(permission);
+              const ready = isPermissionReady(permission);
               return (
-                <label key={permission} className="lattice-switch is-row">
+                <label
+                  key={permission}
+                  className={`lattice-switch is-row${ready ? "" : " is-pending"}`}
+                  title={ready ? undefined : "No bridge method backs this permission yet"}
+                >
                   <input
                     type="checkbox"
                     checked={enabled}
+                    disabled={!ready}
                     onChange={(event) =>
                       event.target.checked
                         ? grant(manifest.id, permission)
@@ -489,11 +667,18 @@ export function InspectorPanel({ records, open, onToggle }: InspectorPanelProps)
                   />
                   <span className="lattice-perm-name">{PERMISSION_LABELS[permission]}</span>
                   <code className="lattice-mono lattice-perm-code">{permission}</code>
+                  {!ready && <span className="lattice-perm-soon">soon</span>}
                 </label>
               );
             })
           )}
           <p className="lattice-hint">Calls without a granted permission are rejected by the bridge; widgets must degrade gracefully.</p>
+          {manifest.permissions.some((permission) => !isPermissionReady(permission)) && (
+            <p className="lattice-hint">
+              Permissions marked <code className="lattice-mono">soon</code> are declared by the widget
+              but the platform has no bridge method behind them yet — granting them would change nothing.
+            </p>
+          )}
         </section>
 
         <section className="lattice-field">

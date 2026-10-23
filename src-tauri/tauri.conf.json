@@ -38,6 +38,11 @@
       "icons/icon.ico"
     ],
     "shortDescription": "可扩展的 Windows 桌面小组件平台",
-    "longDescription": "棂 / Lattice 是一个让第三方用 HTML/CSS/JS 编写桌面小组件的平台：组件跑在沙箱里，通过权限清单申请平台能力。"
+    "longDescription": "棂 / Lattice 是一个让第三方用 HTML/CSS/JS 编写桌面小组件的平台：组件跑在沙箱里，通过权限清单申请平台能力。",
+    "windows": {
+      "nsis": {
+        "installerHooks": "./installer-hooks.nsh"
+      }
+    }
   }
 }

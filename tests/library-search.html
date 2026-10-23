@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>library search test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      /*
+       * 组件库搜索：查询切词 + 单包命中判定。
+       *
+       * 这页钉五件事：
+       *   1. 空查询一律命中（那是"没在搜"，不是"什么都不要"）
+       *   2. 大小写、首尾空白、连续空白都不影响结果
+       *   3. 多词是 AND —— "clock 24" 不能把只有 "clock" 的包也带出来
+       *   4. 权限名也算命中（"storage" 能搜到要存储的包）
+       *   5. 搜不到的词就是搜不到 —— 不要做模糊匹配，那会让"没结果"变成"一堆噪音"
+       *
+       * 纯函数，不碰 DOM，整页毫秒级。
+       */
+      import { matchesWidget, tokenize } from "/src/runtime/library-search.ts";
+
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const eq = (actual, expected, text) =>
+        log(
+          JSON.stringify(actual) === JSON.stringify(expected),
+          `${text}（得到 ${JSON.stringify(actual)}）`,
+        );
+
+      const widget = (name, id, description, author, permissions) => ({
+        manifest: { name, id, description, author, permissions },
+      });
+
+      const clock = widget(
+        "Clock",
+        "lattice.clock",
+        "A large clock with the date: 12/24-hour and seconds are set per copy",
+        "Lattice",
+        ["clock"],
+      );
+      const note = widget(
+        "Note",
+        "lattice.note",
+        "Jot something down; saved automatically to widget storage",
+        "Lattice",
+        ["storage"],
+      );
+      const sysmon = widget(
+        "System",
+        "lattice.sysmon",
+        "CPU, memory, disk and network throughput",
+        "Lattice",
+        ["system:monitor"],
+      );
+
+      // ---- 1. 切词 ----
+      eq(tokenize(""), [], "空查询没有词");
+      eq(tokenize("   "), [], "只有空白也没有词");
+      eq(tokenize("  Clock  "), ["clock"], "首尾空白被吃掉，大小写归一");
+      eq(tokenize("clock   24"), ["clock", "24"], "连续空白只切一刀");
+      eq(tokenize("时钟　秒"), ["时钟", "秒"], "全角空格也算分隔符");
+
+      // ---- 2. 空查询 = 不筛 ----
+      log(matchesWidget(clock, []), "空词表一律命中");
+      log(matchesWidget(sysmon, tokenize("   ")), "只有空白的查询不筛掉任何东西");
+
+      // ---- 3. 命中的几个面 ----
+      log(matchesWidget(clock, tokenize("clock")), "名字命中（大小写不敏感）");
+      log(matchesWidget(clock, tokenize("LATTICE.CLOCK")), "id 命中");
+      log(matchesWidget(clock, tokenize("large")), "描述命中");
+      log(matchesWidget(clock, tokenize("lattice")), "作者命中");
+      log(matchesWidget(note, tokenize("storage")), "权限名命中（Widget storage）");
+      log(matchesWidget(sysmon, tokenize("system metrics")), "system:monitor 的显示名命中");
+
+      // ---- 4. 多词是 AND ----
+      log(matchesWidget(clock, tokenize("clock 24")), "两个词都在同一个包里 -> 命中");
+      log(!matchesWidget(clock, tokenize("clock storage")), "有一个词不在 -> 不命中");
+      log(!matchesWidget(note, tokenize("clock")), "完全无关 -> 不命中");
+
+      // ---- 5. 不做模糊匹配 ----
+      log(!matchesWidget(clock, tokenize("clok")), "拼错一个字母就是没有（不做模糊）");
+      log(!matchesWidget(clock, tokenize("zzz")), "不存在的词搜不到");
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>

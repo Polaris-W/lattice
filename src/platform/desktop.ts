@@ -9,6 +9,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { normalizeAppearance, type Appearance } from "../runtime/appearance";
+import { resolveConfig, type ConfigValues } from "../runtime/config";
 import type { Permission } from "../runtime/manifest";
 import type { WidgetRecord } from "../runtime/registry";
 import type { DesktopRect, Placement } from "./store";
@@ -18,6 +19,13 @@ export interface WidgetWindowSpec {
   widgetId: string;
   entry: string;
   permissions: Permission[];
+  /**
+   * 联网白名单，直接来自清单。Rust 侧按它逐条比对，组件改不了自己这份。
+   *
+   * 和 `permissions` 分开传而不是合并成一个对象：一个说"能不能联网"，
+   * 一个说"能连哪儿"，两者的来源和变更频率都不同（前者用户授予，后者作者声明）。
+   */
+  network: string[];
   x: number;
   y: number;
   w: number;
@@ -33,6 +41,14 @@ export interface WidgetWindowSpec {
   theme: "light" | "dark";
   /** 底板外观：实例覆盖优先，其次清单出厂值 */
   appearance: Appearance;
+  /**
+   * 这个实例的配置，**已经合并过出厂值**。
+   *
+   * 为什么在发出前就合并、而不是让宿主页自己补：合并规则只有一份
+   * （`resolveConfig`），桌面窗口和画布必须拿到同一个结果 —— 否则同一个实例
+   * 在两处显示得不一样，用户会以为是 bug。Rust 侧只负责透传。
+   */
+  config: ConfigValues;
 }
 
 /** 上一次算出来的、可信的画布原点 */
@@ -64,6 +80,7 @@ export function buildSpecs(
   records: Map<string, WidgetRecord>,
   grants: Record<string, Permission[]>,
   desktopRects: Record<string, DesktopRect>,
+  configs: Record<string, ConfigValues>,
 ): WidgetWindowSpec[] {
   const origin = canvasOrigin();
   const theme = currentTheme();
@@ -83,6 +100,7 @@ export function buildSpecs(
       widgetId: placement.widgetId,
       entry,
       permissions: grants[placement.widgetId] ?? [],
+      network: record.manifest.network.hosts,
       x: Math.round(placed ? placed.x : origin.x + placement.x),
       y: Math.round(placed ? placed.y : origin.y + placement.y),
       w: Math.round(placed ? placed.w : placement.w),
@@ -95,18 +113,46 @@ export function buildSpecs(
       pinned: placement.pinned ?? false,
       theme,
       appearance: normalizeAppearance(placement.appearance ?? record.manifest.appearance),
+      config: resolveConfig(record.manifest.config, configs[placement.instanceId]),
     });
   }
 
   return specs;
 }
 
-export async function syncDesktop(specs: WidgetWindowSpec[]): Promise<void> {
-  await invoke("sync_widget_windows", { specs });
+/**
+ * 同步请求串成一条链：同一时刻只允许一条在飞。
+ *
+ * 不串行会出真问题，而且症状很难认：
+ *
+ * 启动恢复和"120ms 防抖同步"会在开机那一刻同时触发。两个 `sync_widget_windows`
+ * 并发跑，都先查 `get_webview_window(label)` 拿到 None，然后各自 `build()` 一遍 ——
+ * 同一个实例被建出两个窗口，一个归 Tauri 管、另一个成了没人认领的孤儿：
+ * 屏幕上看着是"一个"（位置尺寸完全一样），实际上两份 WebView2 在跑，
+ * 点击被上面那份吃掉，卸载/收回也只关得掉一个。
+ *
+ * 更糟的是并发建窗口会让 WebView2 的创建排队到几十秒，IPC 那边先超时
+ * （`Failed to fetch`），退到 postMessage 之后响应再也回不来 ——
+ * 界面上的"投放到桌面"按钮从此永久变灰。
+ *
+ * 后来的请求不用合并：位置/层级是幂等的，前一条跑完再跑后一条即可，
+ * 顺序天然正确。
+ */
+let queue: Promise<unknown> = Promise.resolve();
+
+function serial<T>(work: () => Promise<T>): Promise<T> {
+  // 前一条失败不能卡住后面：先 catch 掉再挂新的
+  const next = queue.then(work, work);
+  queue = next.catch(() => {});
+  return next;
 }
 
-export async function closeDesktop(): Promise<void> {
-  await invoke("close_widget_windows");
+export function syncDesktop(specs: WidgetWindowSpec[]): Promise<void> {
+  return serial(() => invoke("sync_widget_windows", { specs }));
+}
+
+export function closeDesktop(): Promise<void> {
+  return serial(() => invoke("close_widget_windows"));
 }
 
 export async function minimizeMain(): Promise<void> {

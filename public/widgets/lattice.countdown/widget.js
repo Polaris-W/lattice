@@ -4,6 +4,13 @@
  * 第三方视角：不 import 平台任何东西，只通过 postMessage 跟宿主说话。
  * 时间一律向宿主索取（clock.now），不直接用本地 Date —— 桌面端将来
  * 可能要跟随系统时区变更，组件自己算会和平台漂移。
+ *
+ * 目标日期不再由卡片上的原生日期控件决定，而是清单 `config` 里的一个
+ * `date` 字段：属性面板渲染表单，值按实例存。以前那个 `<input type="date">`
+ * 除了挤（卡片只有 156px 高），还得自己按底板亮度猜 `color-scheme`，
+ * 否则深色卡片上日历图标是黑的。现在这两件事都不归组件管。
+ *
+ * 心跳同样走 `schedule.every`：窗口收起来时它就不跳了。
  */
 (function () {
   "use strict";
@@ -41,35 +48,28 @@
       var value = tokens[source];
       if (value) document.documentElement.style.setProperty(THEME_MAP[source], value);
     });
-    syncInputScheme(tokens["--lattice-surface"]);
-  }
-
-  /**
-   * 让原生日期控件的配色跟卡片一致。
-   *
-   * 平台推下来的颜色可能是 hex、rgb() 或者 oklch()，直接解析字符串迟早出错，
-   * 所以丢进一个探针元素，交给 getComputedStyle 归一化成 rgb() 再算亮度。
-   */
-  function syncInputScheme(surface) {
-    var input = document.getElementById("target");
-    if (!surface || !input) return;
-    var probe = document.createElement("span");
-    probe.style.color = surface;
-    document.body.appendChild(probe);
-    var parts = (getComputedStyle(probe).color.match(/[\d.]+/g) || []).map(Number);
-    probe.remove();
-    if (parts.length < 3) return;
-    var luma = 0.299 * parts[0] + 0.587 * parts[1] + 0.114 * parts[2];
-    input.style.colorScheme = luma < 128 ? "dark" : "light";
   }
 
   window.addEventListener("message", function (event) {
     var data = event.data;
     if (!data || data.__lattice !== 1) return;
+
     if (data.type === "theme") {
       applyTheme(data.payload);
       return;
     }
+
+    // 属性面板改了目标日期 / 说明文字：就地重算，不重载组件
+    if (data.type === "config-changed") {
+      applyConfig(data.payload && data.payload.config);
+      return;
+    }
+
+    if (data.type === "tick") {
+      if (data.payload && data.payload.id === tickId) render();
+      return;
+    }
+
     if (data.type !== "response") return;
     var entry = pending.get(data.id);
     if (!entry) return;
@@ -88,9 +88,13 @@
   var labelEl = document.getElementById("label");
   var daysEl = document.getElementById("days");
   var clockEl = document.getElementById("clock");
-  var inputEl = document.getElementById("target");
+  var tickId = 0;
 
   var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  /** 出厂配置：目标为空 = 下一个 1 月 1 日，说明为空 = 自动写 "Until …" */
+  var config = { target: "", label: "" };
+  var target = null;
 
   function pad(value) {
     return value < 10 ? "0" + value : String(value);
@@ -124,7 +128,16 @@
     return new Date(year, month - 1, day, 0, 0, 0, 0);
   }
 
-  var target = null;
+  function applyConfig(next) {
+    if (!next) return;
+    config = {
+      target: typeof next.target === "string" ? next.target : "",
+      label: typeof next.label === "string" ? next.label : "",
+    };
+    // 配置里的日期非法（或为空）就退回"下一个元旦"，别让卡片停在 "--"
+    target = parseTarget(config.target) || parseTarget(defaultTarget());
+    render();
+  }
 
   function render() {
     if (!target) return;
@@ -143,9 +156,15 @@
         var seconds = Math.floor(rest / 1000);
 
         root.classList.toggle("is-done", done);
-        // 日期写成 "Jan 1, 2027"：英文习惯是月在前、日和年之间加逗号。
-        labelEl.textContent = (done ? "Arrived · " : "Until ") + MONTHS[target.getMonth()] + " " +
-          target.getDate() + ", " + target.getFullYear();
+        /*
+         * 日期写成 "Jan 1, 2027"：英文习惯是月在前、日和年之间加逗号。
+         * 用户自己写了说明（比如 "Christmas"）就整行换成它 —— 那种情况下
+         * 再拼一句 "Until …" 只会把两句话挤在一起。
+         */
+        labelEl.textContent = config.label
+          ? config.label
+          : (done ? "Arrived · " : "Until ") +
+            MONTHS[target.getMonth()] + " " + target.getDate() + ", " + target.getFullYear();
         daysEl.textContent = String(days);
         clockEl.textContent = pad(hours) + ":" + pad(minutes) + ":" + pad(seconds);
       })
@@ -157,28 +176,25 @@
       });
   }
 
-  inputEl.addEventListener("change", function () {
-    var next = parseTarget(inputEl.value);
-    if (!next) return;
-    target = next;
-    render();
-    call("storage.set", { key: "target", value: inputEl.value }).catch(function () {});
-  });
-
-  call("storage.get", { key: "target" })
-    .then(function (value) {
-      var parsed = typeof value === "string" ? parseTarget(value) : null;
-      target = parsed || parseTarget(defaultTarget());
-      if (typeof value === "string") inputEl.value = value;
-      else inputEl.value = toDateString(target);
+  call("config.get")
+    .then(function (values) {
+      if (values) applyConfig(values);
     })
     .catch(function () {
+      // 读不到配置就用出厂目标，至少还在倒计时
       target = parseTarget(defaultTarget());
-      inputEl.value = toDateString(target);
     })
     .then(function () {
       render();
-      setInterval(render, 1000);
+      return call("schedule.every", { every: 1000 });
+    })
+    .then(function (grant) {
+      tickId = grant && typeof grant.id === "number" ? grant.id : 0;
+    })
+    .catch(function () {
+      /* 心跳没挂上就停在这一帧 */
+    })
+    .then(function () {
       parent.postMessage({ __lattice: 1, type: "ready" }, "*");
     });
 })();

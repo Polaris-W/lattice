@@ -217,6 +217,71 @@
         todo.frame.remove();
       }
 
+      /*
+       * ---- 场景 8：拖动排序 ----
+       *
+       * 整行可拖，但整行同时也"点一下勾掉"，所以两条边界必须钉住：
+       *   1. 拖过目标行的中点才换位，而且落盘顺序跟着变
+       *   2. 只挪几个像素（没过 4px 阈值）不算拖动，仍然是一次普通点击
+       *
+       * 用合成 PointerEvent 直接打：被测的就是阈值与位次计算，不需要真鼠标。
+       * 事件必须用 iframe 自己的构造器创建，跨 realm 的 Event 派发在部分
+       * 实现里会被静默丢掉。
+       */
+      {
+        const todo = mountTodo({
+          initial: [
+            { id: "a", text: "Ship it", done: false },
+            { id: "b", text: "Read mail", done: false },
+            { id: "c", text: "Write tests", done: false },
+          ],
+        });
+        await todo.ready;
+        const doc = todo.frame.contentDocument;
+        const Win = todo.frame.contentWindow;
+        await sleep(80);
+
+        const rows = () => Array.from(doc.querySelectorAll(".todo-item"));
+        const fire = (target, type, y) =>
+          target.dispatchEvent(
+            new Win.PointerEvent(type, { clientY: y, pointerId: 1, button: 0, bubbles: true }),
+          );
+
+        // 把第三条拖到最上面
+        const box = (i) => rows()[i].getBoundingClientRect();
+        const fromY = box(2).top + box(2).height / 2;
+        const toY = box(0).top + 2;
+
+        fire(rows()[2], "pointerdown", fromY);
+        fire(doc, "pointermove", fromY - 2); // 没过阈值，还不算拖
+        fire(doc, "pointermove", toY);
+        fire(doc, "pointerup", toY);
+        await sleep(150);
+
+        log(texts(doc).join("|") === "Write tests|Ship it|Read mail", `拖到最上面后顺序「${texts(doc).join("|")}」`);
+        log(
+          todo.state.stored.map((item) => item.id).join("|") === "c|a|b",
+          `落盘顺序「${todo.state.stored.map((item) => item.id).join("|")}」`,
+        );
+
+        // 只挪 2px：应当仍是一次点击，勾掉而不是换位
+        const row = rows()[1];
+        const y = row.getBoundingClientRect().top + 12;
+        fire(row, "pointerdown", y);
+        fire(doc, "pointermove", y + 2);
+        fire(doc, "pointerup", y + 2);
+        row.dispatchEvent(new Win.MouseEvent("click", { bubbles: true }));
+        await sleep(150);
+
+        log(
+          texts(doc).join("|") === "Write tests|Ship it|Read mail",
+          `2px 抖动没有换位，顺序仍是「${texts(doc).join("|")}」`,
+        );
+        log(todo.state.stored[1].done === true, `2px 抖动后仍按点击处理，done=${todo.state.stored[1].done}`);
+
+        todo.frame.remove();
+      }
+
       document.getElementById("out").innerHTML = lines
         .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
         .join("\n");

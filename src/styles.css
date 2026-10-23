@@ -489,6 +489,16 @@ button {
   line-height: 16px;
 }
 
+/*
+ * 清单声明了、平台还没有桥方法的权限。
+ * 褪成灰的虚线，别用强调色 —— 强调色在这里等于"已经能用"，而它其实不能用。
+ */
+.lattice-perm.is-pending {
+  border: 1px dashed var(--lattice-border-strong);
+  background: transparent;
+  color: var(--lattice-text-faint);
+}
+
 /* 未安装的包：虚线边、无底色，视觉上明确"还不在你的桌面里" */
 .lattice-card.is-available {
   cursor: pointer;
@@ -525,6 +535,88 @@ button {
 .lattice-link-btn:hover {
   background: var(--lattice-danger-soft);
   color: var(--lattice-danger);
+}
+
+/* ---------- 组件库搜索 ---------- */
+
+/*
+ * 常驻在标题下面、列表上面 —— 不跟着列表滚。
+ *
+ * 不做成"点放大镜才展开"：库是会长的，搜索是常驻入口，藏起来只会让人找不到；
+ * 而且展开/收起会让整个列表跳一下。
+ *
+ * 边框和焦点圈跟属性面板的 `.lattice-input` 一个口径（accent + 3px 柔光圈），
+ * 同一套控件在哪儿都长一样。行高 32px 也一致，只是这里靠 `focus-within` 点灯，
+ * 因为真正拿到焦点的是里面那个裸 input。
+ */
+.lattice-lib-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  height: 32px;
+  margin: 0 12px 10px;
+  padding: 0 5px 0 9px;
+  border: 1px solid var(--lattice-border);
+  border-radius: 9px;
+  background: var(--lattice-bg);
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.lattice-lib-search:focus-within {
+  border-color: var(--lattice-accent);
+  box-shadow: 0 0 0 3px var(--lattice-accent-soft);
+}
+
+.lattice-lib-search-icon {
+  display: flex;
+  flex: none;
+  color: var(--lattice-text-faint);
+}
+
+/* 输入框自己不要边框和背景：外面那层就是它的框 */
+.lattice-lib-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--lattice-text);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.lattice-lib-search-input::placeholder {
+  color: var(--lattice-text-faint);
+}
+
+/* 自绘了清空按钮，原生那颗（Chromium 只在有内容时插进来）会重复 */
+.lattice-lib-search-input::-webkit-search-cancel-button,
+.lattice-lib-search-input::-webkit-search-decoration {
+  display: none;
+}
+
+.lattice-lib-search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--lattice-text-muted);
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.lattice-lib-search-clear:hover {
+  background: var(--lattice-surface-3);
+  color: var(--lattice-text);
 }
 
 .lattice-lib-section {
@@ -1209,6 +1301,35 @@ button {
   font-size: 10px;
 }
 
+/*
+ * 还没有桥方法可调的权限：开关画成禁用态，整行不再显示"可点"的手型。
+ * 禁用而不是隐藏 —— 清单里写了，就让人看见它写了，只是说清现在用不上。
+ */
+.lattice-switch.is-pending {
+  cursor: default;
+  color: var(--lattice-text-faint);
+}
+
+.lattice-switch.is-pending input[type="checkbox"] {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.lattice-switch.is-pending:hover input[type="checkbox"]:not(:checked) {
+  border-color: var(--lattice-border-strong);
+}
+
+.lattice-perm-soon {
+  flex: none;
+  padding: 0 5px;
+  border: 1px dashed var(--lattice-border-strong);
+  border-radius: 5px;
+  color: var(--lattice-text-faint);
+  font-size: 9px;
+  line-height: 14px;
+  letter-spacing: 0.04em;
+}
+
 /* 尺寸编辑：标签一行，宽高两个数字框并排 */
 .lattice-field-head {
   display: flex;
@@ -1285,8 +1406,58 @@ button {
   appearance: textfield;
 }
 
-/* 底板外观：一行色块 + 四条滑杆，全挤在 240px 里，所以每一列都要定宽 */
-.lattice-tint-row {
+/*
+ * 实例配置：一条配置项 = 标签 + 控件 + 可选说明。
+ *
+ * 面板只有 320px 宽，所以标签压在控件上面（不并排），一行一项竖着排；
+ * 控件宽度吃满，日期和下拉才不会各自缩成不同的宽度。
+ */
+.lattice-config {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lattice-config-label {
+  font-size: 12px;
+  color: var(--lattice-text);
+}
+
+.lattice-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--lattice-border-strong);
+  border-radius: 9px;
+  background: var(--lattice-bg);
+  color: var(--lattice-text);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.lattice-input:focus {
+  border-color: var(--lattice-accent);
+  box-shadow: 0 0 0 3px var(--lattice-accent-soft);
+}
+
+/*
+ * 原生下拉保留系统箭头：自绘一个 chevron 得往 background-image 里塞
+ * data URI，而它拿不到 currentColor —— 明暗两套要写两份，不值。
+ * 颜色交给 color-scheme（主题已经设好），这里只统一边框和内边距。
+ */
+.lattice-input:is(select) {
+  padding-right: 6px;
+  cursor: pointer;
+}
+
+/* 日期控件的日历图标在深色下是黑的，跟着主题声明一下 */
+.lattice-input[type="date"] {
+  color-scheme: light dark;
+}
+
+/* 底板外观：一行色块 + 四条滑杆，全挤在 240px 里，所以每一列都要定宽 */.lattice-tint-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1670,6 +1841,21 @@ button.lattice-chip[aria-pressed="true"] {
   white-space: nowrap;
 }
 
+/*
+ * 菜单里的一行说明文字：挂在某一行下面，解释"为什么这个开关不可用"。
+ * 高度不固定（可能换行），所以不用 .lattice-menu-row 那一套 34px 定高。
+ */
+.lattice-menu-hint {
+  margin: -2px 9px 4px 30px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--lattice-text-faint);
+}
+
+.lattice-menu-hint.is-error {
+  color: var(--lattice-danger);
+}
+
 .lattice-glyph {
   flex: none;
   color: var(--lattice-text-muted);
@@ -1865,4 +2051,164 @@ button.lattice-chip[aria-pressed="true"] {
   clip: rect(0 0 0 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   撤销条
+
+   删除是不可逆的（✕ 只有 22×22，还挂在会淡入的窗饰上），所以删完给 8 秒反悔。
+   浮在画布底部居中，不占布局：它出现的时候不该把用户正在看的画布推走。
+--------------------------------------------------------------------------- */
+
+/*
+ * 底部浮层叠放容器。
+ *
+ * 撤销条和崩溃条可能同时在场（删了一个组件、另一个正好崩了），各自
+ * `position: fixed; bottom: 22px` 会叠在一起。所以定位交给这个容器，
+ * 里面的条子只负责自己的长相 —— 以后再加第三种提示也不用改它们。
+ *
+ * `pointer-events: none` 让容器本身不吃点击（它横跨整个底部），
+ * 条子自己再打开。
+ */
+.lattice-toasts {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 48px);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.lattice-toasts > * {
+  pointer-events: auto;
+}
+
+.lattice-undo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(420px, calc(100vw - 48px));
+  padding: 7px 8px 7px 14px;
+  border: 1px solid var(--lattice-border-strong);
+  border-radius: 999px;
+  background: var(--lattice-surface-2);
+  box-shadow: var(--lattice-shadow-2);
+  font-size: 12.5px;
+  color: var(--lattice-text);
+  animation: lattice-undo-in 160ms ease-out;
+}
+
+/*
+ * 崩溃条：和撤销条同一个形状，但用危险色。
+ * 它说的是"这个组件的窗口已经废了"，不该和"删掉了还能撤回"长得一样。
+ */
+.lattice-crash {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(480px, calc(100vw - 48px));
+  padding: 7px 8px 7px 14px;
+  border: 1px solid var(--lattice-danger);
+  border-radius: 999px;
+  background: var(--lattice-surface-2);
+  box-shadow: var(--lattice-shadow-2);
+  font-size: 12.5px;
+  color: var(--lattice-text);
+  animation: lattice-undo-in 160ms ease-out;
+}
+
+.lattice-crash-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--lattice-text-muted);
+}
+
+.lattice-crash-text b {
+  color: var(--lattice-text);
+  font-weight: 600;
+}
+
+/*
+ * 危险色的按钮不能用"实心底 + 白字"：深色主题里 `--lattice-danger` 是浅粉
+ * （#f09595），白字压上去直接看不见。所以走"淡底 + 同色字 + 一圈描边"，
+ * 两个主题下对比度都够，也仍然读得出是个按钮。
+ */
+.lattice-crash-action {
+  flex: none;
+  padding: 4px 12px;
+  border: 1px solid var(--lattice-danger);
+  border-radius: 999px;
+  background: var(--lattice-danger-soft);
+  color: var(--lattice-danger);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.lattice-crash-action:hover {
+  background: var(--lattice-danger);
+  color: var(--lattice-surface-2);
+}
+
+.lattice-undo-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--lattice-text-muted);
+}
+
+.lattice-undo-text b {
+  color: var(--lattice-text);
+  font-weight: 600;
+}
+
+.lattice-undo-action {
+  flex: none;
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--lattice-accent);
+  color: var(--lattice-accent-contrast);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.lattice-undo-action:hover {
+  filter: brightness(1.08);
+}
+
+.lattice-undo-dismiss {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--lattice-text-faint);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lattice-undo-dismiss:hover {
+  background: var(--lattice-border);
+  color: var(--lattice-text);
+}
+
+@keyframes lattice-undo-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

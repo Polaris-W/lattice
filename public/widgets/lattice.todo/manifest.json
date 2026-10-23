@@ -1,8 +1,8 @@
 {
   "id": "lattice.todo",
   "name": "Todo",
-  "version": "0.1.0",
-  "description": "A minimal to-do list with red / amber / green priority dots; stored per widget",
+  "version": "0.2.0",
+  "description": "A minimal to-do list: drag rows to reorder, red / amber / green priority dots, stored per widget",
   "author": "Lattice",
   "entry": "index.html",
   "icon": "icon.svg",

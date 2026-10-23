@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>screen fit test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      /*
+       * 窗口夹回屏幕的几何（runtime/screen-fit.ts）。
+       *
+       * 这一页钉的是"组件能不能被拖丢"。锚点是右上角那颗拖动按钮，
+       * 一旦它出了屏幕，组件就再也拖不回来 —— 只能手改 state.json。
+       *
+       * 三个约定：
+       *   1. 锚点在屏幕里就**一动不动**（否则正常拖动会被不断拽回去）
+       *   2. 锚点出界时，位移量刚好让它落到 margin 里面，不多不少
+       *   3. 跨两块屏时按**锚点**选屏，不按窗口矩形
+       *
+       * 单位无关：下面全部用物理像素举例（那才是运行时的真实空间），
+       * 但算法本身不关心单位，逻辑像素照样成立。
+       */
+      import { fitAnchor, pickScreen } from "/src/runtime/screen-fit.ts";
+
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const eq = (actual, expected, text) =>
+        log(
+          JSON.stringify(actual) === JSON.stringify(expected),
+          `${text}（得到 ${JSON.stringify(actual)}）`,
+        );
+
+      // 一块 1728×1080 的屏，任务栏吃掉底下 48px
+      const single = [{ x: 0, y: 0, w: 1728, h: 1032 }];
+      // 双屏：左边 1920×1080 @100%，右边 2560×1440 @150%（工作区 2560×1400）
+      const mixed = [
+        { x: 0, y: 0, w: 1920, h: 1040 },
+        { x: 1920, y: 0, w: 2560, h: 1400 },
+      ];
+      const opts = { anchorX: 30, anchorY: 20, margin: 24 };
+
+      // ---- 1. 没有显示器信息 = 不夹 ----
+      // 拿不到信息时宁可让用户拖出去，也不要整个拖不动
+      eq(fitAnchor({ x: -900, y: -900, w: 240, h: 140 }, [], opts), { x: -900, y: -900 }, "拿不到屏幕就不动");
+
+      // ---- 2. 锚点在里面 -> 一动不动 ----
+      // 240 宽的窗口放在 (100, 100)，锚点 = (100+240-30, 100+20) = (310, 120)
+      eq(fitAnchor({ x: 100, y: 100, w: 240, h: 140 }, single, opts), { x: 100, y: 100 }, "完全在屏幕内不动");
+      // 贴右下角：锚点 = (1490+210, 880+20) = (1700, 900)，右边界上限 1704、下边界上限 1008
+      eq(fitAnchor({ x: 1490, y: 880, w: 240, h: 140 }, single, opts), { x: 1490, y: 880 }, "贴边但锚点仍可见");
+      // 再往外 10px，锚点 1710 超过 1704 -> 拉回 6px
+      eq(fitAnchor({ x: 1500, y: 880, w: 240, h: 140 }, single, opts), { x: 1494, y: 880 }, "越过 margin 才动，动得刚好");
+
+      // ---- 3. 往右拖出去：拉回来 ----
+      // 锚点 x = 2000+240-30 = 2210，屏右边界 1728，要挪回 1728-24 = 1704
+      eq(
+        fitAnchor({ x: 2000, y: 100, w: 240, h: 140 }, single, opts),
+        { x: 1494, y: 100 },
+        "右边出界：位移量 = 1704 - 2210",
+      );
+
+      // ---- 4. 往左拖出去 ----
+      // 锚点 x = -500+240-30 = -290，要挪到 0+24 = 24，位移 +314
+      eq(
+        fitAnchor({ x: -500, y: 100, w: 240, h: 140 }, single, opts),
+        { x: -186, y: 100 },
+        "左边出界：只挪到 margin 处，不是挪到 0",
+      );
+
+      // ---- 5. 往上 / 往下拖出去 ----
+      // 锚点 y = -300+20 = -280 -> 24，位移 +304
+      eq(fitAnchor({ x: 100, y: -300, w: 240, h: 140 }, single, opts), { x: 100, y: 4 }, "上边出界");
+      // 锚点 y = 1000+20 = 1020，工作区底边 1032，margin 要求 <= 1008 -> 挪 12
+      eq(fitAnchor({ x: 100, y: 1000, w: 240, h: 140 }, single, opts), { x: 100, y: 988 }, "下边出界（贴任务栏）");
+
+      // ---- 6. 双屏：按锚点选屏 ----
+      // 窗口在 (1900, 100)，锚点 x = 1900+240-30 = 2110 -> 落在第二块屏里，不动
+      eq(
+        fitAnchor({ x: 1900, y: 100, w: 240, h: 140 }, mixed, opts),
+        { x: 1900, y: 100 },
+        "跨屏时锚点已在第二块屏 -> 不动",
+      );
+      // 锚点悬在两块屏中间的空隙外：窗口整个在第一块屏右边外面，锚点 x = 3000+210 = 3210
+      // 第二块屏是 1920..4480，3210 在里面 -> 不动
+      eq(
+        fitAnchor({ x: 3000, y: 100, w: 240, h: 140 }, mixed, opts),
+        { x: 3000, y: 100 },
+        "锚点落在第二块屏中间 -> 不动",
+      );
+
+      // ---- 7. 锚点在第二块屏右侧外 -> 拉回第二块屏，而不是第一块 ----
+      // 锚点 x = 5000+210 = 5210，第二块屏右边界 4480，目标 4480-24 = 4456
+      eq(
+        fitAnchor({ x: 5000, y: 100, w: 240, h: 140 }, mixed, opts),
+        { x: 4246, y: 100 },
+        "第二块屏右边出界：拉回第二块，不是第一块",
+      );
+
+      // ---- 8. 选屏：距离取"到矩形的最短距离" ----
+      eq(pickScreen(500, 500, mixed), mixed[0], "点在左屏 -> 左屏");
+      eq(pickScreen(2000, 500, mixed), mixed[1], "点在右屏 -> 右屏");
+      eq(pickScreen(-100, 500, mixed), mixed[0], "点在左屏外面 -> 最近的仍是左屏");
+      eq(pickScreen(1900, 500, mixed), mixed[0], "接缝左侧 20px -> 左屏（等距取先出现的）");
+      eq(pickScreen(100, 100, []), null, "没有屏幕 -> null");
+
+      // ---- 9. 屏幕比两倍 margin 还窄 ----
+      // margin 24 但屏只有 40 宽：上下限打架（lo=24 > hi=16）。此时以 hi 为准，
+      // 锚点落在右/下边界上 —— 仍然在屏里，仍然点得到。不能改成"取中间"，
+      // 那会把锚点推到屏幕外面去。
+      const tiny = [{ x: 0, y: 0, w: 40, h: 40 }];
+      const out = fitAnchor({ x: -100, y: -100, w: 240, h: 140 }, tiny, opts);
+      eq(out, { x: -194, y: -4 }, "极窄屏幕：锚点压到边界而不是取中间");
+      const anchorX = out.x + 240 - 30;
+      const anchorY = out.y + 20;
+      log(anchorX >= 0 && anchorX <= 40, "极窄屏幕：锚点仍然落在屏幕内（横）");
+      log(anchorY >= 0 && anchorY <= 40, "极窄屏幕：锚点仍然落在屏幕内（纵）");
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>

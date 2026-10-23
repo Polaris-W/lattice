@@ -169,6 +169,11 @@
       pendingReload = true;
       return;
     }
+    // 拖到一半被重画，手里那个 li 就成了离树的死节点 —— 等松手再补
+    if (drag) {
+      pendingReload = true;
+      return;
+    }
     call("storage.get", { key: STORAGE_KEY })
       .then(function (value) {
         if (!Array.isArray(value)) return;
@@ -197,6 +202,174 @@
     render();
     persist();
   }
+
+  /*
+   * ---------- 拖动排序 ----------
+   *
+   * 自己用指针事件实现，不走 HTML5 拖放：沙箱 iframe 是不透明源，跨文档的
+   * dataTransfer 本来就靠不住；自己算还能决定"跟手那一行怎么动、别的行怎么
+   * 让位"，不必受浏览器那套拖影的摆布。
+   *
+   * 三个容易翻车的地方：
+   *   1. 整行可拖，但整行也"点一下勾掉" —— 必须过阈值才认成拖动，而且抬手
+   *      之后浏览器还会补一次 click，得把它吃掉，否则拖完那条被顺手勾上。
+   *   2. 圆点 / 勾选框 / 删除按钮自己有点击语义，从它们身上按下不许起拖。
+   *   3. 列表能滚。指针停在上下边缘要自动滚；滚了之后"跟手"的位移必须跟着
+   *      scrollTop 一起算，否则指针没动、行却在往回跑。
+   */
+  var DRAG_SLOP = 4;
+  var EDGE_SCROLL = 20;
+  var EDGE_SPEED = 8;
+
+  var drag = null;
+  var dragRaf = 0;
+  var lastPointerY = 0;
+  var suppressClick = false;
+
+  /** 行在列表内容坐标里的位置 —— offsetTop 不受滚动影响，算目标位次用它 */
+  function rowRects() {
+    return Array.prototype.map.call(listEl.children, function (row) {
+      return { top: row.offsetTop, h: row.offsetHeight };
+    });
+  }
+
+  /** flex 的 gap 拿不到计算值（老版本），用相邻两行反推 */
+  function rowGap(rects) {
+    if (rects.length < 2) return 0;
+    return Math.max(0, rects[1].top - rects[0].top - rects[0].h);
+  }
+
+  function beginDrag(event, row) {
+    if (event.button !== 0) return;
+    // 只剩一条时没有"换位"可言，别让整行变成抓不动的假手柄
+    if (items.length < 2) return;
+    var from = Array.prototype.indexOf.call(listEl.children, row);
+    if (from < 0) return;
+    drag = {
+      row: row,
+      from: from,
+      to: from,
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startScroll: listEl.scrollTop,
+      rects: rowRects(),
+      moved: false,
+    };
+    lastPointerY = event.clientY;
+    // 合成事件没有真实指针，capture 会抛 NotFoundError —— 拿不到就算了，
+    // document 上的监听照样收得到（真机上是真指针，capture 保证移出窗口也不丢）
+    try {
+      row.setPointerCapture(event.pointerId);
+    } catch (error) {
+      /* 没有活动指针，无所谓 */
+    }
+  }
+
+  function paintDrag() {
+    var state = drag;
+    var dy = lastPointerY - state.startY + (listEl.scrollTop - state.startScroll);
+    state.row.style.transform = "translateY(" + dy + "px)";
+
+    // 指针换算到内容坐标：比"每条的中点"低几条，就落在第几位
+    var box = listEl.getBoundingClientRect();
+    var y = lastPointerY - box.top + listEl.scrollTop;
+    var to = 0;
+    for (var i = 0; i < state.rects.length; i += 1) {
+      if (y > state.rects[i].top + state.rects[i].h / 2) to = i;
+    }
+    state.to = to;
+
+    // 其余行让位：挪到目标位次之前的整体下移一格，之后的整体上移一格
+    var step = state.rects[state.from].h + rowGap(state.rects);
+    var rows = listEl.children;
+    for (var j = 0; j < rows.length; j += 1) {
+      if (j === state.from) continue;
+      var shift = 0;
+      if (to < state.from && j >= to && j < state.from) shift = step;
+      else if (to > state.from && j > state.from && j <= to) shift = -step;
+      rows[j].style.transform = shift ? "translateY(" + shift + "px)" : "";
+    }
+  }
+
+  function dragTick() {
+    dragRaf = 0;
+    if (!drag || !drag.moved) return;
+    var box = listEl.getBoundingClientRect();
+    var delta = 0;
+    if (lastPointerY < box.top + EDGE_SCROLL) delta = -EDGE_SPEED;
+    else if (lastPointerY > box.bottom - EDGE_SCROLL) delta = EDGE_SPEED;
+    if (delta) {
+      var before = listEl.scrollTop;
+      listEl.scrollTop = before + delta;
+      if (listEl.scrollTop !== before) paintDrag();
+    }
+    dragRaf = window.requestAnimationFrame(dragTick);
+  }
+
+  function onPointerMove(event) {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    lastPointerY = event.clientY;
+    if (!drag.moved) {
+      if (Math.abs(event.clientY - drag.startY) < DRAG_SLOP) return;
+      drag.moved = true;
+      drag.row.classList.add("is-dragging");
+      paintDrag();
+      if (!dragRaf) dragRaf = window.requestAnimationFrame(dragTick);
+      return;
+    }
+    paintDrag();
+  }
+
+  function endDrag(keepOrder) {
+    if (!drag) return;
+    var state = drag;
+    drag = null;
+    if (dragRaf) {
+      window.cancelAnimationFrame(dragRaf);
+      dragRaf = 0;
+    }
+    state.row.classList.remove("is-dragging");
+    Array.prototype.forEach.call(listEl.children, function (row) {
+      row.style.transform = "";
+    });
+    try {
+      state.row.releasePointerCapture(state.pointerId);
+    } catch (error) {
+      /* 没 capture 过 */
+    }
+
+    // 没过阈值 = 就是点了一下，交给 click 去勾
+    if (!state.moved) return;
+
+    // 抬手之后紧跟的那次 click 是拖动的尾巴，不是"我要勾掉它"
+    suppressClick = true;
+    window.setTimeout(function () {
+      suppressClick = false;
+    }, 0);
+
+    if (keepOrder && state.to !== state.from) {
+      items.splice(state.to, 0, items.splice(state.from, 1)[0]);
+      commit();
+      return;
+    }
+    if (pendingReload) {
+      pendingReload = false;
+      reload();
+    }
+  }
+
+  document.addEventListener("pointermove", onPointerMove);
+  document.addEventListener("pointerup", function (event) {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    endDrag(true);
+  });
+  document.addEventListener("pointercancel", function (event) {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    endDrag(false);
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && drag) endDrag(false);
+  });
 
   function render() {
     listEl.textContent = "";
@@ -264,9 +437,16 @@
       // 点整行都能勾：文字比那个小方框好点得多。
       // 勾选框、优先级圆点和删除按钮自己处理过事件，这里要让开，否则状态会翻两次。
       li.addEventListener("click", function (event) {
+        if (suppressClick) return;
         if (event.target === check || event.target === remove || event.target === dot) return;
         item.done = !item.done;
         commit();
+      });
+
+      // 整行都能拖起来排序；那三个控件自己有点击语义，从它们身上按下不算拖
+      li.addEventListener("pointerdown", function (event) {
+        if (event.target === check || event.target === remove || event.target === dot) return;
+        beginDrag(event, li);
       });
 
       li.appendChild(dot);

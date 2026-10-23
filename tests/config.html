@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>config test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      /*
+       * 每实例配置：清单 schema 的归一化 + 值的合并。
+       *
+       * 这页钉四件事：
+       *   1. 写坏的字段**单独丢弃**，不连累整包（配置是锦上添花）
+       *   2. 非法值一律退回出厂值，而不是退回"上一次的值"或 NaN
+       *   3. 未知键不泄漏给组件（清单删了字段，旧 override 就该失效）
+       *   4. 桥上的 `config.get` 不需要权限，返回的是完整对象
+       *
+       * 纯函数，不碰 DOM，所以整页跑完是毫秒级。
+       */
+      import { handleBridgeRequest } from "/src/runtime/bridge.ts";
+      import { createScheduler } from "/src/runtime/schedule.ts";
+      import {
+        MAX_CONFIG_FIELDS,
+        hasConfigOverrides,
+        normalizeConfig,
+        resolveConfig,
+      } from "/src/runtime/config.ts";
+
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const eq = (actual, expected, text) =>
+        log(
+          JSON.stringify(actual) === JSON.stringify(expected),
+          `${text}（得到 ${JSON.stringify(actual)}）`,
+        );
+
+      // ---- 1. 字段级归一化 ----
+      {
+        const fields = normalizeConfig([
+          { key: "hour12", type: "toggle", label: "12-hour", default: true },
+          { key: "size", type: "number", label: "Size", default: 4, min: 1, max: 10 },
+        ]);
+        eq(fields.length, 2, "两个合法字段都留下了");
+        eq(fields[0].default, true, "toggle 的 default 保留");
+        eq(fields[1].label, "Size", "label 保留");
+      }
+
+      {
+        const fields = normalizeConfig("nope");
+        eq(fields, [], "config 不是数组时退成空表（不抛错）");
+      }
+
+      {
+        const fields = normalizeConfig([
+          { key: "ok", type: "toggle" },
+          { key: "1bad", type: "toggle" }, // 数字开头
+          { key: "", type: "toggle" }, // 空键
+          { key: "weird", type: "color" }, // 不认识的类型
+          { key: "ok", type: "number" }, // 重复键
+          null,
+          "string",
+        ]);
+        eq(fields.map((field) => field.key), ["ok"], "坏字段逐个丢弃，重复键只留第一个");
+      }
+
+      {
+        const many = Array.from({ length: MAX_CONFIG_FIELDS + 5 }, (_, index) => ({
+          key: `k${index}`,
+          type: "toggle",
+        }));
+        eq(normalizeConfig(many).length, MAX_CONFIG_FIELDS, `最多 ${MAX_CONFIG_FIELDS} 项`);
+      }
+
+      // ---- 2. number 的边界 ----
+      {
+        const [field] = normalizeConfig([
+          { key: "n", type: "number", default: 99, min: 20, max: 10, step: 0 },
+        ]);
+        eq([field.min, field.max], [10, 20], "min > max 时交换，而不是丢弃");
+        eq(field.default, 20, "default 被夹进区间");
+        eq(field.step, 1, "step 为 0 时退回 1");
+      }
+
+      {
+        const [field] = normalizeConfig([{ key: "n", type: "number" }]);
+        eq([field.min, field.max, field.default], [0, 100, 0], "没写 min/max 时给 0–100");
+      }
+
+      // ---- 3. select / date / text ----
+      {
+        const [field] = normalizeConfig([
+          { key: "unit", type: "select", options: ["c", "f"], default: "k" },
+        ]);
+        eq(field.default, "c", "default 不在选项里时取第一个");
+        eq(field.options.map((option) => option.value), ["c", "f"], "字符串选项也能用");
+      }
+
+      {
+        const fields = normalizeConfig([
+          { key: "empty", type: "select", options: [] },
+          { key: "keep", type: "toggle" },
+        ]);
+        eq(fields.map((field) => field.key), ["keep"], "没有选项的 select 整项丢弃");
+      }
+
+      {
+        const [field] = normalizeConfig([{ key: "when", type: "date", default: "2027-02-31" }]);
+        eq(field.default, "", "不存在的日期（2027-02-31）退回空串");
+
+        const [good] = normalizeConfig([{ key: "when", type: "date", default: "2027-01-01" }]);
+        eq(good.default, "2027-01-01", "合法日期原样保留");
+      }
+
+      {
+        const [field] = normalizeConfig([{ key: "t", type: "text", maxLength: 999999 }]);
+        eq(field.maxLength, 2000, "maxLength 有硬上限（别把整篇文章塞进 state.json）");
+      }
+
+      // ---- 4. 值合并 ----
+      {
+        const fields = normalizeConfig([
+          { key: "hour12", type: "toggle", default: false },
+          { key: "size", type: "number", default: 12, min: 8, max: 24 },
+          { key: "unit", type: "select", options: ["c", "f"], default: "c" },
+          { key: "when", type: "date", default: "2027-01-01" },
+          { key: "caption", type: "text", maxLength: 5, default: "hey" },
+        ]);
+
+        eq(
+          resolveConfig(fields, null),
+          { hour12: false, size: 12, unit: "c", when: "2027-01-01", caption: "hey" },
+          "没有覆盖时全是出厂值",
+        );
+
+        eq(
+          resolveConfig(fields, {
+            hour12: "yes",
+            size: 999,
+            unit: "k",
+            when: "2027-13-01",
+            caption: "too long",
+            removed: "leak",
+          }),
+          { hour12: false, size: 24, unit: "c", when: "2027-01-01", caption: "too l" },
+          "类型错 / 越界 / 选项不存在 / 日期非法都退回出厂值，未知键不外泄",
+        );
+
+        eq(
+          resolveConfig(fields, { hour12: true, size: 16, caption: "ok" }),
+          { hour12: true, size: 16, unit: "c", when: "2027-01-01", caption: "ok" },
+          "合法覆盖生效，其余仍然补出厂值",
+        );
+
+        eq(
+          resolveConfig(fields, { size: Number.NaN }),
+          { hour12: false, size: 12, unit: "c", when: "2027-01-01", caption: "hey" },
+          "NaN 不会漏给组件",
+        );
+      }
+
+      {
+        eq(hasConfigOverrides(undefined), false, "undefined 不算改过");
+        eq(hasConfigOverrides({}), false, "空对象不算改过");
+        eq(hasConfigOverrides({ a: 1 }), true, "有键就算改过");
+      }
+
+      // ---- 5. 桥 ----
+      {
+        const scheduler = createScheduler(() => {});
+        const replies = [];
+        await handleBridgeRequest(
+          { __lattice: 1, type: "request", id: 1, method: "config.get" },
+          {
+            instanceId: "inst",
+            widgetId: "demo",
+            granted: new Set(),
+            config: { hour12: true, showSeconds: false },
+            schedule: scheduler,
+            reply: (payload) => replies.push(payload),
+            close: () => {},
+          },
+        );
+        const reply = replies[0];
+        log(
+          reply && reply.ok === true && reply.result.hour12 === true,
+          "config.get 不需要权限，直接返回配置",
+        );
+        scheduler.reset();
+      }
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>

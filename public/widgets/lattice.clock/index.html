@@ -6,10 +6,17 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <main class="clock">
-      <div class="clock-time" id="time">--:--</div>
+    <!--
+      没有设置按钮：12/24 小时制和秒数都走清单里的 `config`，
+      由属性面板按实例调。卡片本来就只有 240×140，少一颗按钮，
+      时间就能多占一行。
+
+      AM/PM 单独一个 span：它跟数字一样大的话，12 小时制 + 秒会宽到换行，
+      把日期挤出卡片（真机上撞到过，整块变成两行）。
+    -->
+    <main class="clock" id="clock">
+      <div class="clock-time"><span id="time">--:--</span><span class="clock-suffix" id="suffix"></span></div>
       <div class="clock-date" id="date">Loading…</div>
-      <button class="clock-toggle" id="toggle" type="button">24-hour</button>
     </main>
     <script src="widget.js"></script>
   </body>

@@ -8,7 +8,7 @@
  * 只需替换渲染部分，桥的协议与权限校验完全不用改。
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   BRIDGE_TAG,
@@ -19,6 +19,8 @@ import {
 } from "../runtime/bridge";
 import { PERMISSION_LABELS, type Permission } from "../runtime/manifest";
 import { normalizeAppearance } from "../runtime/appearance";
+import { resolveConfig } from "../runtime/config";
+import { createScheduler } from "../runtime/schedule";
 import {
   ERROR_KIND_LABEL,
   errorSignature,
@@ -48,6 +50,18 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
   const update = useLattice((state) => state.updatePlacement);
   const grant = useLattice((state) => state.grant);
 
+  /*
+   * 这个实例的配置。
+   *
+   * 只存"改过的键"，缺的用清单里的出厂值补 —— 合并交给 `resolveConfig`，
+   * 这样画布和桌面两个宿主拿到的是同一份规则，不会一个补默认值一个不补。
+   */
+  const configOverrides = useLattice((state) => state.configs[placement.instanceId]);
+  const config = useMemo(
+    () => resolveConfig(record.manifest.config, configOverrides),
+    [record.manifest.config, configOverrides],
+  );
+
   /** 组件撞到未授权的权限时记在这里，就地提示，不用去右边面板翻 */
   const [missing, setMissing] = useState<Permission[]>([]);
 
@@ -72,13 +86,47 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
   const [errors, setErrors] = useState<WidgetErrorReport[]>([]);
   useEffect(() => setErrors([]), [reloadKey]);
 
+  /*
+   * 授权变了，卡片上那句 "Needs …" 也得跟着走。
+   *
+   * `missing` 是组件撞到 `permission_denied` 时记下的，以前只有点卡片上那颗
+   * `Grant` 才会清 —— 用户改去属性面板勾上同一项，提示就一直挂在那儿，明明
+   * 已经能用了。这里按最新授权过滤一遍：已经有的划掉，仍然缺的留着。
+   */
+  useEffect(() => {
+    const grantedNow = new Set(grants ?? []);
+    setMissing((prev) => {
+      const next = prev.filter((permission) => !grantedNow.has(permission));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [grantSignature]);
+
   // 权限会在运行期被用户改动，用 ref 让监听器始终读到最新值
   const grantedRef = useRef<ReadonlySet<Permission>>(new Set());
   grantedRef.current = new Set(grants ?? []);
 
+  /** 配置同理：属性面板改一下就换一份，桥每次调用读最新的 */
+  const configRef = useRef(config);
+  configRef.current = config;
+
   const post = useCallback((payload: unknown) => {
     iframeRef.current?.contentWindow?.postMessage(payload, "*");
   }, []);
+
+  /*
+   * 画布上的每个组件实例也有一条自己的时间轴。
+   *
+   * 主窗口最小化时整个文档变成 hidden，`createScheduler` 内部会把定时器
+   * 停掉 —— 这正是"不可见就暂停"要的效果：桌面上还摆着的组件照常跳，
+   * 画布里的这些不跳。
+   */
+  const scheduler = useMemo(() => createScheduler(post), [post]);
+
+  /** 换一份 iframe（重载 / 授权变化 / 实例被删）就把旧订阅作废 */
+  useEffect(() => {
+    scheduler.reset();
+    return () => scheduler.reset();
+  }, [scheduler, reloadKey]);
 
   // 桥：来源窗口校验 → 权限校验 → 回话
   useEffect(() => {
@@ -113,6 +161,8 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
         instanceId: placement.instanceId,
         widgetId: record.manifest.id,
         granted: grantedRef.current,
+        config: configRef.current,
+        schedule: scheduler,
         reply: (payload: BridgeResponseMessage) => {
           const denied = payload.code === "permission_denied" ? payload.permission : undefined;
           if (denied) {
@@ -126,12 +176,23 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [placement.instanceId, record.manifest.id, post, remove]);
+  }, [placement.instanceId, record.manifest.id, post, remove, scheduler]);
 
   // 主题切换时主动通知组件，避免组件各自去猜明暗
   useEffect(() => {
     post({ [BRIDGE_TAG]: 1, type: "theme", payload: readThemeTokens() });
   }, [theme, post]);
+
+  /*
+   * 配置变了，推一份给组件。
+   *
+   * 组件启动时会 `config.get` 读一次，但用户接着在属性面板里拨开关时它不会
+   * 自己知道 —— 那条路只有这个推送。不重载 iframe 是刻意的：配置是"调参"，
+   * 不是"换权限"，重载会把组件里没落盘的草稿一起冲掉。
+   */
+  useEffect(() => {
+    post({ [BRIDGE_TAG]: 1, type: "config-changed", payload: { config } });
+  }, [config, post]);
 
   /*
    * 组件存储被**别的实例**改了，转告这个 iframe。

@@ -17,8 +17,8 @@ import { listen } from "@tauri-apps/api/event";
 import {
   availableMonitors,
   getCurrentWindow,
-  LogicalPosition,
-  LogicalSize,
+  PhysicalPosition,
+  PhysicalSize,
 } from "@tauri-apps/api/window";
 import "./styles.css";
 import "./widgetHost.css";
@@ -37,6 +37,9 @@ import {
   isBridgeRequest,
   readThemeTokens,
 } from "./runtime/bridge";
+import { createScheduler } from "./runtime/schedule";
+import { fitAnchor, type FitOptions, type ScreenBox } from "./runtime/screen-fit";
+import type { ConfigValues } from "./runtime/config";
 import {
   ERROR_KIND_LABEL,
   errorSignature,
@@ -58,6 +61,8 @@ interface HostConfig {
   layer: "desktop" | "top";
   clickThrough: boolean;
   appearance: Appearance;
+  /** 已经合并过出厂值的实例配置（见 runtime/config.ts） */
+  config: ConfigValues;
 }
 
 const win = getCurrentWindow();
@@ -362,29 +367,36 @@ function averageColor(pixels: Uint8ClampedArray, count: number): [number, number
  * 拖动按钮在窗口右上角的落点：距右边 30px、距顶边 20px。
  * 窗口没有窗饰，用户唯一能抓的地方就是那颗按钮 —— 所以"别让它出界"
  * 就等于"别让组件拖出去回不来"。
+ *
+ * 这三个数是 **CSS 像素**（和窗饰的样式一致）。夹紧的算法跑在物理像素上
+ * （见 runtime/screen-fit.ts 的注释），所以用之前乘一次当次的 `scaleFactor`。
  */
 const ANCHOR_X = 30;
 const ANCHOR_Y = 20;
 /** 锚点至少要留在屏幕内这么多像素，否则点不准 */
 const SCREEN_MARGIN = 24;
 
-interface ScreenBox {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-/** 所有显示器的**工作区**矩形，坐标跟 `outerPosition()` 同一套（逻辑像素） */
-async function screenBoxes(scale: number): Promise<ScreenBox[]> {
+/**
+ * 所有显示器的**工作区**矩形，**物理像素**。
+ *
+ * 不做任何折算：`availableMonitors()` 报的位置尺寸和 `outerPosition()` 一样
+ * 是 PerMonitorV2 下的真实物理像素，跨屏连续，可以直接和窗口矩形比。
+ *
+ * 早先这里拿当前窗口的 `scaleFactor` 去折算每一块屏 —— 两块屏缩放不同时，
+ * 折算结果不是任何一块屏的真实位置，夹紧就落在幻影位置上。
+ */
+async function screenBoxes(): Promise<ScreenBox[]> {
   try {
     const monitors = await availableMonitors();
     return monitors.map((monitor) => {
       // 用 workArea 而不是 size：否则组件能停在任务栏底下，按钮被任务栏压住
       const area = monitor.workArea;
-      const origin = (area?.position ?? monitor.position).toLogical(scale);
-      const size = (area?.size ?? monitor.size).toLogical(scale);
-      return { x: origin.x, y: origin.y, w: size.width, h: size.height };
+      return {
+        x: area.position.x,
+        y: area.position.y,
+        w: area.size.width,
+        h: area.size.height,
+      };
     });
   } catch {
     // 拿不到显示器信息就别夹了：宁可能拖出去，也不要整个拖不动
@@ -392,41 +404,31 @@ async function screenBoxes(scale: number): Promise<ScreenBox[]> {
   }
 }
 
-/**
- * 把窗口夹回"右上角那颗按钮还点得到"的范围。
- *
- * 之前完全没有夹：组件拖到屏幕边缘外面，按钮跟着窗口一起出界，
- * 之后就再也拖不回来，只能手改 state.json。
- *
- * 两个刻意的取舍：
- *   - 只保证锚点在某块屏幕里，不要求窗口完整可见。半截悬在边上是很常见的用法。
- *   - 按锚点选屏幕，不按窗口矩形。跨屏拖动时窗口大部分还在出发屏上，
- *     按矩形算会在接缝处把窗口拽回来，手感像卡住。
- */
-function clampAnchor(x: number, y: number, w: number, screens: ScreenBox[]): { x: number; y: number } {
-  if (screens.length === 0) return { x, y };
-
-  const anchorX = x + w - ANCHOR_X;
-  const anchorY = y + ANCHOR_Y;
-
-  let best = screens[0];
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (const screen of screens) {
-    // 锚点到这块屏幕矩形的最短距离（在里面就是 0）
-    const dx = Math.max(screen.x - anchorX, 0, anchorX - (screen.x + screen.w));
-    const dy = Math.max(screen.y - anchorY, 0, anchorY - (screen.y + screen.h));
-    const distance = dx * dx + dy * dy;
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      best = screen;
-    }
-  }
-
-  const targetX = Math.min(Math.max(anchorX, best.x + SCREEN_MARGIN), best.x + best.w - SCREEN_MARGIN);
-  const targetY = Math.min(Math.max(anchorY, best.y + SCREEN_MARGIN), best.y + best.h - SCREEN_MARGIN);
-
-  return { x: x + (targetX - anchorX), y: y + (targetY - anchorY) };
+/** 按当次缩放算出来的锚点参数（CSS px → 物理 px） */
+function anchorOptions(scale: number): FitOptions {
+  return {
+    anchorX: ANCHOR_X * scale,
+    anchorY: ANCHOR_Y * scale,
+    margin: SCREEN_MARGIN * scale,
+  };
 }
+
+/**
+ * 夹一次。窗口矩形用物理像素，返回值也是物理像素。
+ *
+ * 包一层只是为了让四处调用点读起来是同一句话。
+ */
+function fit(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  screens: ScreenBox[],
+  scale: number,
+): { x: number; y: number } {
+  return fitAnchor({ x, y, w, h }, screens, anchorOptions(scale));
+}
+
 
 /* ------------------------------------------------------------------ *
  * 组件出错了怎么办
@@ -442,6 +444,13 @@ function clampAnchor(x: number, y: number, w: number, screens: ScreenBox[]): { x
 
 /** 组件 iframe。`reloadWidget` 要够得着它，所以在模块作用域里留一份 */
 let widgetFrame: HTMLIFrameElement | null = null;
+/**
+ * 重载时要把调度器一起作废。
+ *
+ * `boot()` 里才建得出调度器（它要靠 `post` 往 iframe 发 tick），而
+ * `reloadWidget` 在模块作用域，够不到局部变量 —— 所以留一个钩子。
+ */
+let resetScheduler: (() => void) | null = null;
 let errorSheet: HTMLDivElement | null = null;
 /** 报上来的错按到达顺序留着，显示哪一条由 `pickPrimary` 挑 */
 let errorReports: WidgetErrorReport[] = [];
@@ -467,6 +476,9 @@ function reloadWidget() {
   const frame = widgetFrame;
   if (!frame) return;
   clearWidgetError();
+  // 旧文档的订阅全部作废：不然后台还在按老心跳往新文档里发 tick，
+  // 组件收到一堆不认识的订阅号
+  resetScheduler?.();
   const url = new URL(frame.src, window.location.href);
   url.searchParams.set("__lattice_reload", String(Date.now()));
   frame.src = url.href;
@@ -563,8 +575,7 @@ function paintWidgetError() {
 }
 
 function buildChrome(config: HostConfig) {
-  const chrome = document.createElement("div");
-  chrome.className = "lw-chrome";
+  const chrome = document.createElement("div");  chrome.className = "lw-chrome";
   chrome.innerHTML = `
     <div class="lw-pill">
       <button type="button" class="lw-btn lw-grip" data-act="drag" title="Drag to move" aria-label="Drag to move">${ICON.grip}</button>
@@ -583,6 +594,8 @@ function buildChrome(config: HostConfig) {
   const pinBtn = chrome.querySelector<HTMLButtonElement>('[data-act="pin"]')!;
   const reloadBtn = chrome.querySelector<HTMLButtonElement>('[data-act="reload"]')!;
   const closeBtn = chrome.querySelector<HTMLButtonElement>('[data-act="close"]')!;
+  /** 整颗胶囊按钮组，✕ 的手滑保护要读它的当前透明度 */
+  const pill = chrome.querySelector<HTMLDivElement>(".lw-pill");
 
   let pinned = config.pinned;
   let layer = config.layer;
@@ -608,11 +621,32 @@ function buildChrome(config: HostConfig) {
     const element = event.currentTarget as HTMLElement;
 
     void (async () => {
-      const scale = await win.scaleFactor();
-      const start = (await win.outerPosition()).toLogical(scale);
-      const size = (await win.innerSize()).toLogical(scale);
-      // 显示器信息拖一次只取一次：拖拽期间显示器不会变
-      const screens = await screenBoxes(scale);
+      /*
+       * 全程物理像素。
+       *
+       * `outerPosition()` / `innerSize()` / `availableMonitors()` 报的都是
+       * PerMonitorV2 下的真实物理像素，跨屏连续；只有指针位移是 CSS px，
+       * 需要乘一次当次的 `scaleFactor` 才换过去。
+       *
+       * 为什么不用逻辑像素：两块屏缩放不同时，"逻辑像素"不是同一套空间 ——
+       * 拿一个 scale 去折算所有屏，夹紧会落在幻影位置上（见 screen-fit.ts）。
+       */
+      let scale = await win.scaleFactor();
+      let start = await win.outerPosition();
+      const size = await win.innerSize();
+      // 显示器信息拖一次只取一次：拖拽期间显示器不会变（缩放变了会重取）
+      let screens = await screenBoxes();
+
+      /**
+       * 跨到另一块屏时的重锚。
+       *
+       * 缩放一变，说明指针进了另一块屏，Windows 会按 `WM_DPICHANGED` 的建议
+       * 矩形把窗口重摆一遍 —— 我们记的 `start` 就此作废。继续按老起点算，
+       * 窗口会从光标底下"滑走"。所以重新读一次真实位置，并把当前的指针
+       * 位移当成新起点。
+       */
+      let baseDx = 0;
+      let baseDy = 0;
 
       // 指针事件比 IPC 快，攒到下一帧再发，避免把窗口位置请求堆成队列
       let pending: { dx: number; dy: number } | null = null;
@@ -623,9 +657,27 @@ function buildChrome(config: HostConfig) {
         while (pending) {
           const step = pending;
           pending = null;
-          const target = clampAnchor(start.x + step.dx, start.y + step.dy, size.width, screens);
+
+          const next = await win.scaleFactor();
+          if (next !== scale) {
+            scale = next;
+            start = await win.outerPosition();
+            baseDx = step.dx;
+            baseDy = step.dy;
+            screens = await screenBoxes();
+          }
+
+          // 指针走 CSS px，窗口走物理 px：一步位移是 `dx * scale`
+          const target = fit(
+            start.x + (step.dx - baseDx) * scale,
+            start.y + (step.dy - baseDy) * scale,
+            size.width,
+            size.height,
+            screens,
+            scale,
+          );
           await win.setPosition(
-            new LogicalPosition(Math.round(target.x), Math.round(target.y)),
+            new PhysicalPosition(Math.round(target.x), Math.round(target.y)),
           );
         }
         busy = false;
@@ -652,31 +704,51 @@ function buildChrome(config: HostConfig) {
       const element = event.currentTarget as HTMLElement;
 
       void (async () => {
-        const scale = await win.scaleFactor();
-        const startPos = (await win.outerPosition()).toLogical(scale);
-        const startSize = (await win.innerSize()).toLogical(scale);
-        const screens = await screenBoxes(scale);
+        let scale = await win.scaleFactor();
+        let startPos = await win.outerPosition();
+        const startSize = await win.innerSize();
+        let screens = await screenBoxes();
+
+        // 同上：跨屏时缩放会变，`startPos` 会被 Windows 重摆作废
+        let baseDx = 0;
+        let baseDy = 0;
 
         const apply = async (dx: number, dy: number) => {
-          let { x, y } = startPos;
+          const next = await win.scaleFactor();
+          if (next !== scale) {
+            scale = next;
+            startPos = await win.outerPosition();
+            baseDx = dx;
+            baseDy = dy;
+            screens = await screenBoxes();
+          }
+
+          // 位移和最小尺寸都是逻辑值，先换成物理
+          const mx = (dx - baseDx) * scale;
+          const my = (dy - baseDy) * scale;
+          const minW = config.minW * scale;
+          const minH = config.minH * scale;
+
+          let x = startPos.x;
+          let y = startPos.y;
           let w = startSize.width;
           let h = startSize.height;
 
-          if (dir.includes("e")) w = Math.max(config.minW, startSize.width + dx);
-          if (dir.includes("s")) h = Math.max(config.minH, startSize.height + dy);
+          if (dir.includes("e")) w = Math.max(minW, startSize.width + mx);
+          if (dir.includes("s")) h = Math.max(minH, startSize.height + my);
           if (dir.includes("w")) {
-            w = Math.max(config.minW, startSize.width - dx);
+            w = Math.max(minW, startSize.width - mx);
             x = startPos.x + (startSize.width - w);
           }
           if (dir.includes("n")) {
-            h = Math.max(config.minH, startSize.height - dy);
+            h = Math.max(minH, startSize.height - my);
             y = startPos.y + (startSize.height - h);
           }
 
           // 往右/往下拉大时按钮也会被推出屏幕，同样要夹回来
-          const clamped = clampAnchor(x, y, w, screens);
+          const clamped = fit(x, y, w, h, screens, scale);
 
-          await win.setSize(new LogicalSize(Math.round(w), Math.round(h)));
+          await win.setSize(new PhysicalSize(Math.round(w), Math.round(h)));
           // 只有真的动了位置才 setPosition：从东/南边拉大时不该挪窗口
           const moved =
             dir.includes("w") ||
@@ -684,7 +756,7 @@ function buildChrome(config: HostConfig) {
             Math.round(clamped.x) !== Math.round(x) ||
             Math.round(clamped.y) !== Math.round(y);
           if (moved) {
-            await win.setPosition(new LogicalPosition(Math.round(clamped.x), Math.round(clamped.y)));
+            await win.setPosition(new PhysicalPosition(Math.round(clamped.x), Math.round(clamped.y)));
           }
         };
 
@@ -735,13 +807,46 @@ function buildChrome(config: HostConfig) {
    */
   reloadBtn.addEventListener("click", reloadWidget);
 
-  closeBtn.addEventListener("click", () => {
+  closeBtn.addEventListener("click", (event) => {
+    /*
+     * 手滑保护：窗饰是 `body:hover` 才显示的，从透明到可见要 100ms ——
+     * 而那颗 ✕ 在淡入的第一帧就已经能点。窗口刚在鼠标底下建出来的那一下，
+     * 随手一点就中招（真机上撞到过三次"组件自己从画布上消失"，探针最后抓到的
+     * 是一条落在 ✕ 中心、`isTrusted: true` 的 mousedown）。
+     *
+     * 判据直接用"窗饰淡到几成了"：还不到九成，说明用户几乎没看见这颗按钮，
+     * 这一下不认。不用计时器 —— 计时器要依赖 mouseenter，而指针一直停在
+     * iframe 里时那个事件可能压根不触发，测不出来就变成误挡。
+     */
+    const opacity = pill ? Number.parseFloat(getComputedStyle(pill).opacity) : 1;
+    if (opacity < 0.9) {
+      console.info(`[lattice] close ignored: chrome still fading (opacity ${opacity.toFixed(2)})`);
+      return;
+    }
+
+    /*
+     * 点击特征跟着 IPC 一起走，**不再**用 console.info 打。
+     *
+     * 这条路径会动用户的布局，"组件自己从画布上消失"那件事查到今天还没结案，
+     * 缺的就是"那一下是什么点击"。宿主页的 console 在 vite dev 下不会转发到
+     * 终端，写了也看不见；塞进参数里，Rust 侧就能和 `widget_close` 打在同一行。
+     */
+    const origin = {
+      trusted: event.isTrusted,
+      detail: event.detail,
+      // click 在 Chromium 里是 PointerEvent，触摸/笔会在这里露出来
+      pointer: (event as PointerEvent).pointerType ?? "",
+      at: `${event.clientX},${event.clientY}`,
+    };
+
     // 先让窗口自己消失，再走 IPC 去真正销毁。
     // 只调 window.close() 的话，要等 WebView2 把渲染进程拆完（几百毫秒），
     // 这段时间窗口还完整地挂在屏幕上 —— 用户感受到的就是"点了没反应"。
     closeBtn.disabled = true;
     void win.hide().catch(() => {});
-    void invoke("widget_close").catch(() => {
+    // reason 是"谁要关"。只有用户按的 ✕ 才连 placement 一起删，
+    // 别的来路只关窗口 —— 见 runner.rs 的 widget_close 注释
+    void invoke("widget_close", { reason: "user", click: origin }).catch(() => {
       // 真失败了就把窗口放回来，不然它会变成一个看不见又关不掉的幽灵
       closeBtn.disabled = false;
       void win.show().catch(() => {});
@@ -792,6 +897,43 @@ async function boot() {
 
   const granted = new Set<Permission>(config.permissions as Permission[]);
 
+  /*
+   * 实例配置。
+   *
+   * Rust 传下来的已经是**合并过出厂值**的完整对象（合并规则在
+   * `runtime/config.ts`，主窗口那边算好）。所以这里不做归一化，只负责
+   * 在两件事发生时把它交出去：组件问（`config.get`）、配置变了（推送）。
+   *
+   * 用一个可变的模块内变量而不是 const，是因为属性面板随时可能改它 ——
+   * 桥的每次调用都要读最新值，跟 `granted` 那份集合是同一个道理。
+   */
+  let instanceConfig: ConfigValues = config.config ?? {};
+
+  /*
+   * 权限是活的。
+   *
+   * 以前这个集合在窗口启动时建一次就再也不动 —— 主窗口里撤销 `storage`，
+   * 桌面上这个组件照样能写盘。撤销授权必须当场生效，所以就地换内容：
+   * 桥每次调用都读这个集合，清掉之后下一次请求就会被拒。
+   *
+   * 换完还要重走一遍初始化。只换集合的话，组件在授权前可能已经把
+   * "权限被拒"写进了自己的界面，它不会自己回头重试；画布那边是靠重挂
+   * iframe 达到同样效果（WidgetFrame.tsx 的 reloadKey），行为对齐。
+   *
+   * 载荷里带 instanceId 是必须的：这条事件会送到**每个**窗口（`emit_to` 对
+   * `Any` 监听器不过滤，见 runner.rs 的 PermissionsMessage 注释）。不比对的话，
+   * 改 A 的权限会把 B 也重载一次，B 里没落盘的草稿当场丢。
+   */
+  void listen<{ instanceId: string; permissions: string[] }>(
+    "lattice:widget-permissions",
+    (event) => {
+      if (event.payload.instanceId !== config.instanceId) return;
+      granted.clear();
+      for (const permission of event.payload.permissions) granted.add(permission as Permission);
+      reloadWidget();
+    },
+  );
+
   const iframe = document.createElement("iframe");
   // allow-forms 不能省：沙箱里没有它，浏览器会把 <form> 的提交整条拦掉，
   // submit 事件根本不触发 —— 组件里"输入框 + 回车"这种最普通的写法会静默失效
@@ -819,6 +961,13 @@ async function boot() {
   const post = (payload: unknown) => iframe.contentWindow?.postMessage(payload, "*");
   pushTheme = () => post({ [BRIDGE_TAG]: 1, type: "theme", payload: readThemeTokens() });
 
+  /*
+   * 一个桌面窗口一条时间轴。组件所有的 `schedule.every` 都挂在这上面，
+   * 窗口被最小化 / 藏起来时 `document.hidden` 变真，整条时间轴停摆。
+   */
+  const scheduler = createScheduler(post);
+  resetScheduler = () => scheduler.reset();
+
   window.addEventListener("message", (event) => {
     if (event.source !== iframe.contentWindow) return;
 
@@ -836,6 +985,7 @@ async function boot() {
 
     if (data && data[BRIDGE_TAG] === 1 && data.type === "ready") {
       post({ [BRIDGE_TAG]: 1, type: "theme", payload: readThemeTokens() });
+      post({ [BRIDGE_TAG]: 1, type: "config-changed", payload: { config: instanceConfig } });
       return;
     }
     if (!isBridgeRequest(data)) return;
@@ -844,16 +994,38 @@ async function boot() {
       instanceId: config.instanceId,
       widgetId: config.widgetId,
       granted,
+      config: instanceConfig,
+      schedule: scheduler,
       reply: post,
       close: () => {
-        void invoke("widget_close");
+        // 组件自己要退出：关窗口，但不删用户的 placement
+        void invoke("widget_close", { reason: "widget" });
       },
     });
   });
 
   iframe.addEventListener("load", () => {
     post({ [BRIDGE_TAG]: 1, type: "theme", payload: readThemeTokens() });
+    post({ [BRIDGE_TAG]: 1, type: "config-changed", payload: { config: instanceConfig } });
   });
+
+  /*
+   * 属性面板改了配置。
+   *
+   * 不重载 iframe：配置是调参，不是换权限。重载会把组件里没落盘的草稿
+   * （正在写的便签、还没提交的输入）一起冲掉，而改一个"显示秒"完全不该有
+   * 这种代价。
+   *
+   * 载荷带 instanceId：`emit_to` 会送到每个窗口（见 runner.rs 的同名注释）。
+   */
+  void listen<{ instanceId: string; config: ConfigValues }>(
+    "lattice:widget-config",
+    (event) => {
+      if (event.payload.instanceId !== config.instanceId) return;
+      instanceConfig = event.payload.config ?? {};
+      post({ [BRIDGE_TAG]: 1, type: "config-changed", payload: { config: instanceConfig } });
+    },
+  );
 
   // 平台切明暗时跟着换，否则桌面上的组件会一直停在建窗口那一刻的主题
   void listen<string>("lattice:theme", (event) => {
@@ -864,9 +1036,13 @@ async function boot() {
 
   /*
    * 属性面板在拖滑杆。只换外观，不重建窗口 —— 这是三个滑杆能跟手的前提。
+   *
+   * 同样要认 instanceId：不认的话拖 A 的滑杆会把桌面上所有卡片的底板一起改掉
+   * （`emit_to` 对 `Any` 监听器不过滤，见 runner.rs 的 AppearanceMessage 注释）。
    */
-  void listen<Appearance>("lattice:appearance", (event) => {
-    applyAppearance(normalizeAppearance(event.payload));
+  void listen<{ instanceId: string; appearance: Appearance }>("lattice:appearance", (event) => {
+    if (event.payload.instanceId !== config.instanceId) return;
+    applyAppearance(normalizeAppearance(event.payload.appearance));
     void refreshWallpaper();
   });
 
@@ -877,6 +1053,25 @@ async function boot() {
   void listen<{ widgetId: string; key: string }>("lattice:widget-store", (event) => {
     if (event.payload.widgetId !== config.widgetId) return;
     post({ [BRIDGE_TAG]: 1, type: "store-changed", payload: { key: event.payload.key } });
+  });
+
+  /*
+   * 组件目录里的文件变了（编辑器存盘、手工拷进去、脚本生成）。
+   *
+   * 载荷是**相对组件根目录**的路径，形如 `lattice.clock/widget.js` ——
+   * 第一段就是组件 id（协议层 `resolve()` 和 `install_widget` 都按
+   * `<id>/<相对路径>` 拼，目录名必须等于清单 id）。
+   *
+   * 所以这里按前缀筛：只有自己那份变了才重载。不筛的话，桌面上摆五个组件，
+   * 改一个另外四个一起闪 —— 每次闪都意味着重建一次 iframe、重跑一遍组件
+   * 脚本、丢掉它内存里的状态。
+   */
+  void listen<{ files: string[] }>("lattice:widgets-changed", (event) => {
+    const prefix = `${config.widgetId}/`;
+    const mine = event.payload.files.some(
+      (file) => file === config.widgetId || file.startsWith(prefix),
+    );
+    if (mine) reloadWidget();
   });
 
   /*
@@ -891,13 +1086,13 @@ async function boot() {
   void (async () => {
     try {
       const scale = await win.scaleFactor();
-      const position = (await win.outerPosition()).toLogical(scale);
-      const size = (await win.innerSize()).toLogical(scale);
-      const target = clampAnchor(position.x, position.y, size.width, await screenBoxes(scale));
+      const position = await win.outerPosition();
+      const size = await win.innerSize();
+      const target = fit(position.x, position.y, size.width, size.height, await screenBoxes(), scale);
       if (Math.round(target.x) === Math.round(position.x) && Math.round(target.y) === Math.round(position.y)) {
         return;
       }
-      await win.setPosition(new LogicalPosition(Math.round(target.x), Math.round(target.y)));
+      await win.setPosition(new PhysicalPosition(Math.round(target.x), Math.round(target.y)));
       await reportRect();
     } catch {
       // 校正失败不影响正常使用，下次投放还会再试

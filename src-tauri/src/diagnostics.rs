@@ -1,19 +1,28 @@
 //! 组件出问题时给人看的东西。
 //!
-//! 两件事，都在 `protocol.rs` 发文件的那条路上：
+//! 两件事：
 //!
 //! 1. **兜底页** —— 请求失败时返回一页说明，而不是空白 body。以前组件加载
 //!    不出来就是一片白，用户分不清是路径写错、文件没装、还是组件自己的 JS
-//!    崩了；现在至少能看见"哪个组件、哪个文件、为什么"。
+//!    崩了；现在至少能看见"哪个组件、哪个文件、为什么"。只在
+//!    `lattice-widget://` 这条路上有（内置组件的文件不经过协议层）。
 //!
 //! 2. **错误上报** —— 组件跑在 `sandbox` 的 iframe 里，源是不透明的，宿主
 //!    读不到它的 `window.onerror`。所以往发出去的 HTML 里注一小段脚本，
 //!    让它自己把错误 `postMessage` 给宿主。注入点必须在组件自己的脚本之前，
 //!    否则第一行就抛的错根本抓不到。
 //!
-//! 注入只发生在 `lattice-widget://` 这条路上，也就是**用户装的组件**。
-//! 内置组件的文件走应用自己的源（dev 是 vite，打包后是 tauri 资源协议），
-//! 协议层碰不到 —— 这个缺口写在 AGENTS.md 的"已知缺口"里。
+//! # 注入发生在两条路上
+//!
+//! | 组件来源 | 谁注入 | 时机 |
+//! | --- | --- | --- |
+//! | 用户装的（`lattice-widget://`） | 本模块 | 每次发文档 |
+//! | 内置的（应用自己的源） | `scripts/widget-diagnostics-plugin.mjs` | dev 中间件 / build 收尾 |
+//!
+//! 两条路读的是**同一份脚本**：`src/runtime/widget-reporter.js`（这里用
+//! `include_str!` 编进来）。以前只有协议层注入，内置组件抛错既不弹错误卡也不
+//! 出兜底页 —— 而内置组件恰恰是所有人最先装的。别在宿主页想办法补：沙箱
+//! iframe 的异常它读不到，注入只能发生在发文档的那一端。
 
 use std::path::Path;
 
@@ -197,6 +206,9 @@ dd{margin:0;font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;word-bre
 
 /// 注进组件文档的那段脚本。
 ///
+/// 源码在 `src/runtime/widget-reporter.js` —— 这里只是把它编进来，不在这里维护。
+/// 两条注入路径（协议层 / 构建期插件）读的是同一个文件，改一处两边都生效。
+///
 /// 规矩：
 ///   - 同一个错误 800ms 内只报一次（渲染循环里抛错时否则一秒能刷 60 条）
 ///   - 一共最多 12 条，报满了就闭嘴 —— 这是给人看的提示，不是日志管道
@@ -207,58 +219,7 @@ dd{margin:0;font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;word-bre
 ///
 /// 消息标记 `__lattice_diag` 和 `src/runtime/diagnostics.ts` 里的
 /// `REPORT_TAG` 必须一致 —— 那边是唯一的读者。
-const REPORTER_SOURCE: &str = r##"/*lattice-diagnostics*/
-(function () {
-  "use strict";
-  if (window.parent === window) return;
-  var LIMIT = 12;
-  var sent = 0;
-  var lastKey = "";
-  var lastAt = 0;
-
-  function baseName(url) {
-    var parts = String(url).split("?")[0].split("#")[0].split("/");
-    return parts[parts.length - 1] || String(url);
-  }
-
-  function send(kind, message, where, stack) {
-    if (sent >= LIMIT) return;
-    var now = Date.now();
-    var key = kind + "|" + message + "|" + (where || "");
-    if (key === lastKey && now - lastAt < 800) return;
-    lastKey = key;
-    lastAt = now;
-    sent += 1;
-    var payload = { tag: "__lattice_diag", kind: kind, message: String(message).slice(0, 400) };
-    if (where) payload.where = String(where).slice(0, 300);
-    if (stack) payload.stack = String(stack).slice(0, 1400);
-    try {
-      window.parent.postMessage(payload, "*");
-    } catch (error) {
-      /* 父窗口已经没了，没什么可做的 */
-    }
-  }
-
-  window.addEventListener("error", function (event) {
-    var target = event.target;
-    if (target && target !== window && target.nodeType === 1 && (target.src || target.href)) {
-      send("resource", "Failed to load " + String(target.tagName || "resource").toLowerCase(), target.src || target.href);
-      return;
-    }
-    var where = "";
-    if (event.filename) {
-      where = baseName(event.filename) + ":" + (event.lineno || 0) + ":" + (event.colno || 0);
-    }
-    var error = event.error;
-    send("script", (error && error.message) || event.message || "Script error", where, error && error.stack);
-  }, true);
-
-  window.addEventListener("unhandledrejection", function (event) {
-    var reason = event.reason;
-    var message = reason && reason.message ? reason.message : String(reason);
-    send("promise", "Unhandled rejection: " + message, "", reason && reason.stack);
-  });
-})();"##;
+const REPORTER_SOURCE: &str = include_str!("../../src/runtime/widget-reporter.js");
 
 /// 压成一行之后的完整 `<script>` 标签。
 ///
@@ -276,7 +237,9 @@ fn snippet() -> &'static str {
             .map(str::trim)
             .collect::<Vec<_>>()
             .join(" ");
-        format!("<script data-lattice=\"diagnostics\">{flat}</script>")
+        // 源码文件末尾有换行，压完会在 `</script>` 前留一个空格；trim 掉，
+        // 好让两条注入路径产出的字节完全一致（构建期插件做的是同一件事）
+        format!("<script data-lattice=\"diagnostics\">{}</script>", flat.trim())
     })
 }
 

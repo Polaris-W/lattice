@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>schedule / system.metrics test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      /*
+       * 平台调度器 + 系统指标桥。
+       *
+       * 这页钉五件事：
+       *   1. 间隔夹紧（太细的心跳会把 postMessage 当 rAF 用）
+       *   2. 订阅上限（一个组件最多 8 条）
+       *   3. 心跳真的按间隔到、clear 之后不再来
+       *   4. 页面藏起来 / 窗口最小化都停摆（后者是桌面端唯一能用的信号）
+       *   5. `system.metrics` 必须被 `system:monitor` 挡住
+       *
+       * 时间相关的断言全部用真实 setTimeout —— headless 的虚拟时间会把它们
+       * 快进，所以整页跑完只要几百毫秒。
+       */
+      import {
+        MAX_INTERVAL,
+        MAX_SUBSCRIPTIONS,
+        MIN_INTERVAL,
+        createScheduler,
+        setWindowVisible,
+      } from "/src/runtime/schedule.ts";
+      import { handleBridgeRequest } from "/src/runtime/bridge.ts";
+
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      /** 走一遍桥：返回宿主那条回话 */
+      async function ask(scheduler, method, params, granted = []) {
+        const replies = [];
+        await handleBridgeRequest(
+          { __lattice: 1, type: "request", id: 1, method, params },
+          {
+            instanceId: "inst",
+            widgetId: "demo",
+            granted: new Set(granted),
+            config: {},
+            schedule: scheduler,
+            reply: (payload) => replies.push(payload),
+            close: () => {},
+          },
+        );
+        return replies[0];
+      }
+
+      // ---- 1. 间隔夹紧 ----
+      {
+        const scheduler = createScheduler(() => {});
+        const fast = scheduler.every(10);
+        log(fast.every === MIN_INTERVAL, `10ms 被夹到 ${fast.every}ms（下限 ${MIN_INTERVAL}）`);
+
+        const slow = scheduler.every(999999999);
+        log(slow.every === MAX_INTERVAL, `超大间隔被夹到 ${slow.every}ms（上限 ${MAX_INTERVAL}）`);
+
+        const normal = scheduler.every(1500);
+        log(normal.every === 1500, `1500ms 原样保留（${normal.every}ms）`);
+        scheduler.reset();
+      }
+
+      // ---- 2. 订阅上限 ----
+      {
+        const scheduler = createScheduler(() => {});
+        for (let i = 0; i < MAX_SUBSCRIPTIONS; i += 1) scheduler.every(1000);
+        log(scheduler.count() === MAX_SUBSCRIPTIONS, `挂满 ${scheduler.count()} 条`);
+        log(scheduler.every(1000) === null, "第 9 条被拒（返回 null）");
+        scheduler.reset();
+        log(scheduler.count() === 0, "reset 之后清空");
+      }
+
+      // ---- 3. 心跳真的按间隔到 ----
+      {
+        const ticks = [];
+        const scheduler = createScheduler((message) => ticks.push(message.payload));
+
+        const grant = scheduler.every(250);
+        await sleep(700);
+        // 250 / 500 / 700 边界上算不准，取一个宽容区间：至少 2 拍，不超过 4 拍
+        log(ticks.length >= 2 && ticks.length <= 4, `700ms 内收到 ${ticks.length} 拍（250ms 间隔）`);
+        log(
+          ticks.every((tick) => tick.id === grant.id && typeof tick.at === "number"),
+          "每拍都带着订阅号和时刻",
+        );
+
+        scheduler.clear(grant.id);
+        const after = ticks.length;
+        await sleep(600);
+        log(ticks.length === after, `clear 之后不再来（还是 ${ticks.length} 拍）`);
+        scheduler.reset();
+      }
+
+      // ---- 4. 页面藏起来就停摆 ----
+      {
+        /*
+         * 手动改 `visibilityState`：这个属性是只读 getter，但在 Chromium 里
+         * 可以 defineProperty 盖掉，再手动派发 visibilitychange —— 调度器读的
+         * 就是这个属性，所以这条路径和真·切走窗口完全一样。
+         */
+        const ticks = [];
+        const scheduler = createScheduler((message) => ticks.push(message.payload.at));
+        scheduler.every(250);
+        await sleep(300);
+        const before = ticks.length;
+        log(before >= 1, `可见时正常跳（${before} 拍）`);
+
+        Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+        document.dispatchEvent(new Event("visibilitychange"));
+        await sleep(600);
+        log(ticks.length === before, `藏起来之后停摆（仍然 ${ticks.length} 拍）`);
+
+        Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+        document.dispatchEvent(new Event("visibilitychange"));
+        await sleep(120);
+        log(ticks.length === before + 1, `回到前台立刻补一拍（${ticks.length} 拍，不补一串）`);
+        scheduler.reset();
+      }
+
+      // ---- 5. 窗口被最小化也停摆 ----
+      {
+        /*
+         * 这一条对应真机上的一个坑：主窗口最小化之后 `document.visibilityState`
+         * 仍然是 `visible`（WebView2 只在整个 webview 被藏起来时才翻这个属性），
+         * 所以只盯 visibilitychange 的调度器在桌面端从来没停过。
+         *
+         * 现在窗口可见性由 Rust 观测后单独下发，这里直接调那个入口模拟一次。
+         */
+        const ticks = [];
+        const scheduler = createScheduler((message) => ticks.push(message.payload.at));
+        scheduler.every(250);
+        await sleep(300);
+        const before = ticks.length;
+        log(before >= 1, `窗口可见时正常跳（${before} 拍）`);
+
+        setWindowVisible(false);
+        await sleep(600);
+        log(ticks.length === before, `窗口最小化后停摆（仍然 ${ticks.length} 拍）`);
+
+        setWindowVisible(true);
+        await sleep(120);
+        log(ticks.length === before + 1, `还原后补一拍（${ticks.length} 拍，不补一串）`);
+        scheduler.reset();
+      }
+
+      // ---- 6. 桥：参数校验与权限 ----
+      {
+        const scheduler = createScheduler(() => {});
+
+        const ok = await ask(scheduler, "schedule.every", { every: 10 });
+        log(ok.ok === true && ok.result.every === MIN_INTERVAL, `桥上 10ms 也被夹到 ${ok.result?.every}ms`);
+
+        const bad = await ask(scheduler, "schedule.every", { every: "soon" });
+        log(bad.ok === false && bad.code === "bad_params", `非数字间隔被拒（${bad.code}）`);
+
+        const cleared = await ask(scheduler, "schedule.clear", { id: ok.result.id });
+        log(cleared.ok === true && scheduler.count() === 0, "schedule.clear 释放了订阅");
+
+        const denied = await ask(scheduler, "system.metrics", {});
+        log(
+          denied.ok === false && denied.code === "permission_denied" && denied.permission === "system:monitor",
+          `没有 system:monitor 时被拒（${denied.code} / ${denied.permission}）`,
+        );
+
+        const granted = await ask(scheduler, "system.metrics", {}, ["system:monitor"]);
+        log(
+          granted.ok === false && granted.code === "internal",
+          `授权之后浏览器里没有采样器，报 ${granted.code}（不是静默返回 0）`,
+        );
+
+        scheduler.reset();
+      }
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>

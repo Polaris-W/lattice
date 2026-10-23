@@ -1,13 +1,31 @@
 {
   "id": "lattice.countdown",
   "name": "Countdown",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Counts down to a date, showing days, hours, minutes and seconds",
   "author": "Lattice",
   "entry": "index.html",
   "icon": "icon.svg",
   "size": { "w": 240, "h": 156, "minW": 180, "minH": 130 },
   "layer": "desktop",
-  "permissions": ["clock", "storage"],
+  "permissions": ["clock"],
+  "config": [
+    {
+      "key": "target",
+      "type": "date",
+      "label": "Target date",
+      "default": "",
+      "help": "Leave empty to count down to the next January 1."
+    },
+    {
+      "key": "label",
+      "type": "text",
+      "label": "Caption",
+      "default": "",
+      "placeholder": "Until Jan 1, 2027",
+      "maxLength": 40,
+      "help": "Replaces the line above the number."
+    }
+  ],
   "sdk": "^0.1"
 }
