@@ -28,6 +28,36 @@ body {
   flex-direction: column;
   height: 100%;
   padding: 10px 12px 8px;
+  gap: 6px;
+}
+
+/* ---------- 状态条（同时给窗饰让位） ---------- */
+
+/*
+ * 顶上这条 24px 不是装饰。桌面窗口的功能图标（拖动/层级/别针/收回）浮在
+ * 右上角 6px 处、约 97×28，指针一进窗口它就现身。便签原来的正文从 10px
+ * 就开始写，那排按钮正好压住第一行的后半截 —— 打字的人手不离键盘、指针
+ * 一动不动，按钮也一动不动地挡着。
+ *
+ * 96px 是窗饰的实际占地：四个 22px 按钮 + 间距 + 内边距 + 右边距 6px，
+ * 再减掉卡片自己的 12px 内边距。正文因此从 40px 处起排，始终在按钮下方。
+ */
+.note-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 24px;
+  padding-right: 96px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.note-head #status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .note textarea {
@@ -53,11 +83,11 @@ body {
 }
 
 .note-foot {
+  flex: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
-  padding-top: 6px;
   font-size: 11px;
   line-height: 1.4;
   color: var(--muted);

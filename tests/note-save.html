@@ -102,7 +102,7 @@
         log(note.state.stored === last, `连续输入后盘上是最后一次的内容（「${note.state.stored}」）`);
         log(note.state.setCalls <= 3, `只发了 ${note.state.setCalls} 次写（串行，不排队堆积）`);
         const status = doc.getElementById("status").textContent;
-        log(status === "已保存", `状态停在「${status}」`);
+        log(status === "Saved", `状态停在「${status}」`);
         note.frame.remove();
       }
 

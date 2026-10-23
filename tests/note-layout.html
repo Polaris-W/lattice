@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>note layout / chrome safe area test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+      iframe {
+        position: absolute;
+        left: -9999px;
+        top: 0;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      /*
+       * 这页盯的是「便签正文被窗饰压住」这个 bug。
+       *
+       * 桌面窗口的四个功能图标（拖动/层级/别针/收回）是浮层，位置写死在
+       * src/widgetHost.css 的 .lw-pill 上：top 6、right 6、约 97×28 ——
+       * 也就是下沿在 34px、右边缘占掉 103px。组件里任何从顶上就开始排的
+       * 内容都会钻到它下面去，而它只在指针进窗口时现身，所以"截图上没有、
+       * 用起来就挡"。
+       *
+       * 便签的解法是顶上留一条 24px 的状态条（padding-right: 96px）：
+       * 正文从 40px 处起排，状态条自己把 96px 让出来。这里就把这两条量死。
+       */
+
+      // 与 widgetHost.css 的 .lw-pill 保持一致
+      const PILL_BOTTOM = 34; // top 6 + 22px 按钮 + 2×2 内边距 + 2×1 描边
+      const PILL_WIDTH = 97; // 4×22 + 3×1 间距 + 2×2 内边距 + 2×1 描边
+
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      function mountNote(w, h) {
+        const frame = document.createElement("iframe");
+        frame.setAttribute("sandbox", "allow-scripts allow-same-origin");
+        frame.style.width = w + "px";
+        frame.style.height = h + "px";
+        frame.src = "/widgets/lattice.note/index.html";
+        document.body.appendChild(frame);
+
+        const ready = new Promise((resolve) => {
+          window.addEventListener("message", function handler(event) {
+            if (event.source !== frame.contentWindow) return;
+            const data = event.data;
+            if (!data || data.__lattice !== 1) return;
+            if (data.type === "ready") {
+              resolve();
+              return;
+            }
+            if (data.type !== "request") return;
+            const reply = (payload) =>
+              frame.contentWindow.postMessage(
+                Object.assign({ __lattice: 1, type: "response", id: data.id }, payload),
+                "*",
+              );
+            if (data.method === "storage.get") return reply({ ok: true, result: "" });
+            if (data.method === "storage.set") return reply({ ok: true, result: { ok: true } });
+            reply({ ok: false, error: "unknown" });
+          });
+        });
+
+        return { frame, ready };
+      }
+
+      // ---- 场景 1：默认尺寸，正文必须从窗饰下沿之下开始 ----
+      {
+        const { frame, ready } = await mountNote(260, 200);
+        await ready;
+        await sleep(80);
+        const doc = frame.contentDocument;
+        const head = doc.querySelector(".note-head");
+        const status = doc.getElementById("status");
+        const area = doc.getElementById("text");
+
+        log(!!head, "顶上有一条状态条 .note-head");
+        log(
+          !!head && head.contains(status),
+          "保存状态在状态条里，不在底栏 —— 底栏那一行是正文最容易写到的地方",
+        );
+
+        const top = area.getBoundingClientRect().top;
+        log(
+          top >= PILL_BOTTOM,
+          `正文起始 y=${top.toFixed(1)}，窗饰下沿 ${PILL_BOTTOM}（${top >= PILL_BOTTOM ? "没压住" : "被压住"}）`,
+        );
+
+        const padRight = parseFloat(getComputedStyle(head).paddingRight);
+        log(
+          padRight >= PILL_WIDTH - 6,
+          `状态条右侧让出 ${padRight}px（窗饰占 ${PILL_WIDTH}px，卡片自身内边距 12px 已在里面）`,
+        );
+
+        // 状态文字再长也不能顶出安全区
+        status.textContent = "No storage permission";
+        const overflow = status.getBoundingClientRect().right - (head.getBoundingClientRect().right - padRight);
+        log(overflow <= 0.5, `长文案溢出安全区 ${overflow.toFixed(1)}px`);
+
+        frame.remove();
+      }
+
+      // ---- 场景 2：最小尺寸，正文还剩得下几行 ----
+      {
+        const { frame, ready } = await mountNote(180, 120);
+        await ready;
+        await sleep(80);
+        const doc = frame.contentDocument;
+        const area = doc.getElementById("text");
+        const top = area.getBoundingClientRect().top;
+        const height = area.getBoundingClientRect().height;
+
+        log(top >= PILL_BOTTOM, `最小尺寸下正文起始 y=${top.toFixed(1)}`);
+        // 13px × 1.7 = 22.1 一行，至少留两行，不然这个尺寸就没法用了
+        log(height >= 44, `最小尺寸下正文高 ${height.toFixed(1)}px（≥ 两行 44px）`);
+
+        frame.remove();
+      }
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>
