@@ -19,7 +19,7 @@ import { isStaleTarget, readAutostart, writeAutostart, type AutostartState } fro
 import { Glyph, ICON, ThemeGlyph } from "./icons";
 import { useLattice, type ThemeMode } from "./store";
 
-type View = "menu" | "signin" | "profile";
+type View = "menu" | "signin" | "profile" | "catalogue";
 
 const THEME_OPTIONS: Array<{ value: ThemeMode; label: string }> = [
   { value: "light", label: "Light" },
@@ -63,6 +63,8 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
   const toggleRestoreOnLaunch = useLattice((state) => state.toggleRestoreOnLaunch);
   const paused = useLattice((state) => state.paused);
   const setPaused = useLattice((state) => state.setPaused);
+  const catalogueSource = useLattice((state) => state.catalogueSource);
+  const setCatalogueSource = useLattice((state) => state.setCatalogueSource);
 
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<View>("menu");
@@ -79,6 +81,9 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
   const [autostartKnown, setAutostartKnown] = useState(false);
   const [autostartBusy, setAutostartBusy] = useState(false);
   const [autostartError, setAutostartError] = useState<string | null>(null);
+  /** 目录来源的草稿。保存之前不动真状态 —— 边打字边生效会一直发请求 */
+  const [draftKind, setDraftKind] = useState<"bundled" | "url">("bundled");
+  const [draftUrl, setDraftUrl] = useState("");
 
   const close = useCallback(() => {
     setOpen(false);
@@ -96,6 +101,17 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
     setDraftEmail(profile?.email ?? "");
     setView("profile");
   }, [profile]);
+
+  const startCatalogue = useCallback(() => {
+    setDraftKind(catalogueSource.kind);
+    setDraftUrl(catalogueSource.url);
+    setView("catalogue");
+  }, [catalogueSource]);
+
+  const saveCatalogue = useCallback(() => {
+    setCatalogueSource({ kind: draftKind, url: draftKind === "url" ? draftUrl : "" });
+    setView("menu");
+  }, [draftKind, draftUrl, setCatalogueSource]);
 
   // Ctrl+, 打开设置（和大多数桌面应用的约定一致），Esc 关闭
   useEffect(() => {
@@ -336,6 +352,15 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
                   </div>
                 ) : null}
 
+                <button type="button" className="lattice-menu-row" onClick={startCatalogue}>
+                  <Glyph d={ICON.store} />
+                  <span className="lattice-menu-label">Widget catalogue</span>
+                  <span className="lattice-menu-note">
+                    {catalogueSource.kind === "bundled" ? "Bundled" : "Custom URL"}
+                  </span>
+                  <Glyph d={ICON.chevron} size={13} />
+                </button>
+
                 <button
                   type="button"
                   className="lattice-menu-row"
@@ -389,7 +414,7 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
             </>
           )}
 
-          {view !== "menu" && (
+          {(view === "signin" || view === "profile") && (
             <form className="lattice-account-form" onSubmit={submit}>
               <header className="lattice-account-form-head">
                 <button type="button" className="lattice-icon-btn" onClick={() => setView("menu")}>
@@ -445,6 +470,73 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
                   disabled={!draftName.trim()}
                 >
                   {view === "profile" ? "Save" : "Sign in"}
+                </button>
+              </footer>
+            </form>
+          )}
+
+          {view === "catalogue" && (
+            <form
+              className="lattice-account-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                saveCatalogue();
+              }}
+            >
+              <header className="lattice-account-form-head">
+                <button type="button" className="lattice-icon-btn" onClick={() => setView("menu")}>
+                  <Glyph d={ICON.back} />
+                  <span className="lattice-sr-only">Back</span>
+                </button>
+                <span>Widget catalogue</span>
+              </header>
+
+              <div className="lattice-account-form-body">
+                <div className="lattice-segmented is-full">
+                  <button
+                    type="button"
+                    className={`lattice-segment${draftKind === "bundled" ? " is-active" : ""}`}
+                    onClick={() => setDraftKind("bundled")}
+                  >
+                    Bundled
+                  </button>
+                  <button
+                    type="button"
+                    className={`lattice-segment${draftKind === "url" ? " is-active" : ""}`}
+                    onClick={() => setDraftKind("url")}
+                  >
+                    Custom URL
+                  </button>
+                </div>
+
+                <label className="lattice-textfield">
+                  <span>Catalogue address</span>
+                  <input
+                    value={draftUrl}
+                    onChange={(event) => setDraftUrl(event.target.value)}
+                    placeholder="https://example.com/lattice/registry.json"
+                    disabled={draftKind === "bundled"}
+                    spellCheck={false}
+                    autoComplete="off"
+                  />
+                </label>
+
+                <p className="lattice-account-hint">
+                  A plain JSON file — any static host works, no server needed. Packages are verified
+                  against the publisher key in that file before they are installed.
+                </p>
+              </div>
+
+              <footer className="lattice-account-form-foot">
+                <button type="button" className="lattice-btn is-small" onClick={() => setView("menu")}>
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="lattice-btn is-small is-primary"
+                  disabled={draftKind === "url" && !draftUrl.trim()}
+                >
+                  Save
                 </button>
               </footer>
             </form>

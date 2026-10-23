@@ -63,6 +63,19 @@ pub struct NetworkResponse {
     pub truncated: bool,
 }
 
+/// 发一次请求的**原始**结果：body 是字节，不是字符串。
+///
+/// 组件那条路（`network_fetch`）随后按 UTF-8 有损转成文本；组件商店那条路
+/// （`store.rs`）拿的是 `.lattice` 包，必须一个字节都不许动 —— 所以真正发
+/// 请求的这一层只能给字节，转文本是**调用方**的选择。
+pub(crate) struct RawResponse {
+    pub status: u16,
+    pub ok: bool,
+    pub headers: BTreeMap<String, String>,
+    pub body: Vec<u8>,
+    pub truncated: bool,
+}
+
 fn wide(value: &str) -> Vec<u16> {
     OsStr::new(value).encode_wide().chain(std::iter::once(0)).collect()
 }
@@ -86,12 +99,17 @@ fn last_error(what: &str) -> String {
 }
 
 /// 发一次请求。阻塞 —— 调用方负责丢到线程池里。
-fn send(
+///
+/// `limit` 是响应体上限：组件那条路是 1MB，商店下载包放宽到 16MB
+/// （包本身受 `package_policy` 的 64MB 总量限制，这里只是别把整个文件读进内存
+/// 之前就撑爆）。
+pub(crate) fn send(
     target: &Target,
     method: &str,
     headers: &[(String, String)],
     body: Option<&[u8]>,
-) -> Result<NetworkResponse, String> {
+    limit: usize,
+) -> Result<RawResponse, String> {
     let agent = wide("Lattice/0.1");
     // SAFETY: 字符串以 NUL 结尾；AUTOMATIC_PROXY 用系统代理设置（企业环境常见）
     let session = Handle(unsafe {
@@ -215,9 +233,9 @@ fn send(
     }
 
     let headers = read_headers(request.0);
-    let (body, truncated) = read_body(request.0)?;
+    let (body, truncated) = read_body(request.0, limit)?;
 
-    Ok(NetworkResponse {
+    Ok(RawResponse {
         status: status as u16,
         ok: (200..300).contains(&status),
         headers,
@@ -277,7 +295,7 @@ fn read_headers(request: *mut core::ffi::c_void) -> BTreeMap<String, String> {
 }
 
 /// 一直读到没有为止，超过上限就截断
-fn read_body(request: *mut core::ffi::c_void) -> Result<(String, bool), String> {
+fn read_body(request: *mut core::ffi::c_void, limit: usize) -> Result<(Vec<u8>, bool), String> {
     let mut collected: Vec<u8> = Vec::new();
     let mut chunk = vec![0u8; 16 * 1024];
 
@@ -299,15 +317,13 @@ fn read_body(request: *mut core::ffi::c_void) -> Result<(String, bool), String> 
             break;
         }
         collected.extend_from_slice(&chunk[..read as usize]);
-        if collected.len() >= MAX_RESPONSE_BYTES {
-            collected.truncate(MAX_RESPONSE_BYTES);
-            // 截断点可能落在多字节字符中间，from_utf8_lossy 会把它换成替换符，
-            // 不会 panic —— 这里要的是"能读"，不是"一字不差"
-            return Ok((String::from_utf8_lossy(&collected).to_string(), true));
+        if collected.len() >= limit {
+            collected.truncate(limit);
+            return Ok((collected, true));
         }
     }
 
-    Ok((String::from_utf8_lossy(&collected).to_string(), false))
+    Ok((collected, false))
 }
 
 /// 组件侧的入口。
@@ -385,7 +401,7 @@ pub async fn network_fetch(
 
     // WinHTTP 是阻塞 API，扔到线程池里跑，别占着异步运行时的线程
     let result = tauri::async_runtime::spawn_blocking(move || {
-        send(&target, &method, &headers, payload.as_deref())
+        send(&target, &method, &headers, payload.as_deref(), MAX_RESPONSE_BYTES)
     })
     .await
     .map_err(|error| format!("the network request task failed: {error}"))?;
@@ -393,10 +409,23 @@ pub async fn network_fetch(
     match &result {
         Ok(response) => {
             if std::env::var("LATTICE_NET_TRACE").is_ok_and(|value| value != "0") {
-                eprintln!("[lattice] network <- {widget_id} {} {}", response.status, response.body.len());
+                eprintln!(
+                    "[lattice] network <- {widget_id} {} {}",
+                    response.status,
+                    response.body.len()
+                );
             }
         }
         Err(error) => eprintln!("[lattice] network failed ({widget_id}): {error}"),
     }
-    result
+
+    result.map(|raw| NetworkResponse {
+        status: raw.status,
+        ok: raw.ok,
+        headers: raw.headers,
+        // 截断点可能落在多字节字符中间，from_utf8_lossy 会把它换成替换符，
+        // 不会 panic —— 组件要的是"能读"，不是"一字不差"
+        body: String::from_utf8_lossy(&raw.body).to_string(),
+        truncated: raw.truncated,
+    })
 }

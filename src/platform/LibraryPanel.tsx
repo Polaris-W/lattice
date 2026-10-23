@@ -17,7 +17,10 @@ import { useMemo, useState } from "react";
 import type { WidgetLoadError, WidgetRecord } from "../runtime/registry";
 import { matchesWidget, tokenize } from "../runtime/library-search";
 import { PERMISSION_LABELS, isPermissionReady } from "../runtime/manifest";
+import { CatalogueSection, type StoreBinding } from "./CatalogueSection";
+import type { BackupInfo } from "./catalogue";
 import { Glyph, ICON, PanelGlyph, WidgetIconMark } from "./icons";
+import type { Rating } from "./store";
 
 /** 安装结果提示。成功的会自己消失，失败的留着等用户处理 */
 export interface InstallNotice {
@@ -38,6 +41,14 @@ interface LibraryPanelProps {
   onInstall: (record: WidgetRecord) => void;
   onInstallPack: (records: WidgetRecord[]) => void;
   onUninstall: (record: WidgetRecord) => void;
+  /** 组件目录（商店）。读不到时传 null，这一段就不画 */
+  store: StoreBinding;
+  /** 每个组件有没有可回滚的上一版，按 widgetId */
+  backups: Record<string, BackupInfo | null>;
+  ratings: Record<string, Rating>;
+  onRollback: (record: WidgetRecord) => void;
+  onRate: (record: WidgetRecord, stars: number) => void;
+  onReport: (record: WidgetRecord) => void;
   /** 面板是否展开；收起后退成一条竖条，只留开合按钮 */
   open: boolean;
   onToggle: () => void;
@@ -55,6 +66,12 @@ export function LibraryPanel({
   onInstall,
   onInstallPack,
   onUninstall,
+  store,
+  backups,
+  ratings,
+  onRollback,
+  onRate,
+  onReport,
   open,
   onToggle,
 }: LibraryPanelProps) {
@@ -64,7 +81,14 @@ export function LibraryPanel({
   const filtering = tokens.length > 0;
 
   const installed = widgets.filter((record) => installedIds.has(record.manifest.id));
-  const available = widgets.filter((record) => !installedIds.has(record.manifest.id));
+  /*
+   * 目录里有的条目不在"可安装"里重复出现 —— 它在下方的目录段里，
+   * 带着版本、签名和更新按钮。两处各画一遍的话，同一件事会有两个说法。
+   */
+  const catalogueIds = new Set((store.snapshot?.catalogue?.entries ?? []).map((item) => item.id));
+  const available = widgets.filter(
+    (record) => !installedIds.has(record.manifest.id) && !catalogueIds.has(record.manifest.id),
+  );
   const officialPack = available.filter((record) => record.source === "bundled");
 
   const matches = (record: WidgetRecord) => matchesWidget(record, tokens);
@@ -83,6 +107,9 @@ export function LibraryPanel({
 
   const renderCard = (record: WidgetRecord) => {
     const isInstalled = installedIds.has(record.manifest.id);
+    const review = store.reviews[record.manifest.id];
+    const backup = backups[record.manifest.id] ?? null;
+    const rating = ratings[record.manifest.id]?.stars ?? 0;
 
     return (
       <div
@@ -115,7 +142,9 @@ export function LibraryPanel({
             <span className="lattice-card-name">{record.manifest.name}</span>
             <code className="lattice-card-id">{record.manifest.id}</code>
           </span>
-          {isInstalled ? (
+          {review ? (
+            <span className="lattice-chip is-warn">Review</span>
+          ) : isInstalled ? (
             <span className="lattice-chip is-accent">Installed</span>
           ) : (
             <span className="lattice-chip">{record.source === "bundled" ? "Bundled" : "Local"}</span>
@@ -149,18 +178,64 @@ export function LibraryPanel({
           </div>
         )}
 
+        {/*
+          评分只对已安装的组件显示：没装过的人没有资格评价它 ——
+          更重要的是，卡片上再挂一排星星会让"安装"这个动作更难看见。
+        */}
+        {isInstalled && (
+          <div className="lattice-card-rating" onClick={(event) => event.stopPropagation()}>
+            <div className="lattice-stars" role="group" aria-label={`Rate ${record.manifest.name}`}>
+              {[1, 2, 3, 4, 5].map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`lattice-star${value <= rating ? " is-on" : ""}`}
+                  onClick={() => onRate(record, value === rating ? 0 : value)}
+                  aria-label={`${value} star${value === 1 ? "" : "s"}`}
+                  aria-pressed={value <= rating}
+                  title={value === rating ? "Click again to clear" : undefined}
+                >
+                  ★
+                </button>
+              ))}
+            </div>
+            {backup?.version ? (
+              <button
+                type="button"
+                className="lattice-link-btn is-tiny"
+                onClick={() => onRollback(record)}
+                title={`Restore ${backup.version} (the version you had before this update)`}
+              >
+                Back to {backup.version}
+              </button>
+            ) : null}
+          </div>
+        )}
+
         <div className="lattice-card-actions">
           {isInstalled ? (
-            <button
-              type="button"
-              className="lattice-link-btn"
-              onClick={(event) => {
-                event.stopPropagation();
-                onUninstall(record);
-              }}
-            >
-              Uninstall
-            </button>
+            <>
+              <button
+                type="button"
+                className="lattice-link-btn"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onReport(record);
+                }}
+              >
+                Report
+              </button>
+              <button
+                type="button"
+                className="lattice-link-btn"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onUninstall(record);
+                }}
+              >
+                Uninstall
+              </button>
+            </>
           ) : (
             <button
               type="button"
@@ -339,6 +414,8 @@ export function LibraryPanel({
             {shownAvailable.map(renderCard)}
           </section>
         )}
+
+        <CatalogueSection store={store} tokens={tokens} installedIds={installedIds} />
 
         {errors.length > 0 && (
           <div className="lattice-errors">

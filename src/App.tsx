@@ -14,13 +14,26 @@ import { Canvas } from "./platform/Canvas";
 import { DebugPanel } from "./platform/DebugPanel";
 import { InspectorPanel } from "./platform/InspectorPanel";
 import { LibraryPanel, type InstallNotice } from "./platform/LibraryPanel";
+import { ReportDialog, type ReportTarget } from "./platform/ReportDialog";
+import type { StoreBinding } from "./platform/CatalogueSection";
+import {
+  backupInfo,
+  installCataloguePackage,
+  loadCatalogue,
+  reportWidget,
+  rollbackWidget,
+  type BackupInfo,
+  type CatalogueSnapshot,
+} from "./platform/catalogue";
+import { addedPermissions, type CatalogueEntry, type CataloguePackage } from "./runtime/catalogue";
 import { buildSpecs, closeDesktop, minimizeMain, syncDesktop } from "./platform/desktop";
 import { Glyph, ICON, ThemeGlyph } from "./platform/icons";
 import { SettingsMenu } from "./platform/SettingsMenu";
 import { nextFreeSlot, useLattice, type ThemeMode } from "./platform/store";
+import { PERMISSION_LABELS } from "./runtime/manifest";
 import { isTauri, loadRegistry, type WidgetLoadError, type WidgetRecord } from "./runtime/registry";
 import { DEBUG_EVENT, ingest } from "./runtime/debug";
-import type { WidgetLayer } from "./runtime/manifest";
+import type { Permission, WidgetLayer } from "./runtime/manifest";
 
 /** 顶栏那颗按钮的循环顺序：浅色 → 深色 → 跟随系统 → 浅色 */
 const THEME_CYCLE: ThemeMode[] = ["light", "dark", "system"];
@@ -139,6 +152,32 @@ export default function App() {
   const [crash, setCrash] = useState<CrashEvent | null>(null);
   /** 调试面板。不落盘：它是"看一眼就走"的工具，下次启动不必自动弹出来 */
   const [debugOpen, setDebugOpen] = useState(false);
+
+  /*
+   * 组件目录（商店）。
+   *
+   * 目录本身**不落盘**：它是一份随时可能变的外部 JSON，缓存一份只会让
+   * "为什么这里还是旧版本"变成要查的事。读一次几百毫秒，界面上有刷新按钮。
+   * 用户配置（从哪儿读）落在 store 里。
+   */
+  const catalogueSource = useLattice((state) => state.catalogueSource);
+  const trustedKeys = useLattice((state) => state.trustedKeys);
+  const trustKey = useLattice((state) => state.trustKey);
+  const ratings = useLattice((state) => state.ratings);
+  const rateWidget = useLattice((state) => state.rateWidget);
+  const permissionReviews = useLattice((state) => state.permissionReviews);
+  const flagPermissionReview = useLattice((state) => state.flagPermissionReview);
+  const resolvePermissionReview = useLattice((state) => state.resolvePermissionReview);
+  const grant = useLattice((state) => state.grant);
+  const [catalogue, setCatalogue] = useState<CatalogueSnapshot | null>(null);
+  const [catalogueBusy, setCatalogueBusy] = useState(false);
+  const [catalogueBusyId, setCatalogueBusyId] = useState<string | null>(null);
+  /** 每个组件有没有可回滚的上一版。磁盘状态，只在刷新清单时重读 */
+  const [backups, setBackups] = useState<Record<string, BackupInfo | null>>({});
+  const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
+  const [reportSaving, setReportSaving] = useState(false);
+  const [reportResult, setReportResult] = useState<{ path: string } | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
 
   /*
    * 桌面窗口发来的调试记录。
@@ -425,6 +464,151 @@ export default function App() {
     [installWidget],
   );
 
+  /*
+   * 读一次目录。
+   *
+   * 失败不抛给调用方：目录挂了不该让整个界面报错，那一段自己会画成
+   * "读不到 + 重试"，上面两段（已安装 / 可安装）照常工作。
+   */
+  const refreshCatalogue = useCallback(async () => {
+    setCatalogueBusy(true);
+    try {
+      setCatalogue(await loadCatalogue(catalogueSource));
+    } finally {
+      setCatalogueBusy(false);
+    }
+  }, [catalogueSource]);
+
+  useEffect(() => {
+    void refreshCatalogue();
+  }, [refreshCatalogue]);
+
+  /*
+   * 每个组件有没有可回滚的上一版。
+   *
+   * 这是磁盘状态，只在清单变化时重读 —— 装完 / 回滚完都会走 `refresh()`，
+   * 所以这里跟着 `installedSet` 变就够了。
+   */
+  useEffect(() => {
+    if (!isTauri()) return;
+    let alive = true;
+    const ids = [...installedSet];
+    void Promise.all(ids.map(async (id) => [id, await backupInfo(id)] as const)).then((pairs) => {
+      if (!alive) return;
+      setBackups(Object.fromEntries(pairs));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [installedSet]);
+
+  /**
+   * 从目录装 / 更新。
+   *
+   * `acceptNewKey` 是"用户已经在卡片上确认过换人了"。没有它的时候，一旦本地
+   * 钉住的公钥和目录里的不一样，这里直接拒绝 —— 界面上的那条警告必须真的
+   * 挡住动作，否则它只是一行字。
+   */
+  const installFromCatalogue = useCallback(
+    async (entry: CatalogueEntry, pkg: CataloguePackage, acceptNewKey: boolean) => {
+      if (!isTauri()) {
+        setNotice({ kind: "error", text: "Installing from the catalogue needs the desktop app." });
+        return;
+      }
+      const key = entry.publisher?.key;
+      if (!key) return;
+
+      const pinned = trustedKeys[entry.id];
+      if (!acceptNewKey && pinned && pinned !== key) {
+        setNotice({
+          kind: "error",
+          text: `${entry.name} is signed with a different key now — confirm it on the card first.`,
+        });
+        return;
+      }
+
+      const before = records.get(entry.id)?.manifest.permissions ?? [];
+      setCatalogueBusyId(entry.id);
+      try {
+        const result = await installCataloguePackage(catalogueSource, entry, pkg);
+        trustKey(entry.id, key);
+        // 内置包也要显式"安装"（不变量 1）；用户目录里的包本来就算已装，
+        // 多记一次没有副作用
+        installWidget(entry.id);
+        const added = addedPermissions(before, pkg.permissions);
+        if (added.length > 0) flagPermissionReview(entry.id, result.version, added);
+        await refresh();
+        setNotice({
+          kind: "ok",
+          text: result.previousVersion
+            ? `Updated ${entry.name} to ${result.version}`
+            : `Installed ${entry.name} ${result.version}`,
+        });
+      } catch (error) {
+        setNotice({ kind: "error", text: `${entry.name}: ${String(error)}` });
+      } finally {
+        setCatalogueBusyId(null);
+      }
+    },
+    [
+      catalogueSource,
+      flagPermissionReview,
+      installWidget,
+      records,
+      refresh,
+      trustKey,
+      trustedKeys,
+    ],
+  );
+
+  const rollback = useCallback(
+    async (record: WidgetRecord) => {
+      try {
+        const result = await rollbackWidget(record.manifest.id);
+        await refresh();
+        setNotice({
+          kind: "ok",
+          text: `Rolled ${record.manifest.name} back to ${result.version ?? "the previous version"}`,
+        });
+      } catch (error) {
+        setNotice({ kind: "error", text: `Could not roll back: ${String(error)}` });
+      }
+    },
+    [refresh],
+  );
+
+  const submitReport = useCallback(
+    async (input: { reason: string; note: string; stars: number | null }) => {
+      if (!reportTarget) return;
+      const { record } = reportTarget;
+      setReportSaving(true);
+      setReportError(null);
+      try {
+        const path = await reportWidget({
+          id: record.manifest.id,
+          version: record.manifest.version,
+          reason: input.reason,
+          note: input.note,
+          stars: input.stars,
+        });
+        // 顺手把评分落到本地：报告里带着它，界面上也该看到
+        if (input.stars) rateWidget(record.manifest.id, input.stars, record.manifest.version);
+        setReportResult({ path });
+      } catch (error) {
+        setReportError(String(error));
+      } finally {
+        setReportSaving(false);
+      }
+    },
+    [rateWidget, reportTarget],
+  );
+
+  const closeReport = useCallback(() => {
+    setReportTarget(null);
+    setReportResult(null);
+    setReportError(null);
+  }, []);
+
   const uninstall = useCallback(
     async (record: WidgetRecord) => {
       // 用户目录里的包是真在磁盘上的，要交给 Rust 删；内置包只是取消启用
@@ -601,6 +785,68 @@ export default function App() {
     [addPlacement, records, installedSet],
   );
 
+  /**
+   * 已安装组件的版本与权限，按 widgetId。
+   *
+   * 目录那一段要用它算"该装 / 该更新 / 已经最新"，以及"这次更新多要了哪些权限"。
+   * 只放已安装的：没装过的组件没有"当前版本"这回事。
+   */
+  const installedVersions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const id of installedSet) {
+      const version = records.get(id)?.manifest.version;
+      if (version) map.set(id, version);
+    }
+    return map;
+  }, [installedSet, records]);
+
+  const installedPermissions = useMemo(() => {
+    const map = new Map<string, Permission[]>();
+    for (const id of installedSet) {
+      map.set(id, records.get(id)?.manifest.permissions ?? []);
+    }
+    return map;
+  }, [installedSet, records]);
+
+  const storeBinding = useMemo<StoreBinding>(
+    () => ({
+      snapshot: catalogue,
+      busy: catalogueBusy,
+      busyId: catalogueBusyId,
+      installedVersions,
+      installedPermissions,
+      pinnedKeys: trustedKeys,
+      reviews: permissionReviews,
+      onRefresh: () => void refreshCatalogue(),
+      onInstall: (entry, pkg, acceptNewKey) =>
+        void installFromCatalogue(entry, pkg, acceptNewKey),
+    }),
+    [
+      catalogue,
+      catalogueBusy,
+      catalogueBusyId,
+      installFromCatalogue,
+      installedPermissions,
+      installedVersions,
+      permissionReviews,
+      refreshCatalogue,
+      trustedKeys,
+    ],
+  );
+
+  /**
+   * 待处理的权限复核。
+   *
+   * 一次只提示一条：同时弹三条横幅，用户会全部划掉。处理完一条，下一条自己
+   * 浮上来 —— `Object.entries` 的顺序就是更新发生的顺序。
+   */
+  const review = useMemo(() => {
+    const next = Object.entries(permissionReviews)[0];
+    if (!next) return null;
+    const [widgetId, entry] = next;
+    return { widgetId, entry, name: records.get(widgetId)?.manifest.name ?? widgetId };
+  }, [permissionReviews, records]);
+
   return (
     <div className="lattice-shell">
       <header className="lattice-topbar">
@@ -691,6 +937,14 @@ export default function App() {
           onInstall={install}
           onInstallPack={installPack}
           onUninstall={(record) => void uninstall(record)}
+          store={storeBinding}
+          backups={backups}
+          ratings={ratings}
+          onRollback={(record) => void rollback(record)}
+          onRate={(record, stars) => rateWidget(record.manifest.id, stars, record.manifest.version)}
+          onReport={(record) =>
+            setReportTarget({ record, stars: ratings[record.manifest.id]?.stars ?? 0 })
+          }
           open={libraryOpen}
           onToggle={() => setPanelOpen("library", !libraryOpen)}
         />
@@ -723,6 +977,41 @@ export default function App() {
           也不给"删掉"这种选项 —— 大部分情况下改完文件点一下重试就好了，
           真要删，画布上那颗 ✕ 一直都在。
         */}
+        {/*
+          新版本多要了权限。
+          这一条**不会自己消失**：它不是提醒，是"有一件事等你决定"。新权限本来
+          就没被授予（桥会拒），所以组件仍然按旧的授权在跑 —— 界面必须说清
+          这一点，否则用户会以为组件已经拿到它了。
+        */}
+        {review ? (
+          <div className="lattice-review" role="alert">
+            <span className="lattice-review-text">
+              <b>{review.name}</b> {review.entry.version} asks for{" "}
+              {review.entry.added.map((item) => PERMISSION_LABELS[item]).join(", ")}. It stays
+              denied until you allow it.
+            </span>
+            <button
+              type="button"
+              className="lattice-review-action"
+              onClick={() => {
+                for (const permission of review.entry.added) grant(review.widgetId, permission);
+                resolvePermissionReview(review.widgetId);
+              }}
+            >
+              Allow
+            </button>
+            <button
+              type="button"
+              className="lattice-undo-dismiss"
+              onClick={() => resolvePermissionReview(review.widgetId)}
+              title="Keep it denied"
+              aria-label="Keep it denied"
+            >
+              ×
+            </button>
+          </div>
+        ) : null}
+
         {crash ? (
           <div className="lattice-crash" role="alert">
             <span className="lattice-crash-text">
@@ -763,6 +1052,15 @@ export default function App() {
           </div>
         ) : null}
       </div>
+
+      <ReportDialog
+        target={reportTarget}
+        saving={reportSaving}
+        result={reportResult}
+        error={reportError}
+        onClose={closeReport}
+        onSubmit={(input) => void submitReport(input)}
+      />
     </div>
   );
 }

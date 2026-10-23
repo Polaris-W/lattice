@@ -107,6 +107,39 @@ export interface DesktopRect {
 export type ThemeMode = "light" | "dark" | "system";
 
 /**
+ * 目录从哪儿来。
+ *
+ * `bundled` 是跟着应用一起发的 `public/store/registry.json` —— 开箱就有东西可看，
+ * 不需要任何服务端。`url` 是用户自己填的地址（自己搭的静态托管、别人的目录）。
+ * 空 url 一律退回 `bundled`，不要出现"地址是空的但模式是 url"这种状态。
+ */
+export interface CatalogueSource {
+  kind: "bundled" | "url";
+  url: string;
+}
+
+/** 用户给一个组件打的星。本地记录，随举报一起导出（平台没有服务端） */
+export interface Rating {
+  stars: number;
+  /** 打星时的版本，版本变了要重新看一遍 */
+  version: string;
+  at: string;
+}
+
+/**
+ * 一次"新版本多要了权限"的待确认状态。
+ *
+ * 更新之后**不会**自动授予新权限（`grants` 里本来就没有），这个字段存在的意义
+ * 是让界面**一直**提醒到用户处理为止 —— 只在日志里说一句"新增了权限"，
+ * 用户永远看不到。
+ */
+export interface PermissionReview {
+  version: string;
+  added: Permission[];
+  at: string;
+}
+
+/**
  * 刚被删掉的那一个组件，留着给人反悔。
  *
  * 只活在内存里，**不进 `state.json`**：它是"这一次操作还能撤回"的状态，
@@ -224,6 +257,20 @@ interface LatticeState {
    * 事件同步 —— 托盘菜单改了状态，主窗口得跟着变。
    */
   paused: boolean;
+  /** 组件目录的来源。默认跟着应用走的本地目录 */
+  catalogueSource: CatalogueSource;
+  /**
+   * 每个组件第一次安装时记下的发布者公钥。
+   *
+   * 这是签名信任链的第三环（见 `runtime/catalogue.ts`）：目录可以被改，
+   * 包可以被换，只有"这把钥匙和上次一样"是本地才知道的事。换了钥匙必须
+   * 由用户点一次确认，否则一次目录劫持就等于一次静默的换包。
+   */
+  trustedKeys: Record<string, string>;
+  /** 本地评分，按 widgetId */
+  ratings: Record<string, Rating>;
+  /** 待处理的"新版本多要了权限"，按 widgetId */
+  permissionReviews: Record<string, PermissionReview>;
 
   setPanelOpen: (panel: "library" | "inspector", open: boolean) => void;
 
@@ -254,6 +301,16 @@ interface LatticeState {
   uninstallWidget: (widgetId: string) => void;
   grant: (widgetId: string, permission: Permission) => void;
   revoke: (widgetId: string, permission: Permission) => void;
+  /** 换目录来源。`kind` 为 url 但地址是空的时退回 bundled */
+  setCatalogueSource: (source: CatalogueSource) => void;
+  /** 记住这个组件的发布者公钥（第一次装、或者用户确认了换人之后） */
+  trustKey: (widgetId: string, key: string) => void;
+  /** 打星。0 分等于取消评分 */
+  rateWidget: (widgetId: string, stars: number, version: string) => void;
+  /** 记一条"新版本多要了权限"，界面据此一直提醒 */
+  flagPermissionReview: (widgetId: string, version: string, added: Permission[]) => void;
+  /** 用户处理过了（同意或拒绝都算处理过） */
+  resolvePermissionReview: (widgetId: string) => void;
 }
 
 export const GRID = 8;
@@ -280,6 +337,10 @@ export const useLattice = create<LatticeState>()(
       inspectorOpen: true,
       lastClosed: null,
       paused: false,
+      catalogueSource: { kind: "bundled", url: "" },
+      trustedKeys: {},
+      ratings: {},
+      permissionReviews: {},
 
       setPanelOpen: (panel, open) =>
         set(panel === "library" ? { libraryOpen: open } : { inspectorOpen: open }),
@@ -452,6 +513,49 @@ export const useLattice = create<LatticeState>()(
             grants: { ...state.grants, [widgetId]: current.filter((item) => item !== permission) },
           };
         }),
+
+      setCatalogueSource: (source) =>
+        set({
+          catalogueSource:
+            source.kind === "url" && !source.url.trim()
+              ? { kind: "bundled", url: "" }
+              : { kind: source.kind, url: source.url.trim() },
+        }),
+
+      trustKey: (widgetId, key) =>
+        set((state) =>
+          state.trustedKeys[widgetId] === key
+            ? state
+            : { trustedKeys: { ...state.trustedKeys, [widgetId]: key } },
+        ),
+
+      rateWidget: (widgetId, stars, version) =>
+        set((state) => {
+          const next = { ...state.ratings };
+          if (stars <= 0) delete next[widgetId];
+          else next[widgetId] = { stars, version, at: new Date().toISOString() };
+          return { ratings: next };
+        }),
+
+      flagPermissionReview: (widgetId, version, added) =>
+        set((state) =>
+          added.length === 0
+            ? state
+            : {
+                permissionReviews: {
+                  ...state.permissionReviews,
+                  [widgetId]: { version, added, at: new Date().toISOString() },
+                },
+              },
+        ),
+
+      resolvePermissionReview: (widgetId) =>
+        set((state) => {
+          if (!(widgetId in state.permissionReviews)) return state;
+          const next = { ...state.permissionReviews };
+          delete next[widgetId];
+          return { permissionReviews: next };
+        }),
     }),
     {
       name: STATE_FILE,
@@ -473,6 +577,10 @@ export const useLattice = create<LatticeState>()(
         restoreOnLaunch: state.restoreOnLaunch,
         libraryOpen: state.libraryOpen,
         inspectorOpen: state.inspectorOpen,
+        catalogueSource: state.catalogueSource,
+        trustedKeys: state.trustedKeys,
+        ratings: state.ratings,
+        permissionReviews: state.permissionReviews,
       }),
     },
   ),

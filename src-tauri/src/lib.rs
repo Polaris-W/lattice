@@ -11,6 +11,7 @@
 
 pub mod autostart;
 pub mod autostart_policy;
+pub mod backup;
 pub mod crash;
 pub mod crash_policy;
 pub mod csp;
@@ -26,7 +27,10 @@ pub mod package_policy;
 pub mod network_policy;
 pub mod protocol;
 pub mod runner;
+pub mod signature;
+pub mod signature_policy;
 pub mod state;
+pub mod store;
 pub mod tray;
 pub mod visibility;
 pub mod wallpaper;
@@ -91,6 +95,8 @@ pub fn run() {
             widgets::widgets_dir,
             widgets::install_widget,
             widgets::uninstall_widget,
+            widgets::widget_backup_info,
+            widgets::widget_rollback,
             desktop::apply_window_layer,
             state::state_read,
             state::state_write,
@@ -118,6 +124,10 @@ pub fn run() {
             autostart::autostart_get,
             autostart::autostart_set,
             network::network_fetch,
+            store::store_fetch_text,
+            store::store_download,
+            store::store_install,
+            store::store_report,
             quit_app,
             show_main_window,
         ])

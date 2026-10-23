@@ -36,5 +36,10 @@ src-tauri/target
 # 由 scripts/widget-index.mjs 生成
 public/widgets/index.json
 
+# 由 scripts/store-index.mjs 生成（目录 JSON + 签名过的包）
+# 注意：签名私钥 scripts/dev-publisher.key **要提交** —— 它是演示目录的钥匙，
+# 不提交的话别人 clone 下来跑 dev 就验不过签
+public/store/
+
 # 打包产物（scripts/pack-widget.mjs 的默认输出目录）
 dist-packs/

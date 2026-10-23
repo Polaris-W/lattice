@@ -105,7 +105,7 @@ export interface WidgetManifest {
 export const DEFAULT_SIZE: WidgetSize = { w: 240, h: 140, minW: 120, minH: 80 };
 export const SUPPORTED_SDK = "^0.1";
 
-const ID_RE = /^[a-z0-9]+(?:[.-][a-z0-9]+)+$/;
+export const ID_RE = /^[a-z0-9]+(?:[.-][a-z0-9]+)+$/;
 const VERSION_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 /**
  * 图标路径只允许"包内相对路径"。

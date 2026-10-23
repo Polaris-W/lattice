@@ -29,7 +29,11 @@ use crate::package_policy::{data_range, join_inside, read_entries, Entry, MAX_EN
 ///
 /// `root` 是组件根目录（`%APPDATA%\...\widgets`），不是最终目录 —— id 在包里，
 /// 得先读出来才知道该落到哪个名字上。
-pub(crate) fn extract(archive: &[u8], root: &Path) -> Result<String, String> {
+///
+/// `backups` 给定时，覆盖之前把旧目录复制过去（见 `backup.rs`）。备份**失败不拦**
+/// 主流程：用户点的是"更新"，因为备份失败而拒绝更新，比丢一次回滚机会更糟 ——
+/// 记一行日志，继续装。
+pub(crate) fn extract(archive: &[u8], root: &Path, backups: Option<&Path>) -> Result<String, String> {
     let entries = read_entries(archive)?;
 
     // 先把 manifest 读出来校验 id —— 校验不过就一个文件都别写
@@ -69,6 +73,11 @@ pub(crate) fn extract(archive: &[u8], root: &Path) -> Result<String, String> {
 
     let target = root.join(&id);
     if target.exists() {
+        if let Some(backups) = backups {
+            if let Err(error) = crate::backup::save_existing(root, backups, &id) {
+                eprintln!("[lattice] could not back up {id} before updating: {error}");
+            }
+        }
         fs::remove_dir_all(&target).map_err(|error| format!("failed to replace the previous version: {error}"))?;
     }
     fs::rename(&incoming, &target).map_err(|error| format!("could not move the widget into place: {error}"))?;

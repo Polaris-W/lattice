@@ -45,6 +45,11 @@ fn scan_user_widgets(root: &Path) -> Vec<InstalledWidget> {
         if !path.is_dir() {
             continue;
         }
+        // `.incoming` / `.backups` 这类工作目录不是组件。名字以点开头的一律跳过，
+        // 免得解包解到一半的暂存目录被当成一个"清单读不出来的组件"报上去
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
         let manifest_path = path.join("manifest.json");
         let Ok(text) = fs::read_to_string(&manifest_path) else {
             continue;
@@ -122,11 +127,19 @@ pub fn install_widget(app: AppHandle, source: String) -> Result<String, String> 
         return Err(format!("widget id \"{id}\" contains illegal characters"));
     }
 
-    let target = user_widgets_dir(&app)?.join(id);
+    let root = user_widgets_dir(&app)?;
+    let target = root.join(id);
     if target.exists() {
+        // 覆盖前留一代旧版本：目录安装和商店更新走同一条备份规则，
+        // 否则"拖一个文件夹进来"就成了唯一一种没法回滚的安装方式
+        if let Ok(backups) = crate::backup::backup_root(&app) {
+            if let Err(error) = crate::backup::save_existing(&root, &backups, id) {
+                eprintln!("[lattice] could not back up {id} before replacing it: {error}");
+            }
+        }
         fs::remove_dir_all(&target).map_err(|error| format!("failed to replace the previous version: {error}"))?;
     }
-    copy_dir(&path, &target)?;
+    crate::backup::copy_tree(&path, &target)?;
 
     Ok(id.to_string())
 }
@@ -147,7 +160,9 @@ fn install_package(app: &AppHandle, path: &Path) -> Result<String, String> {
     }
 
     // id 在包里的清单上，所以落哪个目录由 `extract` 自己决定
-    crate::package::extract(&archive, &user_widgets_dir(app)?)
+    let root = user_widgets_dir(app)?;
+    let backups = crate::backup::backup_root(app).ok();
+    crate::package::extract(&archive, &root, backups.as_deref())
 }
 
 #[tauri::command]
@@ -160,23 +175,36 @@ pub fn uninstall_widget(app: AppHandle, id: String) -> Result<(), String> {
     if target.exists() {
         fs::remove_dir_all(&target).map_err(|error| format!("delete failed: {error}"))?;
     }
-    Ok(())
-}
-
-fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
-    fs::create_dir_all(to).map_err(|error| format!("failed to create a directory: {error}"))?;
-    for entry in fs::read_dir(from)
-        .map_err(|error| format!("failed to read a directory: {error}"))?
-        .flatten()
-    {
-        let path = entry.path();
-        let name = entry.file_name();
-        let target = to.join(&name);
-        if path.is_dir() {
-            copy_dir(&path, &target)?;
-        } else {
-            fs::copy(&path, &target).map_err(|error| format!("failed to copy {name:?}: {error}"))?;
+    // 卸载是"我不要了"：留着备份只会让以后的手工恢复分不清哪份是当前
+    if let Ok(backups) = crate::backup::backup_root(&app) {
+        let slot = backups.join(&id);
+        if slot.exists() {
+            let _ = fs::remove_dir_all(&slot);
         }
     }
     Ok(())
 }
+
+/// 有没有上一版可以回滚。
+#[tauri::command]
+pub fn widget_backup_info(app: AppHandle, id: String) -> Result<Option<crate::backup::BackupInfo>, String> {
+    crate::signature_policy::safe_id(&id)
+        .ok_or_else(|| "invalid widget id".to_string())
+        .and_then(|checked| crate::backup::info(&app, checked))
+}
+
+/// 回滚到上一版。成功之后"刚才那个版本"变成新的备份（再点一次等于回到它）。
+#[tauri::command]
+pub fn widget_rollback(app: AppHandle, id: String) -> Result<crate::backup::SwapResult, String> {
+    let checked = crate::signature_policy::safe_id(&id).ok_or_else(|| "invalid widget id".to_string())?;
+    let _quiet = crate::watch::Suppress::new();
+    let root = user_widgets_dir(&app)?;
+    let result = crate::backup::swap(&app, &root, checked)?;
+    eprintln!(
+        "[lattice] widget_rollback {checked} -> {} (was {})",
+        result.version.clone().unwrap_or_else(|| "?".to_string()),
+        result.replaced.clone().unwrap_or_else(|| "none".to_string())
+    );
+    Ok(result)
+}
+

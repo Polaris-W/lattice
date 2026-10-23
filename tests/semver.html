@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>semver test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      /*
+       * 版本号与范围。
+       *
+       * 商店的"要不要更新"全靠这一层，所以边界必须钉死：
+       *   1. 严格解析只认三段齐全（清单里的 version 不允许 `1.2`）
+       *   2. 数值比较，不是字符串比较（1.10.0 > 1.9.9）
+       *   3. 预发布永远小于正式版，且按段比较（beta.10 > beta.9）
+       *   4. `^` 在 0.x 上收窄（^0.2.3 不放到 0.3）
+       *   5. 写错的范围一律 false —— 安装/更新这种场合，"不确定"必须当成"不行"
+       */
+      import {
+        compareVersions,
+        isValidRange,
+        isValidVersion,
+        maxSatisfying,
+        maxVersion,
+        parseVersion,
+        satisfies,
+      } from "/src/runtime/semver.ts";
+
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const eq = (actual, expected, text) =>
+        log(
+          JSON.stringify(actual) === JSON.stringify(expected),
+          `${text}（得到 ${JSON.stringify(actual)}）`,
+        );
+
+      // ---- 1. 解析 ----
+      eq(parseVersion("1.2.3")?.text, "1.2.3", "三段式");
+      eq(parseVersion("1.2") ?? null, null, "严格解析不认两段");
+      eq(parseVersion("1.2.3.4") ?? null, null, "四段非法");
+      eq(parseVersion("1.2.3+build.7")?.text, "1.2.3", "构建元数据被丢掉");
+      eq(parseVersion("1.2.3-beta.1")?.prerelease, ["beta", "1"], "预发布标识符拆开");
+      log(isValidVersion("0.0.1"), "0.0.1 合法");
+      log(!isValidVersion("v1.2.3"), "带 v 前缀不合法");
+
+      // ---- 2. 比较 ----
+      eq(compareVersions("1.2.3", "1.2.4"), -1, "patch 小");
+      eq(compareVersions("1.10.0", "1.9.9"), 1, "按数字比，不按字符串比");
+      eq(compareVersions("1.0.0", "1.0.0"), 0, "相同");
+      eq(compareVersions("1.0.0", "1.0.0-beta"), 1, "正式版大于预发布");
+      eq(compareVersions("1.0.0-beta.2", "1.0.0-beta.10"), -1, "预发布里的数字按数值比");
+      eq(compareVersions("1.0.0-alpha", "1.0.0-beta"), -1, "字母标识符按字典序");
+      eq(compareVersions("1.0.0+build.1", "1.0.0+build.2"), 0, "构建元数据不参与比较");
+      eq(compareVersions("nope", "1.0.0") ?? null, null, "非法版本返回 null，不当 0");
+
+      // ---- 3. 范围 ----
+      log(satisfies("1.2.3", "^1.0.0"), "^1.0.0 收 1.2.3");
+      log(!satisfies("2.0.0", "^1.0.0"), "^1.0.0 不收 2.0.0");
+      log(satisfies("0.2.9", "^0.2.3"), "^0.2.3 收到 0.2.x");
+      log(!satisfies("0.3.0", "^0.2.3"), "^0.2.3 不放到 0.3");
+      log(satisfies("0.0.3", "^0.0.3"), "^0.0.3 收自己");
+      log(!satisfies("0.0.4", "^0.0.3"), "^0.0.3 不放到下一个 patch");
+      log(satisfies("1.2.9", "~1.2.3"), "~1.2.3 收到 1.2.x");
+      log(!satisfies("1.3.0", "~1.2.3"), "~1.2.3 不放到 1.3");
+      log(satisfies("1.5.0", ">=1.0.0 <2.0.0"), "区间：中间");
+      log(!satisfies("2.0.0", ">=1.0.0 <2.0.0"), "区间：上界不含");
+      log(satisfies("1.9.0", "1.x"), "1.x 收 1.9.0");
+      log(!satisfies("2.0.0", "1.x"), "1.x 不收 2.0.0");
+      log(satisfies("1.2.7", "1.2.x"), "1.2.x 收 1.2.7");
+      log(!satisfies("1.3.0", "1.2.x"), "1.2.x 不收 1.3.0");
+      log(satisfies("1.2.3", "1.2"), "两段范围 = 1.2.x");
+      log(!satisfies("1.3.0", "1.2"), "两段范围不收 1.3.0");
+      log(satisfies("9.9.9", "*"), "* 收任何版本");
+      log(satisfies("2.0.0", "1.2.3 || 2.0.0"), "|| 是或");
+      log(satisfies("1.2.3", ""), "空范围收任何版本");
+      log(!satisfies("abc", "^1.0.0"), "版本写错 -> false");
+      log(!satisfies("1.2.3", "1.2.3.4"), "范围写错 -> false");
+      log(!satisfies("1.2.3", ">=nope"), "范围里有非法版本 -> false");
+      log(isValidRange("^1.0.0"), "^1.0.0 是合法范围");
+      log(!isValidRange("~>1"), "~>1 不是合法范围");
+
+      // ---- 4. 挑版本 ----
+      eq(maxVersion(["1.0.0", "1.4.0", "bad", "2.0.0"]), "2.0.0", "最大版本跳过非法项");
+      eq(maxVersion(["bad"]), null, "全非法返回 null");
+      eq(maxSatisfying(["1.0.0", "1.4.0", "2.0.0"], "^1"), "1.4.0", "范围里挑最高");
+      eq(maxSatisfying(["1.0.0"], "^2"), null, "范围里一个都没有 -> null");
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>

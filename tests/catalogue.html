@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>catalogue test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      /*
+       * 组件目录（registry.json）的校验与安装计划。
+       *
+       * 这页钉四件事：
+       *   1. 坏条目单独丢弃、不整包失败；整份不是目录才明确拒绝
+       *   2. 相对地址按目录地址补全（少一个 `/` 就是全部 404）
+       *   3. 安装计划的五种结论：装 / 更新 / 已最新 / 没签名 / 换人了
+       *   4. "换人了"优先于"有新版本" —— 警告不能被包装成一次普通更新
+       */
+      import {
+        addedPermissions,
+        isNewer,
+        keyFingerprint,
+        latestPackage,
+        parseCatalogue,
+        pickPackage,
+        planInstall,
+        resolveCatalogueUrl,
+      } from "/src/runtime/catalogue.ts";
+
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const eq = (actual, expected, text) =>
+        log(
+          JSON.stringify(actual) === JSON.stringify(expected),
+          `${text}（得到 ${JSON.stringify(actual)}）`,
+        );
+
+      const KEY = "11".repeat(32);
+      const OTHER_KEY = "44".repeat(32);
+      const SIG = "22".repeat(64);
+      const SHA = "33".repeat(32);
+      const BASE = "http://127.0.0.1:1420/store/";
+
+      const version = (over = {}) => ({
+        version: "1.0.0",
+        url: "packages/a.lattice",
+        sha256: SHA,
+        size: 1024,
+        signature: SIG,
+        permissions: ["clock"],
+        ...over,
+      });
+
+      const entry = (over = {}) => ({
+        id: "lattice.clock",
+        name: "Clock",
+        description: "A clock",
+        author: "Lattice",
+        publisher: { name: "Lattice", key: KEY },
+        versions: [version()],
+        ...over,
+      });
+
+      const doc = (over = {}) => ({
+        schema: 1,
+        name: "Test catalogue",
+        updated: "2026-10-24",
+        widgets: [entry()],
+        ...over,
+      });
+
+      // ---- 1. 地址补全 ----
+      eq(
+        resolveCatalogueUrl(BASE, "packages/a.lattice"),
+        "http://127.0.0.1:1420/store/packages/a.lattice",
+        "相对地址按目录补全",
+      );
+      eq(
+        resolveCatalogueUrl("http://x/store", "./packages/a.lattice"),
+        "http://x/store/packages/a.lattice",
+        "base 没有结尾斜杠也不拼错（`./` 被吃掉）",
+      );
+      eq(
+        resolveCatalogueUrl(BASE, "https://cdn.example.com/a.lattice"),
+        "https://cdn.example.com/a.lattice",
+        "绝对地址原样保留",
+      );
+
+      // ---- 2. 正常目录 ----
+      {
+        const { catalogue, warnings } = parseCatalogue(
+          doc({
+            widgets: [
+              entry({
+                id: "lattice.todo",
+                name: "Todo",
+                versions: [version({ version: "1.0.0" }), version({ version: "1.2.0" })],
+              }),
+              entry(),
+            ],
+          }),
+          BASE,
+        );
+        eq(warnings.length, 0, "干净的目录没有警告");
+        eq(
+          catalogue.entries.map((item) => item.id),
+          ["lattice.clock", "lattice.todo"],
+          "条目按名字排序",
+        );
+        const todo = catalogue.entries.find((item) => item.id === "lattice.todo");
+        eq(todo.versions.map((item) => item.version), ["1.2.0", "1.0.0"], "版本按降序排好");
+        eq(latestPackage(todo).version, "1.2.0", "最新版就是第一个");
+        eq(
+          catalogue.entries[0].versions[0].url,
+          "http://127.0.0.1:1420/store/packages/a.lattice",
+          "包地址已经补全成绝对地址",
+        );
+        eq(catalogue.entries[0].publisher.key, KEY, "公钥被保留");
+      }
+
+      // ---- 3. 整份不是目录 ----
+      eq(parseCatalogue({ schema: 2, widgets: [] }, BASE).catalogue, null, "schema 不认识 -> 拒绝");
+      eq(parseCatalogue(null, BASE).catalogue, null, "不是对象 -> 拒绝");
+      log(parseCatalogue({ schema: 2 }, BASE).warnings[0].includes("schema"), "拒绝时说明原因");
+
+      // ---- 4. 坏条目单独丢弃 ----
+      {
+        const { catalogue, warnings } = parseCatalogue(
+          doc({
+            widgets: [
+              entry({ id: "Clock" }), // 大写 id
+              entry({ id: "lattice.badsha", versions: [version({ sha256: "zz" })] }),
+              entry({
+                id: "lattice.dupe",
+                versions: [version({ version: "1.0.0" }), version({ version: "1.0.0" })],
+              }),
+              entry({ id: "lattice.clock" }),
+              entry({ id: "lattice.clock" }),
+            ],
+          }),
+          BASE,
+        );
+        eq(
+          catalogue.entries.map((item) => item.id).sort(),
+          ["lattice.clock", "lattice.dupe"],
+          "非法 id / 坏 hash / 重复 id 的条目被丢掉，好的留着",
+        );
+        eq(
+          catalogue.entries.find((item) => item.id === "lattice.dupe").versions.length,
+          1,
+          "重复版本只留一个",
+        );
+        log(warnings.some((line) => line.includes("illegal id")), "非法 id 有警告");
+        log(warnings.some((line) => line.includes("sha256")), "坏 hash 有警告");
+        log(warnings.some((line) => line.includes("duplicate entry")), "重复条目有警告");
+      }
+
+      // ---- 5. 权限白名单 ----
+      {
+        const { catalogue, warnings } = parseCatalogue(
+          doc({ widgets: [entry({ versions: [version({ permissions: ["clock", "root", "clock"] })] })] }),
+          BASE,
+        );
+        eq(
+          catalogue.entries[0].versions[0].permissions,
+          ["clock"],
+          "未知权限被丢掉，重复的合并",
+        );
+        log(warnings.some((line) => line.includes("unknown permission")), "未知权限有警告");
+      }
+
+      // ---- 6. 安装计划 ----
+      {
+        const { catalogue } = parseCatalogue(
+          doc({
+            widgets: [
+              entry({ versions: [version({ version: "1.0.0" }), version({ version: "1.2.0" })] }),
+            ],
+          }),
+          BASE,
+        );
+        const clock = catalogue.entries[0];
+
+        eq(planInstall(clock).kind, "install", "没装过 -> 安装");
+        eq(planInstall(clock, { installedVersion: "1.0.0" }).kind, "update", "旧版本 -> 更新");
+        eq(planInstall(clock, { installedVersion: "1.0.0" }).from, "1.0.0", "更新时带着原版本");
+        eq(planInstall(clock, { installedVersion: "1.2.0" }).kind, "current", "已经最新");
+        eq(planInstall(clock, { installedVersion: "9.0.0" }).kind, "current", "本地更新时不劝降级");
+        eq(
+          planInstall(clock, { installedVersion: "1.0.0", pinnedKey: OTHER_KEY }).kind,
+          "untrusted",
+          "钥匙变了 -> untrusted",
+        );
+        eq(
+          planInstall(clock, { installedVersion: "1.2.0", pinnedKey: OTHER_KEY }).kind,
+          "untrusted",
+          "钥匙变了优先于“已最新”",
+        );
+        eq(planInstall(clock, { pinnedKey: KEY }).kind, "install", "钥匙对得上就正常装");
+        eq(planInstall(clock, { range: "^2" }), null, "范围里没有版本 -> null");
+        eq(planInstall(clock, { range: "~1.0.0" }).pkg.version, "1.0.0", "按范围挑版本");
+
+        const unsigned = parseCatalogue(
+          doc({ widgets: [entry({ publisher: undefined })] }),
+          BASE,
+        ).catalogue.entries[0];
+        eq(planInstall(unsigned).kind, "unsigned", "没有公钥 -> unsigned");
+
+        const badKey = parseCatalogue(
+          doc({ widgets: [entry({ publisher: { name: "x", key: "short" } })] }),
+          BASE,
+        ).catalogue.entries[0];
+        eq(planInstall(badKey).kind, "unsigned", "公钥形状不对也算没签名");
+      }
+
+      // ---- 6b. 目录级发布者 ----
+      {
+        const inherited = parseCatalogue(
+          { ...doc({ widgets: [entry({ publisher: undefined })] }), publisher: { name: "Lattice", key: KEY } },
+          BASE,
+        );
+        eq(
+          inherited.catalogue.entries[0].publisher?.key,
+          KEY,
+          "条目没写公钥时继承目录级的那把",
+        );
+
+        const overridden = parseCatalogue(
+          {
+            ...doc({ widgets: [entry({ publisher: { name: "Someone", key: OTHER_KEY } })] }),
+            publisher: { name: "Lattice", key: KEY },
+          },
+          BASE,
+        );
+        eq(
+          overridden.catalogue.entries[0].publisher?.key,
+          OTHER_KEY,
+          "条目自己的公钥优先于目录级",
+        );
+
+        const none = parseCatalogue(doc({ widgets: [entry({ publisher: undefined })] }), BASE);
+        eq(none.catalogue.entries[0].publisher, null, "两边都没有就是没签名");
+      }
+
+      // ---- 7. 新增权限 ----
+      eq(
+        addedPermissions(["clock"], ["clock", "network"]),
+        ["network"],
+        "多要的权限只有 network",
+      );
+      eq(addedPermissions(["clock"], ["clock"]), [], "没多要就是空");
+      eq(addedPermissions([], ["storage"]), ["storage"], "从零到有");
+      eq(
+        addedPermissions(["clock", "storage"], ["network", "clock"]),
+        ["network"],
+        "顺序跟着新清单走，且已撤掉的不算新增",
+      );
+
+      // ---- 8. 指纹 ----
+      eq(keyFingerprint(KEY), "1111 1111 1111 1111", "指纹取前 16 位、四段一组");
+      eq(keyFingerprint("abc"), "abc", "太短就原样返回");
+
+      // ---- 9. 版本比较薄包装 ----
+      log(isNewer("1.2.0", "1.0.0"), "isNewer 认得出新版本");
+      log(!isNewer("1.0.0", "1.0.0"), "同版本不是更新");
+      log(!isNewer("bad", "1.0.0"), "写坏的版本不当成更新");
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>

@@ -69,6 +69,17 @@ function appOrigin(): string {
 }
 
 /**
+ * 应用自己的资源根地址（以 `/` 结尾）。
+ *
+ * 组件库、目录（`store/registry.json`）、内置组件包都在这个根下面 ——
+ * 它们跟应用一起发，不走自定义协议。导出是因为目录那边也要用同一份算法：
+ * 各算一份的话，dev（vite 的 BASE_URL）和打包后（tauri 协议）迟早对不上。
+ */
+export function appBaseUrl(): string {
+  return `${appOrigin()}${assetBase()}`;
+}
+
+/**
  * 自定义协议的前缀。
  *
  * Windows / Android 上 Tauri 把自定义 scheme 挂在 `http://<scheme>.localhost/`，
@@ -104,8 +115,23 @@ export async function loadRegistry(): Promise<RegistrySnapshot> {
     }
   }
 
-  widgets.sort((a, b) => a.manifest.name.localeCompare(b.manifest.name, "zh-CN"));
-  return { widgets, errors };
+  /*
+   * 同名时用户装的那份顶掉内置的。
+   *
+   * 从商店装一个内置组件会把它落到 `%APPDATA%`（走的是同一条验签解包的路），
+   * 于是磁盘上就同时存在两份 id 相同的包。两份都画出来的话，组件库里会出现
+   * 两张一模一样的卡片，而点哪一张都不确定 —— 留一份，并且以**用户目录**为准：
+   * 那是他刚装的那一份，内置那份只是随应用发来的原件。
+   */
+  const userIds = new Set(
+    widgets.filter((item) => item.source === "user").map((item) => item.manifest.id),
+  );
+  const unique = widgets.filter(
+    (item) => item.source === "user" || !userIds.has(item.manifest.id),
+  );
+
+  unique.sort((a, b) => a.manifest.name.localeCompare(b.manifest.name, "zh-CN"));
+  return { widgets: unique, errors };
 }
 
 /**
