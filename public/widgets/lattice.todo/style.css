@@ -174,6 +174,75 @@ body {
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
 
+/* ---------- 优先级圆点 ---------- */
+
+/*
+ * 三档：红 / 黄 / 绿，点一下循环一档，第四下回到"没设"（空心圈）。
+ *
+ * 颜色写死成中间调，不跟主题令牌走：这三支是语义色（红=紧急），
+ * 深色卡片上要够亮、浅色底板上要够沉，中间调两头都压得住。
+ * 跟主题令牌走的话，浅色主题那支深红在深色底板上会糊成一团。
+ *
+ * 视觉只有 10px，但 ::after 把可点区域撑到 18px —— 小圆点直接当点击目标
+ * 太难点，又不能为了好点就画大，那会把整行的视觉重量全抢走。
+ */
+.todo-dot {
+  position: relative;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin: 0;
+  padding: 0;
+  border: 1.5px solid color-mix(in srgb, var(--fg) 26%, transparent);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    transform 0.12s ease;
+}
+
+.todo-dot::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+}
+
+/* 没设过的时候是个淡圈，指针进到行里才变清楚 —— 不然一整列灰点很吵 */
+.todo-item:hover .todo-dot:not([data-level]) {
+  border-color: color-mix(in srgb, var(--fg) 48%, transparent);
+}
+
+.todo-dot:hover {
+  transform: scale(1.18);
+}
+
+.todo-dot[data-level="high"] {
+  border-color: transparent;
+  background: #e2564d;
+}
+
+.todo-dot[data-level="med"] {
+  border-color: transparent;
+  background: #d9a12a;
+}
+
+.todo-dot[data-level="low"] {
+  border-color: transparent;
+  background: #3f9e6a;
+}
+
+.todo-dot:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+}
+
+/* 已经勾掉的事，优先级也就不必再喊了 */
+.todo-item.is-done .todo-dot {
+  opacity: 0.45;
+}
+
 /* ---------- 勾选框（自绘） ---------- */
 
 .todo-check {

@@ -2,7 +2,7 @@
   "id": "lattice.todo",
   "name": "Todo",
   "version": "0.1.0",
-  "description": "A minimal to-do list; check to complete, stored per widget",
+  "description": "A minimal to-do list with red / amber / green priority dots; stored per widget",
   "author": "Lattice",
   "entry": "index.html",
   "icon": "icon.svg",

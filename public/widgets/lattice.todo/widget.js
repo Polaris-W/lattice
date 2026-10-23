@@ -46,6 +46,30 @@
   var STORAGE_KEY = "items";
   var items = [];
 
+  /*
+   * 优先级：三级，红 / 黄 / 绿，用一个小圆点表示。
+   *
+   * 点一下从"没设"开始依次是 红 → 黄 → 绿 → 没设。第一下给红，是因为
+   * "这条重要"才是最常见的动作，别让人为了标个紧急先点两下。
+   *
+   * 没设的那一档画成空心圈而不是不画：一来整列对得齐，二来空心的圈
+   * 本身就是"这儿可以点"的提示 —— 只在 hover 时才出现的按钮，用户
+   * 永远发现不了。
+   */
+  var PRIORITY_ORDER = ["high", "med", "low"];
+  var PRIORITY_LABEL = { high: "High", med: "Medium", low: "Low" };
+
+  /** 磁盘上的老数据没有这个字段，也可能有脏值 —— 认不出来就当没设 */
+  function readPriority(value) {
+    return PRIORITY_ORDER.indexOf(value) >= 0 ? value : null;
+  }
+
+  function nextPriority(current) {
+    if (!current) return "high";
+    var at = PRIORITY_ORDER.indexOf(current);
+    return at === PRIORITY_ORDER.length - 1 ? null : PRIORITY_ORDER[at + 1];
+  }
+
   window.addEventListener("message", function (event) {
     var data = event.data;
     if (!data || data.__lattice !== 1) return;
@@ -193,6 +217,32 @@
         commit();
       });
 
+      var priority = readPriority(item.priority);
+      var upcoming = nextPriority(priority);
+      var dot = document.createElement("button");
+      dot.type = "button";
+      dot.className = "todo-dot";
+      if (priority) dot.dataset.level = priority;
+      dot.title = priority
+        ? "Priority: " + PRIORITY_LABEL[priority] + " — click to change"
+        : "Set priority";
+      dot.setAttribute(
+        "aria-label",
+        (priority ? "Priority: " + PRIORITY_LABEL[priority] : "No priority") +
+          ". Click to " +
+          (upcoming ? "set " + PRIORITY_LABEL[upcoming].toLowerCase() : "clear it") +
+          ".",
+      );
+      dot.addEventListener("click", function (event) {
+        event.stopPropagation();
+        // 重读一次而不是用闭包里的 priority：同一行被点了好几下时，
+        // 闭包里那个值是上一轮渲染的，已经过期了
+        var next = nextPriority(readPriority(item.priority));
+        if (next) item.priority = next;
+        else delete item.priority;
+        commit();
+      });
+
       var text = document.createElement("span");
       text.className = "todo-text";
       text.textContent = item.text;
@@ -212,13 +262,14 @@
       });
 
       // 点整行都能勾：文字比那个小方框好点得多。
-      // 勾选框和删除按钮自己处理过事件，这里要让开，否则状态会翻两次。
+      // 勾选框、优先级圆点和删除按钮自己处理过事件，这里要让开，否则状态会翻两次。
       li.addEventListener("click", function (event) {
-        if (event.target === check || event.target === remove) return;
+        if (event.target === check || event.target === remove || event.target === dot) return;
         item.done = !item.done;
         commit();
       });
 
+      li.appendChild(dot);
       li.appendChild(check);
       li.appendChild(text);
       li.appendChild(remove);

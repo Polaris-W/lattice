@@ -34,6 +34,8 @@
        * submit 事件根本不触发，组件里的 onSubmit 一行都不跑，而且不报错。
        * 用 requestSubmit() 代替"敲回车"：它走的是同一条提交算法，
        * 同样会撞上沙箱检查，但不用伪造可信键盘事件。
+       *
+       * 场景 7 顺带钉住优先级圆点（三档 + 没设）的循环与落盘。
        */
       const lines = [];
       const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
@@ -148,6 +150,70 @@
           texts(doc).length === 0 && todo.state.setCalls === 0,
           `无 allow-forms 时提交被拦（列表 ${texts(doc).length} 条，写盘 ${todo.state.setCalls} 次）`,
         );
+        todo.frame.remove();
+      }
+
+      /*
+       * ---- 场景 7：优先级圆点 ----
+       *
+       * 三档 + "没设"：点一下 红 → 黄 → 绿 → 没设。四条要钉住：
+       *   1. 老数据没有这个字段，载入时不能画出个错的颜色
+       *   2. 循环顺序不能乱（第一下给红，最后一下回到空心）
+       *   3. 点圆点不能顺手把这条勾掉（整行都能勾，最容易串）
+       *   4. 每一档都要真的落盘，不然换个实例看就没了
+       */
+      {
+        const todo = mountTodo({
+          initial: [
+            { id: "a", text: "Ship it", done: false, priority: "high" },
+            { id: "b", text: "Read mail", done: false },
+          ],
+        });
+        await todo.ready;
+        const doc = todo.frame.contentDocument;
+        await sleep(80);
+
+        const dots = () =>
+          Array.from(doc.querySelectorAll(".todo-dot")).map((el) => el.dataset.level || "none");
+        const firstDot = () => doc.querySelectorAll(".todo-dot")[0];
+
+        log(dots().join("|") === "high|none", `载入时圆点是「${dots().join("|")}」`);
+
+        // 屏幕阅读器只读 aria-label，它得说清"点一下会发生什么"
+        const labelOf = (i) => doc.querySelectorAll(".todo-dot")[i].getAttribute("aria-label");
+        log(
+          labelOf(1) === "No priority. Click to set high.",
+          `没设时读作「${labelOf(1)}」`,
+        );
+
+        firstDot().click();
+        await sleep(120);
+        log(
+          dots()[0] === "med" && todo.state.stored[0].priority === "med",
+          `红点一下变「${dots()[0]}」，落盘 ${todo.state.stored[0].priority}`,
+        );
+
+        doc.querySelectorAll(".todo-dot")[1].click();
+        await sleep(120);
+        log(dots()[1] === "high", `没设的点了变「${dots()[1]}」`);
+        log(todo.state.stored[1].done === false, "点圆点不会顺手把这条勾掉");
+
+        firstDot().click();
+        await sleep(120);
+        log(dots()[0] === "low", `再点变「${dots()[0]}」`);
+        log(labelOf(0) === "Priority: Low. Click to clear it.", `绿色读作「${labelOf(0)}」`);
+
+        firstDot().click();
+        await sleep(120);
+        log(
+          dots()[0] === "none" && !("priority" in todo.state.stored[0]),
+          `再点回到空心，落盘字段 ${JSON.stringify(todo.state.stored[0].priority)}`,
+        );
+
+        firstDot().click();
+        await sleep(120);
+        log(dots()[0] === "high", `再点回到「${dots()[0]}」`);
+
         todo.frame.remove();
       }
 
