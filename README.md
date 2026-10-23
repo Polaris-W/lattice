@@ -10,7 +10,7 @@ English · [中文](./README.zh-CN.md)
 
 ## Status
 
-v0.3 is a demo that **really sits on the desktop**. The platform ships empty: install the official pack, place widgets on the canvas, and each one runs for real inside a sandboxed iframe, calling platform capabilities over an RPC bridge with permissions granted one by one. Hit "Send to desktop" and every widget becomes a frameless window while the main window steps aside.
+v0.4 is a demo that **really sits on the desktop**, and is now pleasant to build for. The platform ships empty: install the official pack, place widgets on the canvas, and each one runs for real inside a sandboxed iframe, calling platform capabilities over an RPC bridge with permissions granted one by one. Hit "Send to desktop" and every widget becomes a frameless window while the main window steps aside.
 
 Once they are out there, windows can be dragged, resized and pinned, and both the layout and the widget data survive a restart. Closing the main window just tucks it away while widgets are on the desktop — `Quit Lattice` in the settings menu or on the tray is the real exit, and launching the app again brings the window back (single instance: the second launch wakes the first one instead of starting a duplicate). The avatar in the top-right opens settings: appearance, snap-to-grid, restore-on-launch, start-with-Windows, pause-all, and a local profile — signing in only writes to the local `state.json`, nothing is uploaded.
 
@@ -25,6 +25,14 @@ It also behaves like something that is supposed to stay running:
 Third-party widgets work too: drop a folder into the window and it is installed, copied into `%APPDATA%` and served over the `lattice-widget` protocol. [`examples/counter`](./examples/counter) is a sample you can drag straight in.
 
 Both side panels collapse to a 40px rail when you want the whole canvas, and every package can ship its own icon: the library card, the canvas title bar and the inspector all draw it instead of a letter tile.
+
+v0.4 is about the people writing widgets rather than the people using them:
+
+- **`@lattice/sdk`** — a zero-dependency ES module that wraps the bridge (request pairing, timeouts, typed errors, theme tokens, storage, scheduling). It is a plain file you copy next to your widget, not an `npm install`: "no build step" stays true
+- **`npm run create:widget -- demo.mine`** — a scaffold that produces a running widget, with the 22px reserved for the window chrome already accounted for
+- **`npm run pack:widget -- <dir>`** — packs a folder into a `.lattice` file (a deterministic zip) that anyone can drag into their window
+- **Media control** — widgets can read and drive the Windows media session (SMTC): what is playing, play/pause, next, previous
+- **A debug panel** (`Ctrl+Shift+D`) — every bridge call with its duration and error code, plus every `console.log` from inside the sandbox, live in one drawer
 
 The current UI, with the settings menu open:
 
@@ -157,10 +165,11 @@ From skeleton to genuinely-on-the-desktop in a single day. The code-size steps a
 | 12:31 | Window chrome + file-backed state | 2,282 / 1,123 / 868 |
 | v0.2 | Third-party protocol, typing, storage sync, settings, collapsible panels, widget icons | 3,433 / 1,649 / 1,834 |
 | v0.3 | Tray, autostart, pause-all, live reload, crash recovery, network whitelist, mixed-DPI clamp | 6,469 / 5,716 / 2,561 |
+| v0.4 | SDK, scaffold, `.lattice` packing, media control, debug panel | 7,119 / 6,488 / 2,791 |
 
 More interesting than the numbers are the **six overturned decisions**: per-pixel transparency that could not work, a `localStorage` that never reached disk, `NOACTIVATE` making the note untypeable, the host page building the wrong URL for user widgets, two instances each holding their own list and eating the to-dos, and a self-managed window table that deadlocked itself. Each one records why it was chosen, what knocked it over, how it was fixed, and what it cost.
 
-The 56 entries in "Pitfalls" are a by-product of the same process, and the most valuable part of this repository — they record the temper of this particular machine, not general dogma. One of them took an afternoon: `WinHttpSendRequest` takes its header length in **characters** while the registry APIs next door take **bytes**, and passing bytes makes every request with a custom header fail with nothing but `ERROR_INVALID_PARAMETER (87)`.
+The 73 entries in "Pitfalls" are a by-product of the same process, and the most valuable part of this repository — they record the temper of this particular machine, not general dogma. One of them took an afternoon: `WinHttpSendRequest` takes its header length in **characters** while the registry APIs next door take **bytes**, and passing bytes makes every request with a custom header fail with nothing but `ERROR_INVALID_PARAMETER (87)`.
 
 ## The platform is empty
 
@@ -265,7 +274,11 @@ public/widgets/lattice.hello/
 
 Widgets call platform capabilities with `parent.postMessage({ __lattice: 1, type: "request", id, method, params }, "*")`; the full protocol is in [WIDGET\_SPEC](./docs/WIDGET_SPEC.md). Run `npm run widgets:index` afterwards so the platform discovers the new widget.
 
+You can skip the boilerplate: `npm run create:widget -- demo.mine` writes the manifest, a page, a stylesheet, an icon and a widget script that already ticks, and `@lattice/sdk` (`packages/sdk`) wraps the bridge so a storage write is one `await` instead of a `postMessage` plus a promise map. The SDK is optional on purpose — every bundled widget under `public/widgets` is hand-written, and they are the proof.
+
 **Widgets that are not shipped with the app need no repository change**: drag the whole folder from Explorer into a Lattice window and it is installed — files are copied to `%APPDATA%\com.iron-tom.lattice\widgets\<id>\` and loaded over the `lattice-widget` protocol. [`examples/counter`](./examples/counter) is a sample you can drag straight in.
+
+To hand a widget to someone else, pack it first: `npm run pack:widget -- examples/counter` writes `dist-packs/counter.lattice`, and that single file installs the same way when dropped in. The pack is deterministic (sorted entries, fixed timestamp), so the same folder always produces the same bytes — which is what makes "is this the package I shipped?" answerable, and what signing will need later.
 
 ## License
 

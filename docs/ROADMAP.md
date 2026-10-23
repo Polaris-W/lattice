@@ -17,24 +17,25 @@
 | v0.1 | 骨架 | ✅ 完成 | 组件在沙箱里跑起来，桥与权限能验 |
 | v0.2 | 真桌面 | ✅ 完成 | 组件是独立的 Win32 窗口，能拖能缩能锁，重启不丢 |
 | v0.3 | 平台能力 | ✅ 完成 | 调度器、系统指标、落盘备份、关闭撤销、CSP 锁定、出网闸门、每实例配置、网络白名单代理、托盘/自启、目录监听、崩溃隔离、双屏边界夹紧全部落地 |
-| v0.4 | 开发体验 | 未开始 | SDK、脚手架、打包工具 |
+| v0.4 | 开发体验 | **已完成** | SDK、脚手架、打包工具、媒体控制、调试面板 |
 | v0.5 | 分发 | 未开始 | 组件商店、签名、更新 |
 
-**当前规模**（截至本次改动，2026-10-24 01:45）：
+**当前规模**（截至本次改动，2026-10-24 03:40）：
 
 | 指标 | 数值 | 备注 |
 | --- | --- | --- |
-| 前端 TS/TSX | 6 469 行 | 平台外壳 + 运行时 |
-| 样式 CSS | 2 561 行 | 纯手写，无 UI 库 |
-| Rust | 5 716 行 | 窗口、协议、落盘、壁纸采样、指标采样、诊断、单实例、CSP、出网闸门、托盘、自启、目录监听、崩溃守卫、网络代理 |
-| 官方组件 + 示例 | 2 417 行 | 5 个官方包 |
-| 构建脚本 | 382 行 | 组件索引、tauri 包装、上报脚本注入 + 它的单测 |
-| 浏览器断言 | 216 条 | 12 个自检页 |
-| Node 断言 | 9 条 | 注入规则（`npm run test:injection`），不依赖 dev server |
-| Rust 单测 | 59 条 | 42 条纯逻辑用 `rustc --test` 壳子跑得动，17 条要 `cargo test`（本机跑不了），见 AGENTS §11 |
-| Tauri 命令 | 31 个 | |
-| 权限 | 6 项（5 项可用） | 只剩 `media:control` 只有声明 |
-| 踩过的坑 | 56 条 | 见文末 |
+| 前端 TS/TSX | 7 119 行 | 平台外壳 + 运行时 + 调试面板 |
+| 样式 CSS | 2 791 行 | 纯手写，无 UI 库 |
+| Rust | 6 488 行 | 窗口、协议、落盘、壁纸采样、指标采样、诊断、单实例、CSP、出网闸门、托盘、自启、目录监听、崩溃守卫、网络代理、媒体会话、包解压 |
+| 组件 SDK | 545 行 | 零依赖 ES module + 类型声明 |
+| 官方组件 + 示例 | 3 668 行 | 6 个官方包 + 1 个 SDK 示例 |
+| 构建脚本 | 1 012 行 | 组件索引、脚手架、打包、SDK 同步、tauri 包装、注入 + 单测 |
+| 浏览器断言 | 342 条 | 16 个自检页 |
+| Node 断言 | 11 条 | 注入规则 9 条 + SDK 副本一致性 2 条，都不依赖 dev server |
+| Rust 单测 | 72 条 | 53 条纯逻辑用 `rustc --test` 壳子跑得动，19 条要 `cargo test`（本机跑不了），见 AGENTS §11 |
+| Tauri 命令 | 33 个 | |
+| 权限 | 6 项全可用 | `media:control` 在 v0.4 补齐 |
+| 踩过的坑 | 73 条 | 见文末 |
 
 ---
 
@@ -260,6 +261,13 @@
 | 托盘菜单改了"暂停"，设置菜单里的开关还是老样子 | 暂停的真相在 Rust（`Runner.paused`），主窗口的 `paused` 只是镜像。托盘改状态时不发事件，主窗口就永远不知道 | `apply_pause` 里 `emit_to("main", "lattice:paused", ...)`，主窗口收到就落 store；另外主窗口挂载时主动拉一次 `widgets_paused` —— 事件是"变了才发"，页面可能在事件之后才加载 |
 | 暂停中的组件窗口恢复之后跑到最前面来了 | `window.show()` 就是 `ShowWindow`，它会把窗口提到最前 —— 而恢复之后层级还停在 `HWND_BOTTOM` / `WorkerW` 的旧印象里 | 恢复时先 `show()` 再重放一次层级（`desktop::apply_to`），顺序反了就等于没压下去 |
 | 开机自启开关打开、重启却没起来；或者起来的还是旧的开发版 | 注册表里那条命令指向的是上一次的 exe（换过安装位置、升级过、或者开发时写进去的 `target\debug\lattice.exe`）。注册表不会自己跟着走 | 启动时对账：`autostart::reconcile()` 发现注册的那条不是当前 exe 就改写（只改已存在的，不会顺手打开）。debug 构建跳过 —— 否则 `tauri dev` 一次就把用户的自启劫持到开发产物上 |
+| 给 WebView2 加上 `--remote-debugging-port` 之后，应用起来了、窗口标题也在，但**一个 `msedgewebview2` 子进程都没有**，端口不监听，窗口里什么都没有 | `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 里那条参数让 WebView2 的创建直接失败了（本机环境如此，去掉这个变量立刻正常）。表面症状极像"应用卡住" —— 日志里只有两条 watcher，什么都没有 | 别用 CDP 端口验界面：改成"临时把要验的状态默认成打开 / 关闭，截一张窗口图，然后改回来"。窗口截图用 `GetWindowRect` + `ImageGrab(bbox=..., all_screens=True)`，比 CDP 少一整条依赖 |
+| 用 `mouse_event` 合成点击，坐标明明在窗口里（`WindowFromPoint` 也确认了），界面毫无反应 | 注入的输入到不了 WebView2 的渲染进程 —— 而且前台窗口随时会被别的应用（聊天工具）抢走，`SetForegroundWindow` 从后台进程调经常是**静默失败**的 | 别靠合成点击验交互。交互逻辑放进能自动化跑的页面（`tests/debug-panel.html` 直接 `.click()`），真机只看"渲染出来的样子" |
+| 组件测试页里面板渲染成一堆裸 HTML：按钮是系统默认样式、行挤成一坨 | 面板的样式全在 `src/styles.css`（令牌 + `.lattice-debug-*`），而测试页只 import 了组件，没有 import 平台样式表 | 组件级测试页第一行就 `import "../src/styles.css"`。平台组件不是自带样式的独立件，它们靠全局那一层 |
+| `tests/sdk.html` 偶尔报"启动时向宿主报了一次 ready"，重跑又好了 | `postMessage` 是**宏任务**，而 `await` 子窗口的 promise 只排**微任务** —— 微任务先跑完。所以"子页面已经发了 ready"不代表"父页面的监听器已经收到" | 跨窗口的断言一律用 `waitFor(条件, 超时)` 轮询，别直接断言。这条是真机上整套测试一起跑、机器忙的时候才暴露的 |
+| 正在播放组件启动后，"来源"那一格永远是空的，别的都正常 | 启动链最后一句 `.then(() => { el.source.textContent = "" })` 是重构时的残留，它跑在**第一次 render 之后**，把刚画上去的播放器名抹掉了 | 渲染函数只有一个入口。启动链里只做"订阅 + 报 ready"，不碰 DOM —— 想清空就清空数据再 render 一次 |
+| 没有会话时进度条还在，显示一条空槽加 `--:--` | 那一支写的是 `el.progress.hidden = !showProgress`，把"用户关掉了进度条"当成了唯一的隐藏条件，忘了"没有会话"也该隐藏 | 隐藏条件写全：`!showProgress || duration <= 0`（或者干脆在没会话的分支里直接 `hidden = true`）。空槽看着像还没加载完 |
+| 组件测试里改配置之后，组件读到的还是旧值 | 假宿主里 `setConfig()` 只更新了自己的一个 `pollMs` 变量，而 `config.get` 回的是**启动时捕获的那个对象** —— 两份数据，各改各的 | 假宿主必须让 `config.get` 和 `config-changed` 读同一份对象（`Object.assign(config, next)`）。测试替身自己有两份状态，是最难查的一类"测试通过但功能是坏的" |
 ### 环境与构建（windows-gnu）
 
 默认工具链是 `stable-x86_64-pc-windows-gnu`，它不自带 `windres`，也没有 `gcc`，  
@@ -393,11 +401,35 @@
 
 ## v0.4 —— 开发体验
 
-- [ ] `@lattice/sdk` —— 把桥客户端、主题同步、类型定义封成包
-- [ ] `create-lattice-widget` 脚手架
-- [ ] 组件打包工具：目录 → `.lattice`（zip）
-- [ ] 媒体控制权限（SMTC）
-- [ ] 组件调试面板：实时日志、桥调用追踪
+- [x] **`@lattice/sdk`** —— 桥客户端、主题同步、类型定义封成一个**零依赖 ES module**（`packages/sdk/lattice.js` + `lattice.d.ts`），`tests/sdk.html` **34 条**断言钉住请求配对、超时、`permission_denied`、主题别名、存储、调度、媒体、网络透传。
+  - **随包分发，不是 `npm install`**。平台的前提是"组件不用构建"，一旦 import 成了必需，每个组件都得配一套打包工具 —— 那是把复杂度转嫁给写组件的人。所以 `lattice.js` 是个普通文件，拷进组件目录就行
+  - 代价是**副本会漂**。两道保险：`npm run sdk:sync` 刷所有内嵌副本，`npm run test:sdk`（`node --test`）在任何一个副本和源不一致时失败。第二道是真的会响 —— 改 SDK 忘了同步，CI 直接红
+  - 启动顺序踩过一次：宿主只在收到 `ready` 之后才推主题和配置，而组件要等推送就得死等。所以 SDK 先**拉**一次（各自和 `bootTimeout` 赛跑），应用完再报 `ready`；宿主收到 ready 再推一遍，兜住"拉取之后、报 ready 之前配置刚被改"的那一瞬
+  - 内置组件**一个都不用 SDK**（`scripts/sdk-sync.mjs` 只给已经存在 `lattice.js` 的目录补副本，`public/widgets/` 全部不在名单里）。它们就是"不装 SDK 也能写"的活证据，也是 SDK 的唯一回归基准
+- [x] **`create-lattice-widget` 脚手架** —— `npm run create:widget -- demo.mine`，产出 `manifest.json` / `index.html` / `widget.js` / `style.css` / `icon.svg` / `README.md` 加两份 SDK 副本，`widget.js` 里已经接好 `schedule.every(1000)` 的心跳。
+  - 参数：`--name` `--out` `--layer desktop|top` `--permissions a,b` `--interactive`
+  - **id 不合规时给建议而不是报错**：`clock` 会被建议成 `demo.clock`（清单 id 至少要两段，见 `manifest.ts` 的 `ID_RE`）。新手第一个卡住的地方就是这个
+  - 目标目录非空就拒绝 —— 脚手架覆盖用户的文件比不生成更糟
+  - 生成的 `style.css` 顶上留 `padding: 34px 14px 14px`，把窗饰那 22px 让出来（见 WIDGET_SPEC §5.1）
+- [x] **组件打包工具** —— 目录 → `.lattice`（zip）。`scripts/pack-widget.mjs` 手写 ZIP（local header + central directory + EOCD，`zlib.deflateRawSync`），Rust 侧 `package.rs` 读中央目录、`flate2` 解压、自己核 CRC。
+  - **确定性**：条目按名字排序、DOS 时间戳固定成 1980-01-01、UTF-8 名（`flags = 0x0800`）。同样的输入两次打包字节完全一致 —— "你手上这个包是不是我发出去的那个"才是个能回答的问题，也是以后做签名校验的前提
+  - **zip-slip 防了两道**：`package_policy::safe_relative_path` 拒 `..` / 绝对路径 / 盘符 / `\` / `:` / 空段，`join_inside` 在真正写盘那一处再验一次。上限：单文件 8MB、总量 64MB、500 个条目。任何一条不过就整包拒绝，不做"部分安装"
+  - 装是**原子的**：先解到 `<id>.incoming`，成功了才删旧的、改名。解到一半失败不会留下半个组件
+  - 交叉验过：Node 打出来的包用 Python 的 `zipfile.testzip()` 读得通（8 个条目、CRC 全对），同一个包再喂给 Rust 的 `extract()` 也过。Rust 侧的 10 条策略单测 + 5 条端到端（含篡改 CRC、路径穿越、绝对路径）用 `rustc --test` 跑
+- [x] **媒体控制权限（SMTC）** —— `media.rs` 走 WinRT 的 `GlobalSystemMediaTransportControlsSessionManager`：读标题 / 歌手 / 专辑 / 播放器 / 状态 / 能力位 / 位置 / 时长，能发 `playPause` / `next` / `previous` / `stop`。桥上是 `media.get` + `media.control`，共用 `media:control` 一项权限（读和按是同一件事的两半，拆开只会让授权面板多一行看不懂的字）。
+  - **COM 每次调用自己 `CoInitializeEx(COINIT_MULTITHREADED)`，返回值故意不看** —— 线程已经初始化过时它返回 `RPC_E_CHANGED_MODE`，那不算失败。不初始化就直接调是 `RPC_E_NOT_INITIALIZED`，这是 WinRT 最容易忘的一步
+  - **没有会话时 `media.get` 返回 `null`，不是错误**。桌面上没开播放器是常态，组件该显示"没在放"而不是红字
+  - `IAsyncOperation::join()` 阻塞等，**不加超时**：组件侧桥调用本来就有 3 秒超时，再套一层只会多一条要维护的失败路径
+  - `TimeSpan` 是 100ns 单位，除 10000 才是毫秒 —— 忘了这一步，时长会显示成 10 小时的歌
+  - 配了第一个真正用它 的内置组件 `public/widgets/lattice.media`（`tests/media.html` **33 条**断言）：轮询而非订阅（WinRT 事件要 COM 回调 + 活着的 STA 线程，代价远大于收益）、点按钮**本地先翻图标**再等系统确认、进度条按本地时间插值、时长 0 就不画进度条
+  - 真机验过：桌面窗口里 `media.get` 每两秒一条、耗时 5–50ms、没有播放器时返回 null 且卡片显示 "Nothing playing"、三个按钮正确置灰
+- [x] **组件调试面板** —— `Ctrl+Shift+D` 或顶栏的终端图标，从画布下沿升起一条 248px 的抽屉：桥调用的方法名 / 耗时 / 错误码、组件的每一条 `console.log/warn/error`，实时滚。
+  - **两个 webview 的记录要汇合**。画布上的实例就在主窗口里，直接写总线；桌面窗口是另一个 webview，靠 `emit("lattice:debug")` 攒批发过来（400ms 或 50 条一次，逐条发等于把 IPC 流量翻倍）。主窗口在**启动时**就订阅，所以面板关着的时候也在收，打开就能看到之前的历史
+  - **tracer 挂在每次调用的上下文里，不是模块级全局钩子**。第一版写成全局的，立刻发现错了：画布上同时挂着好几个实例，全局钩子只会剩下最后挂上去的那个，别的实例的调用全记到它头上
+  - 组件的 console 由注入脚本转发（`__lattice` + `type: "log"`，限速 40 条/秒、正文截到 300 字）。**这条通道以前不存在** —— vite dev 不转发组件窗口的 console，所以"代码里写着日志，屏幕上什么都没有"是常态
+  - 面板本身：All / Bridge / Console 三段、只看失败、按方法名 / 组件 id / 正文搜（大小写不敏感）、**Pause 冻住**（时钟每秒一条，想看清某行时它已经被顶走了）、Clear。环形缓冲 400 条
+  - 过滤和统计抽成纯函数（`filterRecords` / `summarize`），`tests/debug.html` **43 条**断言覆盖总线与纯逻辑；`tests/debug-panel.html` **15 条**把真组件挂起来，验的是"接上 React 之后还对不对"（按钮点没接上 state、统计用了没过筛的那份，纯函数测试一条都抓不到）
+  - 真机验过：面板里同时出现 `media.get`（桌面窗口镜像过来的）和 `clock.now`（画布实例 + 桌面实例各一份，所以每秒两条），耗时列 0.1–50ms
 
 ## v0.5 —— 分发
 

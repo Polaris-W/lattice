@@ -53,6 +53,7 @@ src/
     icons.tsx             16px 图标集（Glyph / ICON / ThemeGlyph / PanelGlyph / WidgetIconMark），顶栏、菜单、面板共用
     desktop.ts            Placement → WidgetWindowSpec，坐标换算，投放/收回命令
     autostart.ts          开机自启的读写与"路径漂移"判定（`Run` 注册表项）
+    DebugPanel.tsx        调试面板：桥调用与组件 console 的实时抽屉（Ctrl+Shift+D）
   runtime/
     manifest.ts           清单校验与归一化；Permission 类型与中文标签（唯一真源）
     config.ts             每实例配置：清单 schema（5 类字段）、归一化、值合并
@@ -64,12 +65,18 @@ src/
     schedule.ts           心跳时间轴：可见性取"与"、不可见停摆、回来补一拍
     screen-fit.ts         纯几何：锚点选屏、夹紧（入参一律物理像素，`tests/screen-fit.html` 钉着）
     library-search.ts     组件库搜索：切词 + 单包命中判定（纯函数，`tests/library-search.html` 钉着）
+    debug.ts              调试总线：环形缓冲 400 条、攒批镜像到主窗口、过滤 / 统计纯函数
 public/widgets/           官方组件包（未安装前只是"可发现"）
-examples/counter/         第三方组件的参考实现，拖进窗口即可安装
+examples/counter/         第三方组件的参考实现（用 SDK），拖进窗口即可安装
+packages/sdk/             @lattice/sdk：零依赖 ES module + .d.ts + README（**唯一真源**）
 scripts/
   widget-index.mjs        生成 public/widgets/index.json
   widget-diagnostics-plugin.mjs  给内置组件注入上报脚本（dev 中间件 + build 收尾）
   widget-diagnostics.test.mjs    注入规则的单测（`npm run test:injection`）
+  create-widget.mjs       脚手架：`npm run create:widget -- <id>`
+  pack-widget.mjs         目录 → .lattice（手写确定性 ZIP）
+  sdk-sync.mjs            把 packages/sdk 的两个文件刷进所有内嵌副本（`--check` 只查不改）
+  sdk.test.mjs            副本一致性 + SUPPORTED_SDK 版本对齐（`npm run test:sdk`）
   tauri.mjs               tauri CLI 包装（补工具链 PATH）
 src-tauri/src/
   lib.rs                  命令注册、WebView2 启动参数、自定义协议注册、主窗口关闭守卫
@@ -91,6 +98,9 @@ src-tauri/src/
   visibility.rs           真实可见性：从 WindowEvent::Resized 推，发 lattice:window-visible
   wallpaper.rs            截壁纸（宿主页底板的第一层）
   metrics.rs              系统指标（sysmon 组件用），直接调 Win32 不引 crate
+  media.rs                SMTC 媒体会话：读当前播放 + playPause/next/previous/stop（WinRT）
+  package.rs              .lattice 解包：inflate + 核 CRC + 原子安装（先解到 .incoming 再换名）
+  package_policy.rs       上面那道的纯逻辑：读中央目录、路径规则、体积上限（11 条单测）
   instance.rs             单实例：命名互斥体 + 命名事件
   state.rs                平台状态落盘（state.json，原子替换）
   widget_store.rs         组件私有存储落盘（widget-data/<id>.json）
@@ -367,6 +377,14 @@ public/widgets/<id>/
 同一条规矩还有个"看不见"的版本：**正文从顶上就开始排的组件**（便签）不会"点错"，而是正在写的那一行被压住 —— 打字的人手不离键盘、指针一动不动，窗饰也就不动。所以那 24px 里别留空带，放一条真信息（便签放的是保存状态）。判据是正文起点 `y ≥ 34`（窗饰下沿），`tests/note-layout.html` 直接量这个数。
 
 
+已修（别再改回去）：**组件能读也能控制系统媒体会话**。`media.rs` 走 WinRT 的 SMTC，桥上是 `media.get` / `media.control`，共用 `media:control` 一项权限。四条别踩回去：**每次调用自己 `CoInitializeEx(COINIT_MULTITHREADED)`，返回值故意不看**（已经初始化过会返回 `RPC_E_CHANGED_MODE`，那不是失败；不初始化直接调才是 `RPC_E_NOT_INITIALIZED`）；**没有会话时返回 `null` 而不是错误**（桌面上没开播放器是常态，组件该显示"没在放"）；**`TimeSpan` 是 100ns 单位，除 10000 才是毫秒**；**`IAsyncOperation::join()` 阻塞等、不加超时**（组件侧桥调用本来就有 3 秒超时，再套一层只是多一条失败路径）。唯一用户是 `public/widgets/lattice.media`，`tests/media.html` 33 条断言钉着它的渲染与控制。
+
+已修（别再改回去）：**`.lattice` 包能装也能打**。打包在 `scripts/pack-widget.mjs`（手写 ZIP），装在 `package.rs` + `package_policy.rs`。四条别踩回去：**打包必须确定性**（条目排序、DOS 时间戳固定 1980-01-01、UTF-8 名），否则"这个包是不是我发的那个"永远无法回答，以后也没法签名；**zip-slip 要防两道**（`safe_relative_path` 拒 `..`/绝对路径/盘符，`join_inside` 在真正写盘那处再验一次）；**安装要原子**（先解到 `<id>.incoming`，成功了才删旧的、改名），解到一半失败不能留下半个组件；**任何一条不过就整包拒绝**，不做"部分安装"。`install_widget` 的入参是 `source`（目录或 `.lattice` 文件），改名时记得同步 `App.tsx`。
+
+已修（别再改回去）：**调试面板**（`Ctrl+Shift+D`）。桥调用和组件 console 汇到 `runtime/debug.ts` 的环形缓冲，面板只负责画。四条别踩回去：**tracer 挂在 `BridgeContext` 里，不是模块级全局钩子** —— 画布上同时挂好几个实例，全局钩子只会剩下最后一个，别的实例的调用全记到它头上；**桌面窗口的记录靠 `emit("lattice:debug")` 攒批过来**（400ms 或 50 条一次），主窗口在启动时就订阅，面板关着也在收；**组件的 console 由 `widget-reporter.js` 转发**（`__lattice` + `type: "log"`，限速 40 条/秒），这条通道以前不存在，vite dev 不转发组件窗口的 console；**过滤和统计是纯函数**（`filterRecords` / `summarize`），别把逻辑写回组件里 —— `tests/debug.html` 靠它们做断言。
+
+已修（别再改回去）：**SDK 是"随包分发的普通文件"，不是 npm 依赖**。`packages/sdk/lattice.js` 是唯一真源，每个用到它的组件目录里都有一份拷贝（`scripts/sdk-sync.mjs` 负责刷，`--check` 只查不改）。改 SDK 之后**必须跑 `npm run sdk:sync`**，否则 `npm run test:sdk` 会红 —— 那条测试就是为"忘了同步"准备的，别把它删了。`public/widgets/` 下的官方组件**刻意不用 SDK**：它们是"不装 SDK 也能写"的证明，也是 SDK 的唯一回归基准。
+
 ---
 
 ## 9. 踩过的坑
@@ -409,11 +427,17 @@ public/widgets/<id>/
 - 改了窗口行为：只能 `npm run tauri:dev` 实机看。**改 Rust 会重启应用**；`desktopMode` 与 `restoreOnLaunch` 都落盘，重启后组件窗口会自己回来（位置和数据都在），不用重新投放。
 - **重启前先确认没有孤儿进程。** 杀掉 dev 任务不一定杀掉 `lattice.exe`：孤儿实例还活着时会**用它内存里的旧状态覆盖 `state.json`**（手动改文件会被它盖回去），而且它占着 WebView2 的用户数据目录，新进程会以 `HRESULT 0x800700AA "The requested resource is in use."` 在 `setup` 里 panic（表现为"改完 Rust 应用起不来了"，其实跟代码无关）。判据：`Get-Process lattice` 为空。真要改 `state.json` 就先退出应用。
 - 改了协议 / 安装链路：拿 `examples/counter` 当样本 —— 拖进窗口 → 出现在「已安装」→ 放到画布 → 授权 `storage` → 点几下 → 看 `%APPDATA%\com.iron-tom.lattice\widget-data\demo.counter.json` 有没有写进去。协议本身只能在应用里探（浏览器态没有 Rust，`lattice-widget.localhost` 压根不解析）：预期真文件 200 + 正确 `Content-Type`，`..` / 大写 id / 不存在的组件全部 404。
+- 改了 **SDK**（`packages/sdk/lattice.js`）：改完**立刻** `npm run sdk:sync`，再 `npm run test:sdk`（2 条，`node:test`，不需要 dev server：所有内嵌副本必须和源字节一致、`SUPPORTED_SDK` 的主次版本必须和 SDK 包版本对得上）。行为本身看 `tests/sdk.html`（34 条）—— 它自带一个假宿主，覆盖请求配对、超时、`permission_denied`、主题长名 / 别名、存储往返、`store-changed`、`config-changed`、`tick` 路由、`stop()`、网络透传、顶层窗口立刻失败。**跨窗口的断言要用 `waitFor` 轮询**：`postMessage` 是宏任务，`await` 子窗口的 promise 只排微任务，直接断言会偶发失败。
+- 改了 **`.lattice` 打包 / 安装**：`npm run pack:widget -- examples/counter`，产物在 `dist-packs/`（已 gitignore）。打包要验**确定性**：连打两次，`sha256` 必须一样。解包侧用壳子跑 `package_policy.rs` + `package.rs` 的 15 条（含篡改 CRC、路径穿越、绝对路径），装完看 `%APPDATA%\com.iron-tom.lattice\widgets\<id>\` 里是不是原样。交叉验一下更稳：Node 打的包用 Python 的 `zipfile.ZipFile(...).testzip()` 读一遍。
+- 改了**调试面板**：`tests/debug.html`（43 条，总线 + 过滤 / 统计纯函数）+ `tests/debug-panel.html`（15 条，把真组件挂起来点按钮）。后者**必须 `import "../src/styles.css"`**，否则面板渲染成裸 HTML。它同时也是一张验收图：`--screenshot` 出来的就是面板长什么样。
+- 改了**媒体控制**：`tests/media.html`（33 条）自带假宿主，覆盖"有会话 / 没会话 / 权限被拒 / 直播没时长 / 点按钮 / 改轮询间隔"。它替身的坑记住一条：`setConfig()` 要 `Object.assign` 到 handler 捕获的那个对象上，否则 `config.get` 回的还是启动时那份，用例会假通过。
 - 改了组件库（列表 / 搜索 / 安装态）：`tests/library-search.html` 钉的是**判定规则**（空查询不筛、大小写与空白归一、多词 AND、权限名算命中、不做模糊匹配）。搜索的边界只在 `runtime/library-search.ts` 里写一份，组件里别再复制一遍 —— 复制的后果是"测试过了，界面上还是不对"。
 - 改了错误通道 / 兜底页：`tests/diagnostics.html`（识别边界、两条通道不撞、去重指纹、主错误选择）。注入规则本身跑 `npm run test:injection`（9 条，`node:test`，**不需要 dev server**，fixture 和 Rust 单测是同一批：`<head>` 带属性、`<header>` 别认错、doctype 兜底、幂等、压行后行号不变、多字节安全）。Rust 那边 14 条单测在 `diagnostics.rs` 里，但**这台机器跑不了 `cargo test`**（安全策略拦 `target/debug/deps` 下新写的 exe，见 ROADMAP 坑表）。绕法：写个只有一行的壳子 `#[path = "../src-tauri/src/diagnostics.rs"] mod diagnostics;`，然后 `rustc --test 壳子.rs -o 壳子.exe && ./壳子.exe` —— 断言还是模块里那一份，不复制。
 - 改了内置组件的注入：**两条路都要看**。dev 下 `curl -s http://localhost:1420/widgets/lattice.clock/index.html | grep -c 'data-lattice="diagnostics"'` 应该是 `1`（不是 `2`：中间件要幂等，否则 vite 自己把 `public/` 也注一遍就重了）；`npm run build` 之后再看 `dist/widgets/*/index.html`，构建日志末尾会有一行 `[lattice] 错误上报已注入 N 份内置组件文档`，`N` 要等于内置组件个数。**行数也要对**：`wc -l dist/widgets/<id>/index.html` 必须和 `public/widgets/<id>/index.html` 一样多，多一行就是压行失效、行号全错。
 - **驱动真机 UI**：键盘事件能进 WebView2（`SetForegroundWindow` 之后发 `Ctrl+R` 能刷新、往输入框打字能落盘）；`mouse_event` 的点击**在宿主页的窗饰和错误卡上是生效的**（重载按钮就是这么验的），只是要先 `SetCursorPos` 再等 200–400ms —— 窗饰是 `body:hover` 才淡入的，移过去立刻点会点在还没出现的按钮上。往组件 iframe 里点则不可靠。
-- **CDP 连真机是可行的**，而且比"看截图猜"靠谱得多：
+- **CDP 连真机：这台机器上已经开不出来了。** 加 `--remote-debugging-port` 之后应用会起来、窗口标题也在，但**一个 `msedgewebview2` 子进程都没有**，端口不监听，日志里只有两行 watcher —— 看起来像"卡住"，其实是 WebView2 创建直接失败了。判据：`Get-Process msedgewebview2` 里没有带 `com.iron-tom` 的那个；去掉环境变量立刻正常。**别在这上面耗时间**，改用下面的替代验法。
+- **替代验法：把要验的状态临时默认成打开，截图，再改回来。** 面板 / 弹层这类"点一下才出现"的东西，临时把 `useState(false)` 改成 `useState(true)`（改完 HMR 立刻生效），用 `GetWindowRect` + `ImageGrab(bbox=…, all_screens=True)` 截窗口，然后**把代码改回去**。合成点击（`mouse_event`）在这台机器上进不了 WebView2 的渲染进程，`SetForegroundWindow` 从后台进程调也经常静默失败（还会有别的应用突然抢到前台）—— 交互逻辑一律放进能自动化跑的页面，真机只看渲染出来的样子。
+- 下面这段是 CDP 还能用时的记法，留着给别的机器：
   ```bash
   WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--in-process-gpu --remote-debugging-port=9333" npm run tauri:dev
   curl -s http://127.0.0.1:9333/json/list
@@ -427,7 +451,8 @@ public/widgets/<id>/
   #[path = "../src-tauri/src/network_policy.rs"] mod network_policy;
   ```
   `rustc --test 壳子.rs -o 壳子.exe && ./壳子.exe`。**这就是"纯逻辑要单独拆成一个文件"的原因 —— 拆出来才测得到**。断言只有一份（`#[cfg(test)] mod tests` 在模块内部），壳子别复制。
-  能这么跑的只有不依赖 tauri / windows-sys / serde 的那几个：`diagnostics.rs`（14）、`network_policy.rs`（9）、`crash_policy.rs`（9）、`watch_policy.rs`（5）、`autostart_policy.rs`（5），共 42 条。剩下 17 条（`csp.rs` 3、`egress.rs` 3、`protocol.rs` 6、`widget_store.rs` 5）在带依赖的模块里，只有 `cargo test` 能跑，本机跑不了 —— 改动它们时靠 review 和真机验证。
+  能这么跑的只有不依赖 tauri / windows-sys / serde 的那几个：`diagnostics.rs`（14）、`package_policy.rs`（11）、`network_policy.rs`（9）、`crash_policy.rs`（9）、`watch_policy.rs`（5）、`autostart_policy.rs`（5），共 53 条。剩下 19 条（`csp.rs` 3、`egress.rs` 3、`protocol.rs` 6、`widget_store.rs` 5、`media.rs` 2）在带依赖的模块里，只有 `cargo test` 能跑，本机跑不了 —— 改动它们时靠 review 和真机验证。
+  `package.rs` 要用到 `flate2` / `serde_json`，壳子得额外指路：`rustc --edition 2024 --test 壳子.rs --extern flate2=<rlib> --extern serde_json=<rlib> -L dependency=src-tauri/target/debug/deps -o 壳子.exe`（rlib 从 `target/debug/deps/` 里按 `libflate2-*.rlib` 找）。只给 `--extern` 不给 `-L dependency` 会报 `can't find crate`。
   **别把纯逻辑塞回带依赖的模块里**：`watch.rs` / `autostart.rs` 的解析和拼串本来就是搬出去的，搬回去等于这 10 条断言从此没人跑。
 - **CDP 选 target 必须认"完全相等"，不能只认"包含"**：主窗口是 `http://127.0.0.1:1420/`，宿主页是 `http://127.0.0.1:1420/widget-host.html` —— 后者**包含**前者的前缀，`url.includes(selector)` 会把主窗口的探针静默跑到宿主页上，返回空值也不报错（真踩过：以为桥坏了，其实是在一个已经卸载的页面上 `evaluate`）。所以先 `t.url === selector`，找不到再退到 `includes`。
 - **宿主页在 CDP 里没有唯一 URL**：所有桌面窗口都是同一个 `widget-host.html`，靠 URL 分不出是谁。按 `host:<widgetId>` 取的办法是先连上每个 `widget-host.html` target，`evaluate("document.querySelector('iframe')?.getAttribute('src')")`，再按里面的组件 id 挑。想验崩溃隔离就 `Page.crash` 那个 target（组件 iframe 是 `type: "iframe"`，宿主页才是 `type: "page"`）。

@@ -22,8 +22,20 @@ my-widget/
 | --- | --- | --- |
 | 你改的是随应用分发的内置组件 | 目录放进 `public/widgets/`，执行 `npm run widgets:index` | 跟着前端资源打包 |
 | 你写的是第三方组件 | 把**目录**从资源管理器拖进棂的窗口 | 复制到 `%APPDATA%\com.iron-tom.lattice\widgets\<id>\` |
+| 你要把组件发给别人 | `npm run pack:widget -- <目录>`，把产出的 `.lattice` 拖进窗口 | 解开到同一个地方 |
 
 拖进来之后平台会自己扫描、安装、出现在「已安装」里，点一下就放到画布上。安装时会校验 `id`（只允许小写字母、数字、`.`、`-`），不合法的包会被拒绝并在组件库顶部提示原因。
+
+**`.lattice` 是什么。** 就是一个 zip，里面是组件目录的内容（`manifest.json` 在根上，不是套一层目录）。它存在的理由是"发一个目录给别人"很别扭：微信、邮件、网盘都会把目录压成 zip 或者干脆不认，而 zip 又容易被套一层 `my-widget/my-widget/`。`.lattice` 定死布局，装的时候还能先校验再落盘。
+
+```bash
+npm run pack:widget -- examples/counter          # 产出 dist-packs/counter.lattice
+npm run pack:widget -- examples/counter --out out/  # 指定目录
+```
+
+打包是**确定性**的：同样的输入两次打包字节完全一样（文件按名字排序、时间戳固定成 1980-01-01）。所以"你手上这个包是不是我发出去的那个"这个问题是可以回答的 —— 这也是以后做签名校验的前提。
+
+装包时的三道闸：路径不许 `..` / 绝对路径 / 盘符（防 zip-slip）、单个文件 ≤ 8MB 且总量 ≤ 64MB、条目数 ≤ 500。任何一条不过就整包拒绝，不做"部分安装"。
 
 内置组件和用户组件的加载协议不一样，但对你透明 —— 你只管在 HTML 里写**相对路径**：
 
@@ -213,11 +225,11 @@ if (data.type === "config-changed") {
 | `clipboard:write` | `clipboard.write` | 可用 |
 | `system:monitor` | `system.metrics` | 可用 |
 | `network` | `network.fetch`（还要求清单里列了目标主机） | 可用 |
-| `media:control` | 预留（v0.4） | 声明可以，**授予无效果** |
+| `media:control` | `media.get` / `media.control`（系统媒体会话，见 §4.4） | 可用 |
 
 只申请你真正用到的。申请一堆用不上的权限，用户会直接不装。
 
-`media:control` 在平台里还**没有对应的桥方法**：清单里写它不会报错，但授权界面对它显示为不可勾选（带 `soon` 标记）—— 勾了也没有任何东西可用。做到哪一项，那一项才会变成可勾选。
+`media:control` 一项权限同时管读和按。拆成"读会话"和"控制播放"两行，用户没法凭一行字分清区别，只会多点一次授权。
 
 `network` 是**两道锁**：用户授予权限只是第一道，第二道是清单里的 `network.hosts`（§3.2）。只授权、不列主机，等于哪儿都连不上。
 
@@ -307,6 +319,8 @@ parent.postMessage(
 | `config.get` | — | — | 这个实例的配置，已按清单 schema 合并出厂值，见 §2.3 |
 | `theme.get` | — | — | CSS 变量字典，见下 |
 | `network.fetch` | `network` | `{ url, method?, headers?, body? }` | `{ status, ok, headers, body, truncated }`，见 §3.2 |
+| `media.get` | `media:control` | — | 当前媒体会话，没有播放器时返回 `null`（不是错误），见 §4.4 |
+| `media.control` | `media:control` | `{ action }` | `{ ok }`；`action` 是 `playPause` / `next` / `previous` / `stop` |
 | `window.close` | — | — | 关闭当前组件实例的窗口，**但不删用户的 placement** |
 
 **`window.close` 只是关窗，不是删组件。** 调用之后窗口消失，但用户摆在画布 / 桌面上的那个 placement 还在 `state.json` 里，下次启动照样回来；本次运行内不会再自动冒出来（平台记着"它自己退出了"）。真正删掉用户布局的只有用户自己按宿主页那颗 ✕。所以组件别把这个方法当"自毁"用 —— 它是"我先歇着"。
@@ -387,6 +401,65 @@ if (data.type === "store-changed" && (!data.payload.key || data.payload.key === 
 主题字典的键：`--lattice-bg`、`--lattice-surface`、`--lattice-text`、`--lattice-text-muted`、`--lattice-border`、`--lattice-accent`、`--lattice-radius`、`--lattice-font`。
 
 组件应当把这些值写到自己根元素的 CSS 变量上，这样明暗主题切换是零成本的。
+
+### 4.4 `media.get`：系统媒体会话
+
+Windows 的 SMTC（System Media Transport Controls）—— 就是按音量键时左上角那个浮层背后的那套东西。凡是往它注册过的播放器（Spotify、浏览器里的 YouTube、系统播放器）都能读到。
+
+```js
+const session = await lattice.media.get();     // 需要 media:control
+if (!session) return render("Nothing playing");
+```
+
+```json
+{
+  "title": "Ocean Drive",
+  "artist": "Ducktail",
+  "album": "Nightfall",
+  "source": "Spotify",
+  "status": "playing",
+  "canPlayPause": true,
+  "canNext": true,
+  "canPrevious": true,
+  "positionMs": 187000,
+  "durationMs": 400000
+}
+```
+
+四条要注意的：
+
+- **`null` 是正常状态**，不是错误。桌面上没开播放器太常见了，组件该显示"没在放"，不该红字警告。
+- **`status` 是字符串**，取自 WinRT 的 `MediaPlaybackStatus`：`closed` / `changing` / `stopped` / `playing` / `paused`。判断"在不在播"用 `status === "playing"`。
+- **能力位可能和状态不一致**。有的播放器报 `status: "playing"` 但 `canPlayPause: false`。按钮的可用性看 `can*`，图标看 `status`。
+- **`durationMs` 可能是 0**（直播、某些播放器）。别画一条永远停在 0 的进度条 —— 那看着像坏了。
+
+`media.control` 是**异步**的：`{ ok: true }` 只表示"请求已经交给系统"，播放器真正开始播可能还要几百毫秒。想让按钮立刻响应，就在本地先翻转一次状态，等下一次 `media.get` 回来再校正 —— `public/widgets/lattice.media/` 就是这么做的。
+
+`positionMs` 是"上次报告的位置"。播放中它会自己往前走，但不会实时更新 —— 要画连续进度条的话，拿到位置的那一刻记下时间戳，之后按经过的毫秒自己插值。
+
+### 4.5 用 `@lattice/sdk` 少写点样板
+
+上面这套 `postMessage` + 自增 id + 超时 + 权限判断，手写一遍大概六十行。`@lattice/sdk` 把它封好了：
+
+```js
+import { createLattice, isPermissionDenied } from "./lattice.js";
+
+const lattice = createLattice();
+await lattice.ready;                                    // 配置和主题已经就位
+
+lattice.schedule.every(1000, () => render());
+const session = await lattice.media.get();
+```
+
+`lattice.js` 和 `lattice.d.ts` 是**两个普通文件**，从 `examples/counter/` 或 `npm run create:widget` 的产物里拷进组件目录即可 —— 不需要 `npm install`，不需要打包。这样"组件不用构建"这个前提保住了。
+
+它替你做的事：请求 / 响应配对、超时、`LatticeError`（带 `code` 和 `permission`）、启动时先拉配置和主题再报 `ready`、主题令牌写成 CSS 变量（长名 + 短别名）、`store-changed` / `config-changed` / `tick` 的分发。
+
+它**不**做的事：不重试、不替你决定降级策略、不绕过权限。
+
+`public/widgets/` 下的内置组件一个都没用它 —— 它们是"不装 SDK 也能写"的证明。什么时候值得装：组件有存储、有心跳、要处理权限失败。只有一个 `clock.now` 的纯展示组件就不必。
+
+细节见 `packages/sdk/README.md`。
 
 ## 5. 沙箱限制
 
@@ -609,4 +682,5 @@ v0.3 之前组件出错只有一种表现：白屏。分不清是路径写错、
 - 桥调用全部返回 Promise，务必 `.catch()`，否则权限未授予时会静默失败。
 - 用户组件加载不出来时，先确认三件事：目录在 `%APPDATA%\com.iron-tom.lattice\widgets\<id>\`（组件库标题右边那颗文件夹图标能直接打开）、`manifest.json` 的 `id` 和目录名一致、HTML 里全是相对路径。
 - 想单独验证协议有没有把文件发出去：`curl -i http://lattice-widget.localhost/<id>/index.html`（Windows 上是这个形式）。返回 404 就是路径不对，返回 200 但白屏就是组件自己的 JS 出错。
+- 打开**调试面板**（顶栏那颗终端图标，或 `Ctrl+Shift+D`）：组件的每一条 `console.log/warn/error`、每一次桥调用（方法名、耗时、错误码）都会实时滚在这里。桌面窗口里发生的调用也会汇进来，所以"这个组件到底有没有在调桥""那次为什么失败"不用再开 devtools 猜。
 - 用 `curl` 探一个**不存在**的文件时，返回的是空 body，不是兜底页 —— 因为 `curl` 不发 `Sec-Fetch-Dest`，也没有 `Accept: text/html`，协议把它当成"组件在取资源"。这是故意的：组件 `fetch("data.json")` 拿到 HTML 会抛一个和真实原因毫无关系的解析错误。想看兜底页就在浏览器里直接访问那个地址。
