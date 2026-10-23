@@ -18,8 +18,11 @@ pub mod desktop;
 pub mod diagnostics;
 pub mod egress;
 pub mod instance;
+pub mod media;
 pub mod metrics;
 pub mod network;
+pub mod package;
+pub mod package_policy;
 pub mod network_policy;
 pub mod protocol;
 pub mod runner;
@@ -108,6 +111,8 @@ pub fn run() {
             runner::widget_set_appearance,
             wallpaper::widget_wallpaper,
             metrics::system_metrics,
+            media::media_session,
+            media::media_control,
             runner::set_widgets_paused,
             runner::widgets_paused,
             autostart::autostart_get,

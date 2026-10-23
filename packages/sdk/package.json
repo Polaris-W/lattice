@@ -1,0 +1,28 @@
+{
+  "name": "@lattice/sdk",
+  "version": "0.1.0",
+  "description": "Client SDK for 棂 / Lattice widgets — one dependency-free ES module, no build step",
+  "type": "module",
+  "main": "lattice.js",
+  "module": "lattice.js",
+  "types": "lattice.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lattice.d.ts",
+      "import": "./lattice.js",
+      "default": "./lattice.js"
+    }
+  },
+  "files": [
+    "lattice.js",
+    "lattice.d.ts",
+    "README.md"
+  ],
+  "keywords": [
+    "lattice",
+    "widget",
+    "desktop",
+    "tauri"
+  ],
+  "license": "MIT"
+}

@@ -1,88 +1,55 @@
 /**
  * 计数器 —— 第三方组件的示例
  *
- * 这个文件里没有一行平台代码：它只会 postMessage。
- * 平台换实现（iframe → 独立进程）时，这里不用改。
+ * 这个文件是 v0.4 的样子：业务逻辑只有下面这几行，桥、主题、配置、心跳
+ * 全在 `lattice.js` 里（那是从 `@lattice/sdk` 拷过来的，跟着组件一起分发）。
+ *
+ * 对照老写法能看出 SDK 省了什么：
+ *   - 手写 `seq` / `pending` / `setTimeout` 那一套请求-响应配对
+ *   - 自己监听 message、自己认 `type === "theme"` / `"response"`
+ *   - 自己把 `--lattice-*` 映射成 `--fg` 这类短名
+ *   - 自己发 `ready`（忘了发，宿主就永远不推主题）
+ *
+ * 没有 SDK 也能写组件 —— 协议没变，WIDGET_SPEC 里那套 postMessage 一直有效。
+ * SDK 只是把"每个组件都要重写一遍的 80 行"收起来。
  */
-(function () {
-  "use strict";
+import { createLattice } from "./lattice.js";
 
-  var seq = 0;
-  var pending = new Map();
+const lattice = createLattice();
 
-  function call(method, params) {
-    return new Promise(function (resolve, reject) {
-      var id = ++seq;
-      pending.set(id, { resolve: resolve, reject: reject });
-      parent.postMessage(
-        { __lattice: 1, type: "request", id: id, method: method, params: params },
-        "*"
-      );
-      setTimeout(function () {
-        if (!pending.has(id)) return;
-        pending.delete(id);
-        reject(new Error("Bridge call timed out: " + method));
-      }, 3000);
-    });
+const valueEl = document.getElementById("value");
+const bumpEl = document.getElementById("bump");
+const hintEl = document.getElementById("hint");
+
+let count = 0;
+
+function render() {
+  valueEl.textContent = String(count);
+}
+
+/**
+ * 启动顺序值得看一眼：`await lattice.ready` 之后主题和配置**已经应用过**
+ * 一次，所以第一次渲染就是对的颜色，不会先闪一下默认样式。
+ */
+await lattice.ready;
+
+try {
+  const stored = await lattice.storage.get("count");
+  if (typeof stored === "number") count = stored;
+} catch (error) {
+  // 没授权 `storage` 也照样能计数，只是关掉窗口就归零 —— 明说，别装作没事
+  if (error.code === "permission_denied") {
+    hintEl.textContent = "Not saved: storage permission not granted";
   }
+}
 
-  var THEME_MAP = {
-    "--lattice-surface": "--surface",
-    "--lattice-text": "--fg",
-    "--lattice-text-muted": "--muted",
-    "--lattice-accent": "--accent",
-    "--lattice-border": "--border",
-    "--lattice-radius": "--radius",
-    "--lattice-font": "--font",
-  };
+render();
 
-  function applyTheme(tokens) {
-    if (!tokens) return;
-    Object.keys(THEME_MAP).forEach(function (source) {
-      var value = tokens[source];
-      if (value) document.documentElement.style.setProperty(THEME_MAP[source], value);
-    });
-  }
-
-  window.addEventListener("message", function (event) {
-    var data = event.data;
-    if (!data || data.__lattice !== 1) return;
-
-    if (data.type === "theme") {
-      applyTheme(data.payload);
-      return;
-    }
-    if (data.type === "response") {
-      var entry = pending.get(data.id);
-      if (!entry) return;
-      pending.delete(data.id);
-      if (data.error) entry.reject(new Error(data.error.message || "Call failed"));
-      else entry.resolve(data.result);
-    }
+bumpEl.addEventListener("click", () => {
+  count += 1;
+  render();
+  // 写盘失败不该让按钮看起来坏了：数字已经加过了，最多是这次没存住
+  lattice.storage.set("count", count).catch(() => {
+    hintEl.textContent = "Not saved: storage permission not granted";
   });
-
-  var valueEl = document.getElementById("value");
-  var count = 0;
-
-  function render() {
-    valueEl.textContent = String(count);
-  }
-
-  document.getElementById("bump").addEventListener("click", function () {
-    count += 1;
-    render();
-    call("storage.set", { key: "count", value: count }).catch(function () {});
-  });
-
-  // 告诉宿主"我准备好了"，宿主收到后会回推一次主题
-  parent.postMessage({ __lattice: 1, type: "ready" }, "*");
-
-  call("storage.get", { key: "count" })
-    .then(function (value) {
-      if (typeof value === "number") {
-        count = value;
-        render();
-      }
-    })
-    .catch(function () {});
-})();
+});

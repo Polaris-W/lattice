@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>sdk child — 扮演一个组件</title>
+  </head>
+  <body>
+    <!--
+      这一页在 tests/sdk.html 里被当成"组件"加载：它真的 import 了 SDK，
+      真的往 parent 发请求。宿主是父页面里那个假宿主 —— 所以这一整条
+      链路（配对、超时、主题、配置、心跳、存储推送）都是真代码在跑，
+      只有"宿主那边怎么实现"是假的。
+    -->
+    <pre id="out">child</pre>
+    <script type="module">
+      import { createLattice, isPermissionDenied, LatticeError } from "/packages/sdk/lattice.js";
+
+      // 默认超时那一份：大部分断言用它
+      window.__sdk = createLattice();
+      // 需要验超时的时候，父页面用这个工厂现建一份短超时的
+      window.__createLattice = createLattice;
+      window.__sdkApi = { isPermissionDenied, LatticeError };
+      window.__childLoaded = true;
+    </script>
+  </body>
+</html>

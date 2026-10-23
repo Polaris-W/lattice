@@ -35,3 +35,6 @@ src-tauri/target
 
 # 由 scripts/widget-index.mjs 生成
 public/widgets/index.json
+
+# 打包产物（scripts/pack-widget.mjs 的默认输出目录）
+dist-packs/

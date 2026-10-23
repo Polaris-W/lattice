@@ -252,10 +252,12 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
 /**
  * 桥里真的有方法可调的权限。
  *
- * 剩下的（`media:control`）目前只在清单里留了名字：`bridge.ts` 没有任何方法
- * 认领它，勾了也不会有任何东西可用。授权界面把这几项画成不可勾选 —— 与其让
- * 用户对着一个假开关点半天，不如直说"还没做"。做到哪一项，把它挪进这个集合，
- * 再把桥方法一起加上。
+ * 六项现在全齐了（`media:control` 是最后补上的）。这张表仍然留着 —— 它是
+ * "授权界面能不能勾"的唯一判据：将来再加一项权限，先让它在这里缺席，
+ * 等桥里真有方法了再挪进来，界面就会自动把它画成禁用 + `soon`。
+ *
+ * 加一项权限要**三处一起改**：`defineMethod` 注册方法、这个集合加进去、
+ * `PERMISSION_LABELS` 补文案 —— 只改前两处，界面上会少个名字。
  *
  * 注意：**不要**因为它们没实现就从 `Permission` 类型里删掉。清单里声明了
  * 它们的组件应当照常通过校验，只是暂时拿不到 —— 静默丢弃声明比明确拒绝更糟。
@@ -266,6 +268,7 @@ export const PERMISSION_READY: ReadonlySet<Permission> = new Set<Permission>([
   "clipboard:write",
   "system:monitor",
   "network",
+  "media:control",
 ]);
 
 /** 这个权限是不是已经有桥方法了 */

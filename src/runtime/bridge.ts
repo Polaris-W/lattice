@@ -60,6 +60,14 @@ export interface BridgeContext {
   reply: (payload: BridgeResponseMessage) => void;
   /** 组件请求关闭自己 */
   close: () => void;
+  /**
+   * 桥调用的观察者（调试面板用）。
+   *
+   * 放在每次调用的上下文里、而不是模块级的一个全局钩子：主窗口的画布上
+   * 同时挂着好几个实例，全局钩子只会剩下最后挂上去的那个，别的实例的调用
+   * 全记到它头上。挂在这里，谁发的请求就由谁的宿主记。
+   */
+  trace?: (entry: BridgeTrace) => void;
 }
 
 type Handler = (params: unknown, ctx: BridgeContext) => unknown | Promise<unknown>;
@@ -74,6 +82,23 @@ const methods = new Map<string, MethodSpec>();
 export function defineMethod(name: string, permission: Permission | null, handler: Handler): void {
   methods.set(name, { permission, handler });
 }
+
+/**
+ * 桥调用的观察者（调试面板用）。
+ *
+ * 做成注入的回调而不是直接 import 调试总线，是因为这个文件也被**组件作者**
+ * 当成协议文档读 —— 桥的职责是"收请求、查权限、回话"，记日志是平台自己的
+ * 事，不该混进来。
+ */
+export type BridgeTrace = {
+  method: string;
+  ok: boolean;
+  /** 失败时的错误码；成功时为空 */
+  code?: BridgeErrorCode;
+  ms: number;
+  /** 失败原因 */
+  text?: string;
+};
 
 export class BridgeError extends Error {
   constructor(
@@ -100,10 +125,19 @@ export async function handleBridgeRequest(
   message: BridgeRequestMessage,
   ctx: BridgeContext,
 ): Promise<void> {
+  const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
   const reply = (
     body: Pick<BridgeResponseMessage, "ok" | "result" | "error" | "code" | "permission">,
   ) => {
     ctx.reply({ [BRIDGE_TAG]: 1, type: "response", id: message.id, ...body });
+    // 记在回话之后：面板里的耗时是"组件真正等的那段"，不含之后的渲染
+    ctx.trace?.({
+      method: message.method,
+      ok: body.ok,
+      code: body.code,
+      text: body.error,
+      ms: Math.round(((typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt) * 10) / 10,
+    });
   };
 
   const spec = methods.get(message.method);
@@ -309,6 +343,34 @@ defineMethod("system.metrics", "system:monitor", async () => {
 defineMethod("window.close", null, (_params, ctx) => {
   ctx.close();
   return { ok: true };
+});
+
+/*
+ * 媒体控制：读当前播放、按一下播放/暂停、上一首/下一首。
+ *
+ * `media.get` 和 `media.control` 共用 `media:control` 一项权限 —— 读和按是
+ * 同一件事的两半：能读到"现在放的是谁的歌"，按一下的诱惑就在那儿了；拆成
+ * 两项只会让授权面板多一行，而用户没法凭一行字分清区别。
+ *
+ * 没有会话时 `media.get` 返回 `null`（不是错误）：桌面上没开播放器是正常状态，
+ * 组件该显示"没在放"，不该显示红字。
+ */
+defineMethod("media.get", "media:control", async () => {
+  if (!bridgeInTauri()) {
+    throw new BridgeError("internal", "media control is only available in the desktop app");
+  }
+  return await invoke("media_session");
+});
+
+defineMethod("media.control", "media:control", async (params) => {
+  const action = (params as { action?: unknown } | undefined)?.action;
+  if (typeof action !== "string") {
+    throw new BridgeError("bad_params", "media.control requires a string parameter \"action\"");
+  }
+  if (!bridgeInTauri()) {
+    throw new BridgeError("internal", "media control is only available in the desktop app");
+  }
+  return { ok: await invoke<boolean>("media_control", { action }) };
 });
 
 /**

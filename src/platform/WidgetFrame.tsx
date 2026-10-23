@@ -29,6 +29,7 @@ import {
   type WidgetErrorReport,
 } from "../runtime/diagnostics";
 import { isTauri, type WidgetRecord } from "../runtime/registry";
+import { isWidgetLog, trace } from "../runtime/debug";
 import { WidgetIconMark } from "./icons";
 import { snap, useLattice, type Placement } from "./store";
 
@@ -151,6 +152,24 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
         return;
       }
 
+      /*
+       * 组件的 console。画布这一份和桌面窗口那一份由同一段注入脚本转发，
+       * 所以这里也要收 —— 否则"在设计态里调组件"反而看不到它的日志。
+       */
+      if (isWidgetLog(data)) {
+        const level = String((data.payload as { level?: unknown })?.level ?? "log");
+        trace({
+          kind: "log",
+          widgetId: record.manifest.id,
+          instanceId: placement.instanceId,
+          name: level,
+          ok: level !== "error",
+          ms: 0,
+          text: String((data.payload as { text?: unknown })?.text ?? ""),
+        });
+        return;
+      }
+
       if (data && data[BRIDGE_TAG] === 1 && data.type === "ready") {
         post({ [BRIDGE_TAG]: 1, type: "theme", payload: readThemeTokens() });
         return;
@@ -171,6 +190,17 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
           post(payload);
         },
         close: () => remove(placement.instanceId),
+        trace: (entry) => {
+          trace({
+            kind: "call",
+            widgetId: record.manifest.id,
+            instanceId: placement.instanceId,
+            name: entry.method,
+            ok: entry.ok,
+            ms: entry.ms,
+            text: entry.text ?? entry.code ?? "",
+          });
+        },
       });
     };
 

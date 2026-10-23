@@ -78,19 +78,30 @@ pub fn widgets_dir(app: AppHandle) -> Result<String, String> {
     Ok(user_widgets_dir(&app)?.display().to_string())
 }
 
-/// 从任意目录安装一个组件：校验 id 合法 → 递归复制到用户组件目录
+/// 装一个组件。`source` 可以是**目录**（拖一个文件夹进来），也可以是
+/// **`.lattice` 包**（`scripts/pack-widget.mjs` 打出来的 ZIP）。
+///
+/// 两条路的共同点：id 从清单里读、只允许小写字母数字点连字符、装到
+/// `%APPDATA%\...\widgets\<id>`。区别只在"文件怎么搬过去"。
 #[tauri::command]
-pub fn install_widget(app: AppHandle, source_dir: String) -> Result<String, String> {
+pub fn install_widget(app: AppHandle, source: String) -> Result<String, String> {
     // 拷贝期间把文件监听压住：几十个文件会各报一次变化，
     // 而装完之后前端本来就会自己重扫一遍清单
     let _quiet = crate::watch::Suppress::new();
 
-    let source = PathBuf::from(&source_dir);
-    if !source.is_dir() {
-        return Err(format!("folder does not exist: {source_dir}"));
+    let path = PathBuf::from(&source);
+    if !path.exists() {
+        return Err(format!("no such file or folder: {source}"));
     }
 
-    let manifest_text = fs::read_to_string(source.join("manifest.json"))
+    if path.is_file() {
+        return install_package(&app, &path);
+    }
+    if !path.is_dir() {
+        return Err(format!("Not a widget folder: {source}"));
+    }
+
+    let manifest_text = fs::read_to_string(path.join("manifest.json"))
         // 「不是组件目录」这几个字前端会认：拖进来的可能只是随便一个文件夹，
         // 那种情况不该弹一屏红字
         .map_err(|error| format!("Not a widget folder: cannot read manifest.json ({error})"))?;
@@ -115,9 +126,28 @@ pub fn install_widget(app: AppHandle, source_dir: String) -> Result<String, Stri
     if target.exists() {
         fs::remove_dir_all(&target).map_err(|error| format!("failed to replace the previous version: {error}"))?;
     }
-    copy_dir(&source, &target)?;
+    copy_dir(&path, &target)?;
 
     Ok(id.to_string())
+}
+
+/// 从 `.lattice` 包装：读文件 → 交给 `package::extract`。
+///
+/// 拖进来的普通文件（一张图、一个别的 zip）不该弹红字，所以非 ZIP 一律回
+/// "Not a widget folder" 那句哨兵 —— 前端认它，静默跳过。
+fn install_package(app: &AppHandle, path: &Path) -> Result<String, String> {
+    let archive = fs::read(path).map_err(|error| format!("could not read the package: {error}"))?;
+
+    // 不靠扩展名判断：`.lattice` 只是个约定，真正决定能不能装的是 ZIP 的本地头
+    if !archive.starts_with(b"PK\x03\x04") {
+        return Err(format!(
+            "Not a widget folder: {} is not a .lattice package",
+            path.display()
+        ));
+    }
+
+    // id 在包里的清单上，所以落哪个目录由 `extract` 自己决定
+    crate::package::extract(&archive, &user_widgets_dir(app)?)
 }
 
 #[tauri::command]

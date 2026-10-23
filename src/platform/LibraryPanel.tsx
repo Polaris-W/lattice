@@ -281,7 +281,7 @@ export function LibraryPanel({
           <div className="lattice-lib-note">
             <p className="lattice-lib-note-title">No widgets at all</p>
             <p className="lattice-hint">
-              Drag a widget folder from Explorer into this window to install it.
+              Drag a widget folder or a <code>.lattice</code> package from Explorer into this window to install it.
             </p>
           </div>
         )}
@@ -353,7 +353,7 @@ export function LibraryPanel({
         )}
 
         <p className="lattice-lib-drop">
-          Drop a widget folder anywhere in this window to install it.
+          Drop a widget folder or a .lattice package anywhere in this window to install it.
         </p>
       </div>
     </aside>

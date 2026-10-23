@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>sdk test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+      iframe {
+        width: 260px;
+        height: 120px;
+        border: 1px solid #333;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <iframe id="child"></iframe>
+    <script type="module">
+      /*
+       * @lattice/sdk 的契约。
+       *
+       * 这一页钉的是"组件作者依赖的那些行为"，不是 SDK 的内部实现：
+       *   - `await ready` 之后配置和主题已经就位（第一次渲染就是对的）
+       *   - 失败的调用一律 reject 一个带 `code` 的 LatticeError，不是裸 Error
+       *   - 宿主推来的 theme / config-changed / tick / store-changed 都能收到
+       *   - 心跳返回 `{ id, stop }`，stop 之后不再触发
+       *   - 宿主不在了（顶层窗口）时立刻失败，不会干等三秒
+       *
+       * 为什么要专门测这些：SDK 是**唯一**一份组件作者会拷进自己目录的代码，
+       * 它出错的表现是"某个组件偶尔不刷新"，从组件那边完全看不出来原因。
+       *
+       * 假宿主就写在下面：它按 WIDGET_SPEC 的消息格式回话，别的什么都不做。
+       */
+
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const eq = (actual, expected, text) =>
+        log(
+          JSON.stringify(actual) === JSON.stringify(expected),
+          `${text}（得到 ${JSON.stringify(actual)}）`,
+        );
+
+      /**
+       * 等一个条件成立，最多等 timeout 毫秒。
+       *
+       * 用于**跨窗口**的消息：`postMessage` 是一条宏任务，而 `await` 一个
+       * 子窗口的 promise 只排微任务 —— 微任务先跑完，所以"子页面已经发了
+       * ready"不代表"父页面的监听器已经收到"。直接断言会偶发失败（实测在
+       * 整套测试一起跑、机器忙的时候漏过一次）。
+       */
+      async function waitFor(predicate, timeout = 1000) {
+        const deadline = Date.now() + timeout;
+        while (Date.now() < deadline) {
+          if (predicate()) return true;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return predicate();
+      }
+
+      // ---------------------------------------------------------------------
+      // 假宿主
+      // ---------------------------------------------------------------------
+
+      const received = [];
+      const store = {};
+      const timers = [];
+      let timerSeq = 0;
+      let readyCount = 0;
+      let child = null;
+
+      function reply(source, id, body) {
+        source.postMessage({ __lattice: 1, type: "response", id, ...body }, "*");
+      }
+
+      window.addEventListener("message", (event) => {
+        const data = event.data;
+        if (!data || typeof data !== "object" || data.__lattice !== 1) return;
+
+        if (data.type === "ready") {
+          readyCount += 1;
+          return;
+        }
+        if (data.type !== "request") return;
+
+        received.push({ method: data.method, params: data.params });
+        const { id, method, params } = data;
+        const source = event.source;
+
+        switch (method) {
+          case "config.get":
+            reply(source, id, { ok: true, result: { hour12: true, showSeconds: false } });
+            return;
+          case "theme.get":
+            reply(source, id, {
+              ok: true,
+              result: { "--lattice-text": "rgb(238, 238, 238)", "--lattice-surface": "rgb(17, 17, 17)" },
+            });
+            return;
+          case "clock.now":
+            reply(source, id, { ok: true, result: { epochMs: 1700000000000, timeZone: "UTC" } });
+            return;
+          case "storage.set":
+            store[params.key] = params.value;
+            reply(source, id, { ok: true, result: { ok: true } });
+            return;
+          case "storage.get":
+            reply(source, id, { ok: true, result: params.key in store ? store[params.key] : null });
+            return;
+          case "storage.remove":
+            delete store[params.key];
+            reply(source, id, { ok: true, result: { ok: true } });
+            return;
+          case "schedule.every": {
+            const grant = { id: ++timerSeq };
+            timers.push(grant.id);
+            reply(source, id, { ok: true, result: grant });
+            return;
+          }
+          case "schedule.clear":
+            reply(source, id, { ok: true, result: { ok: true } });
+            return;
+          case "window.close":
+            // 真宿主会关掉这个窗口；假宿主只回 ok，后面还有断言要跑
+            reply(source, id, { ok: true, result: { ok: true } });
+            return;
+          case "network.fetch":
+            reply(source, id, {
+              ok: true,
+              result: { status: 200, ok: true, headers: [], body: "{}", truncated: false },
+            });
+            return;
+          case "media.get":
+            reply(source, id, { ok: true, result: null });
+            return;
+          case "permission.check":
+            reply(source, id, {
+              ok: false,
+              code: "permission_denied",
+              error: "permission not granted: storage",
+              permission: "storage",
+            });
+            return;
+          case "never.answers":
+            // 故意不回：验超时
+            return;
+          default:
+            reply(source, id, { ok: false, code: "unknown_method", error: `unknown method ${method}` });
+            return;
+        }
+      });
+
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      // ---------------------------------------------------------------------
+      // 启动子页面，等它加载完
+      // ---------------------------------------------------------------------
+
+      const frame = document.getElementById("child");
+      frame.src = "/tests/sdk-child.html";
+      // 等子页面把 SDK 装好；加个上限，免得子页面挂了这一页也跟着挂住
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        if (frame.contentWindow && frame.contentWindow.__childLoaded) break;
+        await wait(20);
+      }
+      if (!frame.contentWindow || !frame.contentWindow.__childLoaded) {
+        log(false, "子页面没有加载完成（后面的断言无从谈起）");
+        document.getElementById("out").innerHTML = lines
+          .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+          .join("\n");
+        window.__done = true;
+        throw new Error("sdk child never loaded");
+      }
+      child = frame.contentWindow;
+      const sdk = child.__sdk;
+
+      // ---- 1. 启动 ----
+      await sdk.ready;
+      eq(sdk.hosted, true, "在宿主里 hosted 为 true");
+      eq(sdk.config, { hour12: true, showSeconds: false }, "await ready 之后配置已就位");
+      eq(
+        child.document.documentElement.style.getPropertyValue("--lattice-text"),
+        "rgb(238, 238, 238)",
+        "主题长名 --lattice-text 写进了 CSS 变量",
+      );
+      eq(
+        child.document.documentElement.style.getPropertyValue("--fg"),
+        "rgb(238, 238, 238)",
+        "主题短名 --fg 也写了一份（组件可以直接用 var(--fg)）",
+      );
+      log(await waitFor(() => readyCount >= 1), "启动时向宿主报了一次 ready（宿主据此推主题和配置）");
+
+      // ---- 2. 请求 / 响应配对 ----
+      const now = await sdk.now();
+      eq(now.epochMs, 1700000000000, "sdk.now() 拿到宿主的结果");
+      log(
+        received.some((entry) => entry.method === "clock.now"),
+        "宿主确实收到了 clock.now 这条请求",
+      );
+
+      // ---- 3. 错误形状 ----
+      let unknown = null;
+      try {
+        await sdk.call("does.not.exist");
+      } catch (error) {
+        unknown = error;
+      }
+      eq(unknown && unknown.code, "unknown_method", "未知方法 -> code 为 unknown_method");
+      log(unknown instanceof child.__sdkApi.LatticeError, "错误是 LatticeError 实例，不是裸 Error");
+
+      let denied = null;
+      try {
+        await sdk.call("permission.check");
+      } catch (error) {
+        denied = error;
+      }
+      eq(denied && denied.code, "permission_denied", "未授权 -> code 为 permission_denied");
+      eq(denied && denied.permission, "storage", "未授权时带上缺的是哪一项权限");
+      eq(child.__sdkApi.isPermissionDenied(denied), true, "isPermissionDenied 认得它");
+      eq(child.__sdkApi.isPermissionDenied(unknown), false, "isPermissionDenied 不误判别的错误");
+
+      // ---- 4. 存储 ----
+      await sdk.storage.set("note", "hello");
+      eq(await sdk.storage.get("note"), "hello", "storage 写入后读得回来");
+      await sdk.storage.remove("note");
+      eq(await sdk.storage.get("note"), null, "storage.remove 之后读到 null");
+
+      const storeKeys = [];
+      const offStore = sdk.storage.onChange((key) => storeKeys.push(key));
+      frame.contentWindow.postMessage({ __lattice: 1, type: "store-changed", payload: { key: "note" } }, "*");
+      await wait(30);
+      eq(storeKeys, ["note"], "store-changed 推到 storage.onChange");
+      offStore();
+      frame.contentWindow.postMessage({ __lattice: 1, type: "store-changed", payload: { key: "other" } }, "*");
+      await wait(30);
+      eq(storeKeys, ["note"], "off() 之后不再收到推送");
+
+      // ---- 5. 配置与主题推送 ----
+      const configs = [];
+      sdk.on("config", (value) => configs.push(value));
+      frame.contentWindow.postMessage(
+        { __lattice: 1, type: "config-changed", payload: { config: { hour12: false } } },
+        "*",
+      );
+      await wait(30);
+      eq(configs.length, 1, "config-changed 推到 on(\"config\")");
+      eq(sdk.config, { hour12: false }, "推送之后 sdk.config 换成新值");
+
+      const themes = [];
+      sdk.on("theme", (tokens) => themes.push(tokens));
+      frame.contentWindow.postMessage(
+        { __lattice: 1, type: "theme", payload: { "--lattice-text": "rgb(1, 2, 3)" } },
+        "*",
+      );
+      await wait(30);
+      eq(themes.length, 1, "theme 推到 on(\"theme\")");
+      eq(
+        child.document.documentElement.style.getPropertyValue("--fg"),
+        "rgb(1, 2, 3)",
+        "推送的主题当场写到 CSS 变量上",
+      );
+
+      // ---- 6. 心跳 ----
+      const ticks = [];
+      const timer = await sdk.schedule.every(1000, (payload) => ticks.push(payload.id));
+      eq(typeof timer.id, "number", "schedule.every 返回宿主分配的订阅号");
+      frame.contentWindow.postMessage({ __lattice: 1, type: "tick", payload: { id: timer.id, at: 1 } }, "*");
+      await wait(30);
+      eq(ticks, [timer.id], "收到自己那条心跳");
+      frame.contentWindow.postMessage({ __lattice: 1, type: "tick", payload: { id: timer.id + 99 } }, "*");
+      await wait(30);
+      eq(ticks, [timer.id], "别的订阅号的心跳不会触发自己的回调");
+      await timer.stop();
+      frame.contentWindow.postMessage({ __lattice: 1, type: "tick", payload: { id: timer.id } }, "*");
+      await wait(30);
+      eq(ticks, [timer.id], "stop() 之后不再触发");
+      log(
+        received.some((entry) => entry.method === "schedule.clear"),
+        "stop() 会让宿主把这条订阅清掉",
+      );
+
+      // ---- 7. 透传类方法 ----
+      const net = await sdk.network.fetch({ url: "https://example.com/x", headers: { accept: "application/json" } });
+      eq(net.status, 200, "network.fetch 把结果原样交回");
+      const sentHeaders = received.filter((entry) => entry.method === "network.fetch").pop();
+      eq(
+        sentHeaders && sentHeaders.params.headers,
+        { accept: "application/json" },
+        "network.fetch 把 headers 当普通对象传下去",
+      );
+      eq(await sdk.media.get(), null, "media.get 没有会话时返回 null（不是错误）");
+
+      // ---- 8. 超时 ----
+      const short = child.__createLattice({ timeout: 60, bootTimeout: 60 });
+      let timedOut = null;
+      try {
+        await short.call("never.answers");
+      } catch (error) {
+        timedOut = error;
+      }
+      log(
+        Boolean(timedOut) && /timed out/.test(timedOut.message),
+        "宿主不回话时按 timeout 拒绝（而不是永远挂着）",
+      );
+
+      // ---- 9. 不在宿主里 ----
+      // 父页面自己的 window.parent === window，所以这份 hosted 为 false
+      const { createLattice } = await import("/packages/sdk/lattice.js");
+      const detached = createLattice({ bootTimeout: 50 });
+      eq(detached.hosted, false, "顶层窗口里 hosted 为 false");
+      let detachedError = null;
+      try {
+        await detached.call("clock.now");
+      } catch (error) {
+        detachedError = error;
+      }
+      log(
+        Boolean(detachedError) && detachedError.code === "internal",
+        "不在宿主里时调用立刻失败，不干等超时",
+      );
+      await detached.ready;
+
+      // ---- 10. 监听器互不影响 ----
+      const hits = [];
+      sdk.on("theme", () => {
+        throw new Error("listener blew up");
+      });
+      sdk.on("theme", () => hits.push("second"));
+      frame.contentWindow.postMessage({ __lattice: 1, type: "theme", payload: { "--lattice-text": "rgb(9, 9, 9)" } }, "*");
+      await wait(30);
+      eq(hits, ["second"], "一个监听器抛错不影响其它监听器");
+
+      // ---- 11. 收尾 ----
+      await sdk.close();
+      log(
+        received.some((entry) => entry.method === "window.close"),
+        "sdk.close() 走 window.close 桥方法（只关窗口，不删 placement）",
+      );
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>

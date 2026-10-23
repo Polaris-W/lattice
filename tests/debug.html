@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>debug bus test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      /*
+       * 调试面板的数据总线。
+       *
+       * 这页钉六件事：
+       *   1. `isWidgetLog` 只认日志那一款，别把桥请求和错误上报认成日志
+       *   2. 环形缓冲真的封顶（400 条），且丢的是最老的
+       *   3. 订阅 / 退订；一个订阅者抛异常不该带走别的订阅者
+       *   4. `ingest` 收别窗口发来的一批，坏数据整条丢掉而不是记成垃圾行
+       *   5. `clear()` 清空并通知
+       *   6. 桥的 tracer 真的被调到，且带对 method / ok / code / 耗时
+       *
+       * 镜像（`enableMirror` + `emit`）在浏览器里发不出去 —— 动态 import 找不到
+       * 裸模块名会抛，被 try/catch 吃掉。这里就验证"发不出去也不能崩、不能丢
+       * 已经记下的记录"，那正是 `npm run dev` 里的真实情形。
+       */
+      import {
+        clear,
+        enableMirror,
+        filterRecords,
+        ingest,
+        isWidgetLog,
+        snapshot,
+        subscribe,
+        summarize,
+        trace,
+      } from "/src/runtime/debug.ts";
+      import { handleBridgeRequest } from "/src/runtime/bridge.ts";
+
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+
+      const record = (over = {}) => ({
+        kind: "call",
+        widgetId: "demo.clock",
+        instanceId: "demo.clock#1",
+        name: "clock.now",
+        ok: true,
+        ms: 1,
+        text: "",
+        ...over,
+      });
+
+      // ---- 1. isWidgetLog ----
+      {
+        log(isWidgetLog({ __lattice: 1, type: "log", payload: { level: "log" } }), "isWidgetLog accepts a log");
+        log(
+          !isWidgetLog({ __lattice: 1, type: "request", id: 1, method: "clock.now" }),
+          "isWidgetLog rejects a bridge request",
+        );
+        log(!isWidgetLog({ type: "log" }), "isWidgetLog rejects a message without the bridge tag");
+        log(!isWidgetLog(null), "isWidgetLog rejects null");
+        log(!isWidgetLog("log"), "isWidgetLog rejects a bare string");
+        // 错误上报走的是另一个标记，别被这里吞掉
+        log(
+          !isWidgetLog({ __lattice_diag: 1, kind: "error", message: "boom" }),
+          "isWidgetLog leaves error reports alone",
+        );
+      }
+
+      // ---- 2. 环形缓冲封顶 ----
+      {
+        clear();
+        for (let i = 0; i < 450; i += 1) trace(record({ name: `call.${i}` }));
+        const kept = snapshot();
+        log(kept.length === 400, `ring buffer caps at 400 (got ${kept.length})`);
+        // 丢掉的是最老的 50 条：第一条应该是 call.50
+        log(kept[0].name === "call.50", `oldest records dropped first (first is ${kept[0].name})`);
+        log(kept[399].name === "call.449", "newest record kept");
+      }
+
+      // ---- 3. 订阅 / 退订 / 一个坏订阅者 ----
+      {
+        clear();
+        let hits = 0;
+        const stop = subscribe(() => {
+          hits += 1;
+        });
+        trace(record());
+        log(hits === 1, `subscriber notified (${hits})`);
+        stop();
+        trace(record());
+        log(hits === 1, "unsubscribe stops notifications");
+
+        // 抛异常的那个订阅者排在最前：后面那个必须照收
+        let second = 0;
+        const stopBad = subscribe(() => {
+          throw new Error("panel blew up");
+        });
+        const stopGood = subscribe(() => {
+          second += 1;
+        });
+        let threw = false;
+        try {
+          trace(record());
+        } catch {
+          threw = true;
+        }
+        log(!threw, "a throwing subscriber does not propagate");
+        log(second === 1, "other subscribers still notified");
+        stopBad();
+        stopGood();
+      }
+
+      // ---- 4. ingest 校验 ----
+      {
+        clear();
+        let notified = 0;
+        const stop = subscribe(() => {
+          notified += 1;
+        });
+
+        ingest([{ ...record({ name: "ingested" }), at: 1700000000000 }]);
+        log(snapshot().length === 1, `ingest appends a well-formed record (${snapshot().length})`);
+        log(notified === 1, "ingest notifies once for a batch");
+
+        ingest([{ name: "no timestamp" }, { at: 1 }, null, "nope", 42]);
+        log(snapshot().length === 1, `ingest drops malformed entries (${snapshot().length})`);
+
+        ingest("not an array");
+        ingest({ ...record(), at: 1 });
+        log(snapshot().length === 1, "ingest ignores a non-array payload");
+        log(notified === 1, "a rejected batch does not notify");
+
+        // 一批里混着好数据和坏数据：好的照收
+        ingest([{ junk: true }, { ...record({ name: "half" }), at: 1700000000001 }]);
+        log(snapshot().length === 2, "a mixed batch keeps the good entries");
+        stop();
+      }
+
+      // ---- 5. clear ----
+      {
+        clear();
+        trace(record());
+        let seen = -1;
+        const stop = subscribe((records) => {
+          seen = records.length;
+        });
+        clear();
+        log(snapshot().length === 0, "clear empties the buffer");
+        log(seen === 0, "clear notifies subscribers");
+        stop();
+      }
+
+      // ---- 6. 镜像发不出去也不能崩 ----
+      {
+        clear();
+        enableMirror();
+        let threw = false;
+        try {
+          trace(record({ name: "mirrored" }));
+        } catch {
+          threw = true;
+        }
+        log(!threw, "mirror without a Tauri event channel does not throw");
+        log(snapshot().length === 1, "the record is still kept locally");
+      }
+
+      // ---- 7. 桥的 tracer ----
+      {
+        clear();
+
+        /** 走一遍桥，把宿主回话和 tracer 记录都收下来 */
+        async function ask(method, granted = []) {
+          const traces = [];
+          const replies = [];
+          await handleBridgeRequest(
+            { __lattice: 1, type: "request", id: 1, method },
+            {
+              instanceId: "demo.clock#1",
+              widgetId: "demo.clock",
+              granted: new Set(granted),
+              config: {},
+              schedule: { every: () => 0, clear: () => {}, reset: () => {} },
+              reply: (payload) => replies.push(payload),
+              trace: (entry) => traces.push(entry),
+            },
+          );
+          return { reply: replies[0], trace: traces[0] };
+        }
+
+        const unknown = await ask("does.not.exist");
+        log(unknown.reply.ok === false && unknown.reply.code === "unknown_method", "unknown method rejected");
+        log(unknown.trace?.method === "does.not.exist", "tracer sees the method name");
+        log(unknown.trace?.ok === false && unknown.trace?.code === "unknown_method", "tracer carries the error code");
+        log(typeof unknown.trace?.ms === "number" && unknown.trace.ms >= 0, "tracer carries a non-negative duration");
+        log(unknown.trace?.text?.includes("unknown method"), "tracer carries the failure text");
+
+        const denied = await ask("media.get", []);
+        log(denied.reply.code === "permission_denied", "media.get needs media:control");
+        log(denied.trace?.code === "permission_denied", "tracer records the denial");
+
+        // 没有 tracer 的宿主不该因此报错（老宿主页 / 别的地方复用桥）
+        let threw = false;
+        try {
+          await handleBridgeRequest(
+            { __lattice: 1, type: "request", id: 2, method: "does.not.exist" },
+            {
+              instanceId: "x",
+              widgetId: "x",
+              granted: new Set(),
+              config: {},
+              schedule: { every: () => 0, clear: () => {}, reset: () => {} },
+              reply: () => {},
+            },
+          );
+        } catch {
+          threw = true;
+        }
+        log(!threw, "a host without a tracer still works");
+      }
+
+      // ---- 8. 面板的过滤与统计 ----
+      {
+        const rows = [
+          { at: 1, kind: "call", widgetId: "demo.clock", instanceId: "demo.clock#1", name: "clock.now", ok: true, ms: 1, text: "" },
+          { at: 2, kind: "call", widgetId: "demo.clock", instanceId: "demo.clock#1", name: "storage.get", ok: false, ms: 2, text: "permission not granted: storage" },
+          { at: 3, kind: "log", widgetId: "demo.note", instanceId: "demo.note#1", name: "warn", ok: true, ms: 0, text: "draft is empty" },
+          { at: 4, kind: "log", widgetId: "demo.note", instanceId: "demo.note#1", name: "error", ok: false, ms: 0, text: "boom" },
+        ];
+        const count = (filter) => filterRecords(rows, filter).length;
+
+        log(count({ mode: "all", onlyFailures: false, query: "" }) === 4, "不过滤时全都在");
+        log(count({ mode: "call", onlyFailures: false, query: "" }) === 2, "只看桥调用");
+        log(count({ mode: "log", onlyFailures: false, query: "" }) === 2, "只看 console");
+        log(count({ mode: "all", onlyFailures: true, query: "" }) === 2, "只看失败");
+
+        // 过滤是叠加的，不是各管各的
+        log(count({ mode: "call", onlyFailures: true, query: "" }) === 1, "调用 + 失败一起生效");
+
+        // 查询打方法名、组件 id、正文，且大小写不敏感
+        log(count({ mode: "all", onlyFailures: false, query: "STORAGE" }) === 1, "按方法名搜（大小写不敏感）");
+        log(count({ mode: "all", onlyFailures: false, query: "demo.note" }) === 2, "按组件 id 搜");
+        log(count({ mode: "all", onlyFailures: false, query: "draft" }) === 1, "按正文搜");
+        log(count({ mode: "all", onlyFailures: false, query: "   " }) === 4, "空白查询等于不筛");
+        log(count({ mode: "all", onlyFailures: false, query: "nothing-matches" }) === 0, "搜不到就是空");
+
+        const stats = summarize(rows);
+        log(stats.calls === 2 && stats.logs === 2 && stats.failures === 2, `统计对得上（${JSON.stringify(stats)}）`);
+        log(summarize([]).calls === 0 && summarize([]).logs === 0, "空列表统计是 0 不是 NaN");
+      }
+
+      const failed = lines.filter((line) => line.startsWith("FAIL")).length;
+      // 每行单独一个 span：跑测试的脚本按 `>PASS` 数条数，挤在一个 textContent 里只数得到第一行
+      document.getElementById("out").innerHTML =
+        `<span class="${failed === 0 ? "ok" : "bad"}">pass=${lines.length - failed} fail=${failed}</span>\n` +
+        lines
+          .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+          .join("\n");
+      window.__done = true;
+      window.__result = { pass: lines.length - failed, fail: failed, lines };
+    </script>
+  </body>
+</html>

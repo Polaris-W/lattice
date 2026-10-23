@@ -91,7 +91,15 @@
 
       // ---- 6. 权限已经可授权 ----
       log(isPermissionReady("network"), "network 已是可授权权限（桥上有 network.fetch）");
-      log(!isPermissionReady("media:control"), "media:control 还没做（留作对照）");
+      // v0.4 补上了 SMTC，六项权限至此全齐 —— 这条以前断言的是"还没做"，
+      // 现在反过来钉住它已经可授权（清单里声明 media:control 的组件能真的用上）
+      log(isPermissionReady("media:control"), "media:control 已可授权（桥上有 media.get / media.control）");
+      log(
+        ["clock", "storage", "clipboard:write", "network", "system:monitor", "media:control"].every(
+          (name) => isPermissionReady(name),
+        ),
+        "六项权限全部可授权",
+      );
 
       document.getElementById("out").innerHTML = lines
         .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)

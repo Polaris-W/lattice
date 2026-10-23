@@ -37,6 +37,7 @@ import {
   isBridgeRequest,
   readThemeTokens,
 } from "./runtime/bridge";
+import { enableMirror, isWidgetLog, trace } from "./runtime/debug";
 import { createScheduler } from "./runtime/schedule";
 import { fitAnchor, type FitOptions, type ScreenBox } from "./runtime/screen-fit";
 import type { ConfigValues } from "./runtime/config";
@@ -868,6 +869,18 @@ async function boot() {
   applyTheme(config.theme);
 
   /*
+   * 调试面板的供料端。
+   *
+   * 桌面窗口和主窗口是两个 webview：组件的日志、桥的每次调用都发生在这里，
+   * 而面板画在主窗口里。`enableMirror()` 让之后的记录攒批 `emit` 出去，
+   * 主窗口那边订阅同一个事件名收下。
+   *
+   * 必须在拿到 config 之后开 —— 记录里要带 widgetId / instanceId，面板靠它
+   * 区分"这条是谁的"。开早了只能记成空字符串。
+   */
+  enableMirror();
+
+  /*
    * 底板三层，从下往上：
    *   canvas  壁纸（模糊半径由 CSS filter 给，脚本只管截）
    *   veil    底色 rgba(tint, alpha)
@@ -983,6 +996,24 @@ async function boot() {
       return;
     }
 
+    /*
+     * 组件的 console（同一段注入脚本转发过来的）。同样排桥分支之前：
+     * 它带 `__lattice` 标记，但不是请求。
+     */
+    if (isWidgetLog(data)) {
+      const level = String((data.payload as { level?: unknown })?.level ?? "log");
+      trace({
+        kind: "log",
+        widgetId: config.widgetId,
+        instanceId: config.instanceId,
+        name: level,
+        ok: level !== "error",
+        ms: 0,
+        text: String((data.payload as { text?: unknown })?.text ?? ""),
+      });
+      return;
+    }
+
     if (data && data[BRIDGE_TAG] === 1 && data.type === "ready") {
       post({ [BRIDGE_TAG]: 1, type: "theme", payload: readThemeTokens() });
       post({ [BRIDGE_TAG]: 1, type: "config-changed", payload: { config: instanceConfig } });
@@ -1000,6 +1031,17 @@ async function boot() {
       close: () => {
         // 组件自己要退出：关窗口，但不删用户的 placement
         void invoke("widget_close", { reason: "widget" });
+      },
+      trace: (entry) => {
+        trace({
+          kind: "call",
+          widgetId: config.widgetId,
+          instanceId: config.instanceId,
+          name: entry.method,
+          ok: entry.ok,
+          ms: entry.ms,
+          text: entry.text ?? entry.code ?? "",
+        });
       },
     });
   });

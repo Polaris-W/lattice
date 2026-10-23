@@ -28,9 +28,12 @@
  *   - 一共最多 12 条，报满了就闭嘴 —— 这是给人看的提示，不是日志管道
  *   - 消息截断到 400 字、堆栈 1400 字，别把 postMessage 撑爆
  *   - `capture: true` 是必须的：资源加载失败（img / link）不冒泡
+ *   - 除了报错，这里还负责把 console 转发给宿主（调试面板的"实时日志"），
+ *     因为组件窗口的 console 在 dev 下根本不出现在终端里
  *
  * 消息标记 `__lattice_diag` 和 `src/runtime/diagnostics.ts` 里的 `REPORT_TAG`
- * 必须一致 —— 那边是唯一的读者。
+ * 必须一致 —— 那边是唯一的读者。日志走的是桥那条通道（`__lattice` 加
+ * `type: "log"`），两个宿主都要认。
  */
 (function () {
   "use strict";
@@ -81,5 +84,69 @@
     var reason = event.reason;
     var message = reason && reason.message ? reason.message : String(reason);
     send("promise", "Unhandled rejection: " + message, "", reason && reason.stack);
+  });
+
+  /*
+   * 把 console 转发给宿主（调试面板的"实时日志"）。
+   *
+   * 组件窗口的 console 在 vite dev 下**不会**出现在终端里，WebView2 的
+   * devtools 又要单独开远程调试端口 —— 作者写一句 console.log 之后基本
+   * 无从确认它有没有跑。所以在这里包一层。
+   *
+   * 三条限制都是为了"别把桥淹掉"：
+   *   - 每秒最多 40 条（渲染循环里打日志一秒能刷几百条）
+   *   - 每条正文截到 300 字
+   *   - 只转 log / warn / error 三级；debug / table 之类不管
+   *
+   * 转发失败一律咽掉：日志转发不该影响组件自己的输出。
+   */
+  var LOG_LIMIT = 40;
+  var logSent = 0;
+  var logWindow = 0;
+
+  function describe(value) {
+    if (typeof value === "string") return value;
+    if (value instanceof Error) return value.message;
+    try {
+      var json = JSON.stringify(value);
+      return json === undefined ? String(value) : json;
+    } catch (error) {
+      return String(value);
+    }
+  }
+
+  function forward(level, args) {
+    var now = Date.now();
+    if (now - logWindow > 1000) {
+      logWindow = now;
+      logSent = 0;
+    }
+    if (logSent >= LOG_LIMIT) return;
+    logSent += 1;
+
+    var parts = [];
+    for (var index = 0; index < args.length && parts.length < 6; index += 1) {
+      parts.push(describe(args[index]));
+    }
+    try {
+      window.parent.postMessage(
+        { __lattice: 1, type: "log", payload: { level: level, text: parts.join(" ").slice(0, 300) } },
+        "*"
+      );
+    } catch (error) {
+      /* 父窗口没了就算了 */
+    }
+  }
+
+  ["log", "warn", "error"].forEach(function (level) {
+    var original = console[level];
+    console[level] = function () {
+      try {
+        forward(level, arguments);
+      } catch (error) {
+        /* 转发炸了也不能挡住下面那行原始输出 */
+      }
+      if (original) original.apply(console, arguments);
+    };
   });
 })();

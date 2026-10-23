@@ -11,6 +11,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Canvas } from "./platform/Canvas";
+import { DebugPanel } from "./platform/DebugPanel";
 import { InspectorPanel } from "./platform/InspectorPanel";
 import { LibraryPanel, type InstallNotice } from "./platform/LibraryPanel";
 import { buildSpecs, closeDesktop, minimizeMain, syncDesktop } from "./platform/desktop";
@@ -18,6 +19,7 @@ import { Glyph, ICON, ThemeGlyph } from "./platform/icons";
 import { SettingsMenu } from "./platform/SettingsMenu";
 import { nextFreeSlot, useLattice, type ThemeMode } from "./platform/store";
 import { isTauri, loadRegistry, type WidgetLoadError, type WidgetRecord } from "./runtime/registry";
+import { DEBUG_EVENT, ingest } from "./runtime/debug";
 import type { WidgetLayer } from "./runtime/manifest";
 
 /** 顶栏那颗按钮的循环顺序：浅色 → 深色 → 跟随系统 → 浅色 */
@@ -135,6 +137,49 @@ export default function App() {
    * 那时才值得占用户一行屏幕。
    */
   const [crash, setCrash] = useState<CrashEvent | null>(null);
+  /** 调试面板。不落盘：它是"看一眼就走"的工具，下次启动不必自动弹出来 */
+  const [debugOpen, setDebugOpen] = useState(false);
+
+  /*
+   * 桌面窗口发来的调试记录。
+   *
+   * 画布上那些实例的记录本来就在本进程里（`WidgetFrame` 直接写总线），这里
+   * 收的是**桌面窗口**那一份 —— 两个 webview 各自跑一套桥，只能靠事件汇合。
+   *
+   * 订阅放在这里而不是面板里：面板关着的时候也得收，不然打开面板只看得到
+   * 打开之后发生的事，而"组件刚启动时那几下调用"恰恰是最想看的。
+   */
+  useEffect(() => {
+    if (!isTauri()) return;
+    let dispose: (() => void) | undefined;
+    let disposed = false;
+
+    void listen<unknown>(DEBUG_EVENT, (event) => ingest(event.payload))
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else dispose = unlisten;
+      })
+      .catch(() => {
+        /* 事件通道不可用就当没有桌面窗口 —— 画布记录照常工作 */
+      });
+
+    return () => {
+      disposed = true;
+      dispose?.();
+    };
+  }, []);
+
+  // Ctrl+Shift+D 开关面板。组件窗口里的日志常常是"看一眼就走"，鼠标去顶栏太远
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || !event.shiftKey || event.altKey) return;
+      if (event.key.toLowerCase() !== "d") return;
+      event.preventDefault();
+      setDebugOpen((value) => !value);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   useEffect(() => {
     if (notice?.kind !== "ok") return;
@@ -428,7 +473,7 @@ export default function App() {
 
       for (const path of paths) {
         try {
-          const id = await invoke<string>("install_widget", { sourceDir: path });
+          const id = await invoke<string>("install_widget", { source: path });
           if (officialIds.has(id)) {
             await invoke("uninstall_widget", { id });
             failed.push(`"${id}" collides with a bundled widget id — rename it and try again`);
@@ -597,6 +642,16 @@ export default function App() {
 
           <button
             type="button"
+            className={`lattice-icon-btn is-large${debugOpen ? " is-active" : ""}`}
+            onClick={() => setDebugOpen((value) => !value)}
+            title="Debug panel — bridge calls and widget console (Ctrl+Shift+D)"
+            aria-label="Toggle debug panel"
+          >
+            <Glyph d={ICON.terminal} />
+          </button>
+
+          <button
+            type="button"
             className={`lattice-icon-btn is-large${loading ? " is-spinning" : ""}`}
             onClick={() => void refresh()}
             title="Rescan the widgets folder"
@@ -648,6 +703,12 @@ export default function App() {
       </main>
 
       {/*
+        调试面板浮在画布下沿，不占三栏的位置。开关它不会改变画布尺寸，
+        也就不会触发桌面窗口那套"尺寸变了重铺壁纸"的连锁反应。
+      */}
+      <DebugPanel open={debugOpen} onClose={() => setDebugOpen(false)} />
+
+      {/*
         删除是可以反悔的。
         两颗 ✕ 都是不可逆删除，而它们只有 22×22、还挂在会淡入的窗饰上 ——
         手滑一次用户的布局就少一块。删的时候 store 留了快照，这里弹 8 秒。
@@ -655,7 +716,7 @@ export default function App() {
         两条提示都塞进同一个底部容器：它们可能同时在场（删了一个、另一个正好崩了），
         各自 fixed 会叠在一起。
       */}
-      <div className="lattice-toasts">
+      <div className={`lattice-toasts${debugOpen ? " is-raised" : ""}`}>
         {/*
           连着崩了三次、Rust 那边已经不再自动重载的组件。
           这不是"提醒一下"：它的窗口现在是一块白板，不告诉用户就只能干看着。

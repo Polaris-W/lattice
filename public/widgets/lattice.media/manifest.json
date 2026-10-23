@@ -1,0 +1,33 @@
+{
+  "id": "lattice.media",
+  "name": "Now Playing",
+  "version": "0.1.0",
+  "description": "Whatever Windows is playing, with play/pause, previous and next — reads and controls the system media session",
+  "author": "Lattice",
+  "entry": "index.html",
+  "icon": "icon.svg",
+  "size": { "w": 268, "h": 148, "minW": 220, "minH": 132 },
+  "layer": "top",
+  "interactive": true,
+  "permissions": ["media:control"],
+  "config": [
+    {
+      "key": "showProgress",
+      "type": "toggle",
+      "label": "Show progress bar",
+      "default": true,
+      "help": "Off keeps just the title and the buttons — some players report no duration at all."
+    },
+    {
+      "key": "pollMs",
+      "type": "number",
+      "label": "Refresh interval",
+      "default": 2000,
+      "min": 1000,
+      "max": 10000,
+      "step": 500,
+      "help": "How often to ask Windows what is playing. App switches are caught on the next poll."
+    }
+  ],
+  "sdk": "^0.1"
+}

@@ -2212,3 +2212,233 @@ button.lattice-chip[aria-pressed="true"] {
     transform: translateY(0);
   }
 }
+
+/*
+ * ── 调试面板 ──────────────────────────────────────────────────────────────
+ *
+ * 浮在画布下沿的抽屉，高度固定：内容多就自己滚，不能让面板跟着记录长高 ——
+ * 那样每来一条日志画布就被顶一次，正在拖的组件会跳。
+ *
+ * 分层照旧：面板用 surface、表头用一条 border 隔开，只有"浮起来"的抽屉本身
+ * 加一层向上投的阴影（`--lattice-shadow-2` 是向下的，这里方向反过来写）。
+ */
+
+.lattice-debug {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  height: 248px;
+  border-top: 1px solid var(--lattice-border-strong);
+  background: var(--lattice-surface);
+  box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.14);
+  animation: lattice-debug-in 140ms ease-out;
+}
+
+@keyframes lattice-debug-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.lattice-debug-head {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px 7px 14px;
+  border-bottom: 1px solid var(--lattice-border);
+}
+
+.lattice-debug-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--lattice-text-muted);
+}
+
+.lattice-debug-stats {
+  font-size: 11px;
+  color: var(--lattice-text-faint);
+  white-space: nowrap;
+}
+
+.lattice-debug-stats b {
+  color: var(--lattice-text);
+  font-weight: 600;
+}
+
+.lattice-debug-stats b.is-bad {
+  color: var(--lattice-danger);
+}
+
+/* 三格分段：和设置菜单里的分段控件同一个形状，只是矮一号 */
+.lattice-debug-modes {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--lattice-border);
+  border-radius: 6px;
+  background: var(--lattice-bg);
+}
+
+.lattice-debug-mode {
+  padding: 2px 9px;
+  border: 0;
+  background: transparent;
+  color: var(--lattice-text-muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 18px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.lattice-debug-mode + .lattice-debug-mode {
+  border-left: 1px solid var(--lattice-border);
+}
+
+.lattice-debug-mode:hover {
+  color: var(--lattice-text);
+}
+
+.lattice-debug-mode.is-active {
+  background: var(--lattice-surface-3);
+  color: var(--lattice-text);
+}
+
+.lattice-debug-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--lattice-text-muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.lattice-debug-toggle input {
+  margin: 0;
+  accent-color: var(--lattice-accent);
+}
+
+.lattice-debug-search {
+  flex: 1 1 160px;
+  min-width: 120px;
+  height: 26px;
+  border-radius: 7px;
+}
+
+.lattice-debug-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 3px 0;
+  overflow-y: auto;
+  list-style: none;
+  font-family: var(--lattice-mono);
+  font-size: 11.5px;
+}
+
+/*
+ * 一行一条。列宽定死、最后一列吃满：记录滚动时各列不会左右跳 ——
+ * 那是表格最容易让人看错行的地方。
+ */
+.lattice-debug-row {
+  display: grid;
+  grid-template-columns: 82px 58px minmax(0, 132px) minmax(0, 148px) 50px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 1px 14px;
+  white-space: nowrap;
+}
+
+.lattice-debug-row:hover {
+  background: var(--lattice-surface-2);
+}
+
+/* 失败的一行左边压一条危险色，扫一眼就能数出有几条 */
+.lattice-debug-row.is-bad {
+  box-shadow: inset 2px 0 0 var(--lattice-danger);
+}
+
+.lattice-debug-time {
+  color: var(--lattice-text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.lattice-debug-kind {
+  overflow: hidden;
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--lattice-text-faint);
+  text-overflow: ellipsis;
+}
+
+/* 桥调用用强调色：它才是面板的主角，console 是配角 */
+.lattice-debug-kind.is-call {
+  color: var(--lattice-accent);
+}
+
+.lattice-debug-widget {
+  overflow: hidden;
+  color: var(--lattice-text-muted);
+  text-overflow: ellipsis;
+}
+
+.lattice-debug-name {
+  overflow: hidden;
+  color: var(--lattice-text);
+  text-overflow: ellipsis;
+}
+
+.lattice-debug-ms {
+  color: var(--lattice-text-faint);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.lattice-debug-text {
+  overflow: hidden;
+  color: var(--lattice-text-muted);
+  text-overflow: ellipsis;
+}
+
+.lattice-debug-row.is-bad .lattice-debug-text,
+.lattice-debug-row.is-bad .lattice-debug-name {
+  color: var(--lattice-danger);
+}
+
+.lattice-debug-empty {
+  margin: 0;
+  padding: 22px 16px;
+  color: var(--lattice-text-faint);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* 面板开着时把底部提示条抬到它上面，否则撤销条会被抽屉压住 */
+.lattice-toasts.is-raised {
+  bottom: 270px;
+}
+
+.lattice-toasts {
+  transition: bottom 140ms ease;
+}
+
+/* 顶栏那颗"开着的调试面板"：和 .lattice-btn.is-active 同一套强调色 */
+.lattice-icon-btn.is-large.is-active {
+  border-color: var(--lattice-accent);
+  background: var(--lattice-accent-soft);
+  color: var(--lattice-accent);
+}

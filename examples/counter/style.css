@@ -72,3 +72,16 @@ body {
 .counter-btn:active {
   transform: scale(0.97);
 }
+
+/* 存储没授权时的一句说明。平时是空的，所以不给它留高度 */
+.counter-hint {
+  margin: 6px 0 0;
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--muted);
+  text-align: center;
+}
+
+.counter-hint:empty {
+  display: none;
+}

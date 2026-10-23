@@ -1,0 +1,246 @@
+/*
+ * 正在播放
+ *
+ * 四条约束：
+ *   1. 顶上留 22px 给窗饰，右侧让出 120px。桌面窗口右上角那排图标浮在卡片上，
+ *      不留位置就会压在 "Now playing" 上 —— 这也是标题单独占一行的原因。
+ *   2. 曲名 / 歌手全部单行省略。ID3 标签的长度不可控，换行会把下面那排按钮顶出卡片。
+ *   3. 颜色只取 `--lattice-*` 令牌。底板变浅时平台会把令牌整体翻一遍。
+ *   4. 最小尺寸 220×132 是照着"进度条藏起来"那一档量的：少一行也放得下。
+ */
+
+:root {
+  --fg: #ecebe6;
+  --muted: #97978f;
+  --accent: #5dcaa5;
+  --border: rgba(255, 255, 255, 0.12);
+  --font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI",
+    "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.4;
+  overflow: hidden;
+}
+
+.mp {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 11px 12px 10px;
+  gap: 7px;
+}
+
+/* ---------- 标题栏（同时给窗饰让位） ---------- */
+
+.mp-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 22px;
+  /* 120px 是窗饰的实际占地，与系统监视器、待办保持一致 */
+  padding-right: 120px;
+}
+
+.mp-title {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ---------- 曲目 ---------- */
+
+.mp-track {
+  flex: none;
+  min-width: 0;
+}
+
+.mp-name {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * 歌手和来源抢一行：歌手先省略，来源（播放器名）短且固定，给它 flex: none
+ * 让它先拿到自己那点宽度。
+ */
+.mp-sub {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 1px 0 0;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.mp-artist {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mp-source {
+  flex: none;
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.75;
+  white-space: nowrap;
+}
+
+/* ---------- 进度 ---------- */
+
+.mp-progress {
+  flex: none;
+}
+
+/* 4px 高的槽：再细就点不准（虽然这里也不给点，但视觉上要能读出进度） */
+.mp-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.mp-bar i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.24s linear;
+}
+
+.mp-times {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* ---------- 控制 ---------- */
+
+/*
+ * 按钮推到最底下：卡片被拉高时，空出来的空间留在曲目和按钮之间，
+ * 而不是按钮下面 —— 后者会让人以为卡片没画完。
+ */
+.mp-controls {
+  display: flex;
+  flex: 1;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 10px;
+  min-height: 26px;
+}
+
+.mp-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease,
+    transform 0.06s ease;
+}
+
+.mp-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.mp-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.mp-btn:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.mp-btn:disabled {
+  opacity: 0.34;
+  cursor: default;
+}
+
+/* 中间那颗：实心强调色。它是"现在唯一想按的那颗" */
+.mp-btn.is-main {
+  width: 30px;
+  height: 30px;
+  border-color: transparent;
+  background: var(--accent);
+  color: #06231b;
+}
+
+.mp-btn.is-main:hover:not(:disabled) {
+  background: var(--accent);
+  color: #06231b;
+  filter: brightness(1.08);
+}
+
+.mp-btn.is-main svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ---------- 提示 ---------- */
+
+/*
+ * 绝对定位：权限提示是"额外说明"，不该把按钮往下挤 —— 那会让同一个组件在
+ * 有权限 / 没权限两种状态下布局不一致，看着像两个组件。
+ */
+.mp-hint {
+  position: absolute;
+  right: 12px;
+  bottom: 2px;
+  left: 12px;
+  margin: 0;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s ease;
+}
+
+.mp-hint.is-visible {
+  opacity: 1;
+}
+
+/* 有提示时给底栏让出一点位置，免得字压在按钮圆边上 */
+.mp-controls:has(~ .mp-hint.is-visible) {
+  padding-bottom: 11px;
+}

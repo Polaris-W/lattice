@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>debug panel test</title>
+    <style>
+      /*
+       * 面板自己带 `position: fixed; bottom: 0`，所以结果区放上面、留出底部
+       * 248px 给它 —— 这样一屏里既能看到断言结果，也能看到面板本身（截图用）。
+       */
+      body {
+        margin: 0;
+        background: #0d0d10;
+        color: #e9e8e3;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 14px 16px 260px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+      pre {
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <div id="panel"></div>
+    <script type="module" src="/tests/debug-panel.tsx"></script>
+  </body>
+</html>

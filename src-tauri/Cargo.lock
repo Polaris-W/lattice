@@ -1898,6 +1898,7 @@ dependencies = [
 name = "lattice"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "raw-window-handle",
  "serde",
  "serde_json",

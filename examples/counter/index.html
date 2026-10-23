@@ -10,7 +10,12 @@
       <p class="counter-label">Clicks today</p>
       <p class="counter-value" id="value">0</p>
       <button class="counter-btn" id="bump" type="button">+1</button>
+      <p class="counter-hint" id="hint"></p>
     </main>
-    <script src="widget.js"></script>
+    <!--
+      type="module"：SDK 是一个 ES 模块。组件仍然不需要任何构建步骤 ——
+      浏览器直接跑，`lattice.js` 就在同目录里。
+    -->
+    <script type="module" src="widget.js"></script>
   </body>
 </html>
