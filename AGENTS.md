@@ -71,6 +71,7 @@ src/
     widget-reporter.js    注入进组件文档的上报脚本（**唯一真源**，两条发文档的路都读它）
     schedule.ts           心跳时间轴：可见性取"与"、不可见停摆、回来补一拍
     screen-fit.ts         纯几何：锚点选屏、夹紧（入参一律物理像素，`tests/screen-fit.html` 钉着）
+    close-guard.ts        ✕ 该不该认这一下：指针序列 + 命中测试（纯函数，`tests/close-guard.html` 钉着）
     align-guides.ts       拖动时的对齐吸附：每条轴只挑一条获胜线，画布边界也是候选（纯函数，`tests/align-guides.html` 钉着）
     library-search.ts     组件库搜索：切词 + 单包命中判定（纯函数，`tests/library-search.html` 钉着）
     debug.ts              调试总线：环形缓冲 400 条、攒批镜像到主窗口、过滤 / 统计纯函数
@@ -109,7 +110,9 @@ src-tauri/src/
   autostart.rs            HKCU Run 注册表项：开机自启的读写与修复
   autostart_policy.rs     上面那道的纯逻辑：命令行的拼 / 剥（5 条单测）
   desktop.rs              Win32：WorkerW 挂载、HWND_BOTTOM/TOPMOST、圆角裁剪、扩展样式、底层守卫
-  visibility.rs           真实可见性：从 WindowEvent::Resized 推，发 lattice:window-visible
+  visibility.rs           真实可见性：最小化 / 收起 / 被整个盖住，发 lattice:window-visible
+  occlusion.rs            遮挡判定（Win32）：九点 WindowFromPoint + DWMWA_CLOAKED，点透窗口跳过
+  occlusion_policy.rs     遮挡的纯逻辑：采样点怎么取、几个没命中算挡住（8 条 rustc --test）
   wallpaper.rs            截壁纸（宿主页底板的第一层）
   metrics.rs              系统指标（sysmon 组件用），直接调 Win32 不引 crate
   media.rs                SMTC 媒体会话：读当前播放 + playPause/next/previous/stop（WinRT）
@@ -381,8 +384,6 @@ public/widgets/<id>/
 | **底板透不出后面的窗口** | 磨砂层是"壁纸"，不是"压在组件后面的浏览器窗口"——系统的模糊半径写死，做不成滑杆，二者只能选一个 | 要么接受，要么换 `SetWindowCompositionAttribute` 并放弃连续滑杆（见 ROADMAP 被推翻的决定 7） |
 | **动态壁纸会滞后** | 截图有 2s 缓存，壁纸幻灯片 / Wallpaper Engine 最多晚 2 秒 | 换成壁纸变更通知（`SystemEvents`）后主动失效缓存 |
 | **画布预览只是近似** | 画布没有壁纸可采样，只用 `color-mix` 算"底色盖在主题底色上"的合成色，模糊完全看不出来 | 要看得准只能投放出去；别试图在画布里模拟模糊 |
-| **被别的窗口挡住时照跑** | 可见性只认"最小化 / 收起"两种状态，挡在浏览器后面不算 —— 组件的定时器还在跳。系统监控这种每 1 秒采一次的组件，被挡住时仍在花 CPU | 要么接 `IsWindowVisible` 之外的遮挡查询（`DwmGetWindowAttribute` 的 cloak / occlusion 位，行为随系统版本变），要么给组件一个"降低频率"的档位。别指望 `IntersectionObserver`：沙箱 iframe 里的可见性由父文档决定，拿不到窗口遮挡 |
-| **`widget_close` 会莫名其妙被调** | 开发期撞到过**三次**"卡片自己没了、桌面窗口也没了"。加了 `reason` + 日志后抓到：都是 `reason: user`，宿主页里那层鼠标探针也抓到 `isTrusted: true` 的 `mousedown`，落点正是那颗 22×22 的 ✕ 中心 —— 是**真输入**，不是代码派发。但**不是人**：有一轮在没人碰鼠标的几分钟里，四个窗口各发了一条。干净环境盯 70 秒又一次都不来。所以这条坑没结：`✕` 的 click 有个还没找到的派发方 | **架构上的毛病已修**（第 11 条不变量）：非 `user` 来路只关窗口不删 placement；`reason: user` 这一路仍然会删，但**已经可撤销**（`lastClosed` + 8 秒 Undo 条）。剩下的线索：`widget_close` 现在会打出点击特征，实测一次真点击是 `trusted detail=1 pointer=mouse at=140,20`，和那几次的 `(203,15)`（220 宽窗口 ✕ 的中心）同形；而窗饰透明时点击会被手滑保护丢掉 —— 所以那几次**窗饰是可见的、指针就停在组件窗口上**。下一步是查"指针停在组件窗口上时，系统为什么把别处的点击投给了它" |
 | **CSP 只盖用户组件** | 内置组件走前端资源管线、拿不到 CSP 头（它们随二进制分发，信任级别和平台本体一样）。同一份代码装成内置和装进用户目录，**联网**行为不一样 —— 错误上报不在此列，那条已经两条路都注入了 | 要么让内置组件也走 `lattice-widget://`，要么接受这个不对称 —— 已经在 `docs/WIDGET_SPEC.md` 5.2 里对组件作者写清楚了。别在宿主页想办法补，头只能在发文档的那一端加 |
 | **混合 DPI 只验了一半** | 夹紧链路已改成全程物理像素，但**这台机器两块屏都是 96 DPI**（1728×1080 ×2），"跨到不同缩放的屏"这条路径只走了代码、没走过真机 | 找一台接 4K 屏（150% 或 175%）的机器，把组件拖过去再拖回来，看锚点是不是还跟着指针；`screen-fit.ts` 的纯几何部分已经被 `tests/screen-fit.html` 钉住，要补的是 `widgetHost.ts` 里那几处 `scaleFactor()` 重取 |
 | **商店没有服务端** | 目录得手工重发（`npm run store:index` 再上传）；评分只是本地字段，不汇总；举报写成一个文件，**不会自动送到作者手上**，得用户自己发出去 | 这是有意的（见不变量 15 与 ROADMAP 的四个取舍）。真接后端时替换的是"目录从哪儿取"和"举报写到哪儿"，`parseCatalogue` / `planInstall` / 验签那一层一行都不用动 |
@@ -390,6 +391,20 @@ public/widgets/<id>/
 | **签名没有时效** | 包没有有效期、没有时间戳，一个两年前的包今天照样验得过；"回滚到旧版本"在密码学层看不出来 | 目录里加 `publishedAt` 只是索引层字段（可改），真要防降级得靠版本单调 —— 现在靠的是"只往更高的版本装"，但用户可以手动装旧包 |
 | **回滚只有一代** | 连着更新两次之后回不到第一版 | 用户真正需要的是"回到刚才那个"，多代备份是个没有正确答案的配置项。真要加，先把 `widget-backups/<id>` 变成 `<id>/<version>`，再把"交换"改成"指针移动" |
 | **权限复核只在主窗口** | 那条横幅挂在主窗口底部；用户一直不开主窗口，就一直看不到 | 已经有的兜底是卡片上的 `Review` 标记（`LibraryPanel`），但同样要打开主窗口才看得见。可以考虑让托盘图标带状态 |
+
+已修（别再改回去）：**被别的窗口整个盖住也算看不见**。可见性以前只认"最小化 / 收起"，浏览器一最大化，桌面上每张卡的心跳照跑 —— 系统监控每秒采一次 CPU，就这么一直采着。现在 `occlusion.rs` 每 1.5 秒在窗口里取九个点问 `WindowFromPoint`，九个点全落在别人的窗口上才判"挡住"，然后走同一条 `lattice:window-visible` 链路。五条别踩回去：
+- **点透窗口（`WS_EX_TRANSPARENT`）要跳过这一套**。`WindowFromPoint` 本来就跳过点透窗口，拿它判永远是"被挡住"，那个组件会被永久停摆 —— 误判成"不刷新"是看得见的坏，比少省的那点电严重。
+- **比对用 `IsChild`，不要比 `GetAncestor(GA_ROOT)`**。桌面层组件被 `SetParent` 挂到了 WorkerW 下面，那时它的 root 是 WorkerW 不是自己，比 root 会把这一整类窗口判成挡住。
+- **`DWMWA_CLOAKED` 也算挡住**。虚拟桌面里那一半、被挂起的 UWP，`IsWindowVisible` 仍然是 true，屏幕上却没有。
+- **任何一次查询失败都当"看得见"**（和 `visibility.rs` 同一条规矩）。
+- **九个点全没命中才算挡住**。露出一角就停，卡片会看着像冻住；这个误判比多耗几度电明显得多。
+纯逻辑（采样点怎么取、几个没命中算挡住）在 `occlusion_policy.rs`，8 条断言用 `rustc --test` 壳子跑得动；Win32 那半只能真机验。
+
+已修（别再改回去）：**✕ 要"按下和松开都落在按钮上"才认**。那条"组件自己从画布上消失"的幽灵点击至今没查到派发方 —— 日志里是 `isTrusted: true`、`detail: 1`、`pointer: mouse`，落点正好是 ✕ 中心，和真点击一模一样。查不出派发方就只能把门收窄：`runtime/close-guard.ts` 逐条判"窗饰淡够了吗 / 有 pointerdown 吗 / 松手还在按钮上吗 / 命中测试还是按钮吗 / 同一根指针吗 / 位移超了吗"，`tests/close-guard.html` 22 条钉着。三条别踩回去：
+- **没有 pointerdown 的 click 一律不认**（`detail === 0` 的键盘激活例外，否则把键盘用户挡在门外）。
+- **`elementFromPoint` 那条不能省**。它专门抓"点击发生之后窗口挪了位置、现在才被处理"的迟到输入 —— 那组坐标已经不在按钮上了。
+- **`why` 必须跟着 IPC 走**（`CloseOrigin::describe` 会打到 `widget_close` 那行日志里）。下次复现时 `ok` 说明那真是一段完整的按下 + 松开，`keyboard` 说明是键盘激活，两者指向完全不同的方向。
+注意它**没有解决根因**：如果幽灵点击本身就是一段完整的按下 / 松开，这套判断照样放行。它做的是堵死"没有按下就关窗"，并给下一次复现留下判据。
 
 已修（别再改回去）：**覆盖安装之前先备份，回滚是交换**。`package::extract` 与 `widgets::install_widget` 都调 `backup::save_existing`，旧目录整份复制到 `widget-backups/<id>`，只留一代；`widget_rollback` 走 `backup::swap`（两个方向各改一次名），不是复制回来。四条：**三条安装路径都要备份**（目录安装 / 拖文件夹 / `.lattice`），少一条就有一种装法回不去；**卸载连备份一起删**（`uninstall_widget`）—— 那是用户明确说的"不要了"；**没有备份时回滚必须明确报错**（`there is no previous version to roll back to`），不要静默成功，真机探针专门验了这一条；**备份失败只记日志、不阻断安装**（备份是保险，不是前提）。
 
@@ -494,7 +509,7 @@ public/widgets/<id>/
 ## 11. 验证
 
 - `npm run typecheck` —— 必跑，当前是干净的
-- **`npm run test:browser`** —— 跑一遍 `tests/*.html` 里的全部断言（31 页 / 981 条）。先 `npm run dev` 起 dev server（默认 1420），另一个终端跑它；`--filter catalogue` 只跑匹配的页。它用 headless Chrome 的 `--dump-dom` 读 `<pre id="out">`，所以**页面的断言必须写成 `PASS …` / `FAIL …` 两行式**，别的格式它数不到。CI 里这条是 `browser` job，红在哪一页会直接打出来。
+- **`npm run test:browser`** —— 跑一遍 `tests/*.html` 里的全部断言（32 页 / 1003 条）。先 `npm run dev` 起 dev server（默认 1420），另一个终端跑它；`--filter catalogue` 只跑匹配的页。它用 headless Chrome 的 `--dump-dom` 读 `<pre id="out">`，所以**页面的断言必须写成 `PASS …` / `FAIL …` 两行式**，别的格式它数不到。CI 里这条是 `browser` job，红在哪一页会直接打出来。
 - 改了组件 UI：`npm run dev` 后在浏览器里看；要截固定尺寸的图，用 Edge headless：
   ```bash
   msedge --headless=new --disable-gpu --force-device-scale-factor=2 \
