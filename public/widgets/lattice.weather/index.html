@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Weather</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="wx" id="root" data-state="idle">
+      <header class="wx-head">
+        <h1 class="wx-place" id="place"></h1>
+        <span class="wx-age" id="age"></span>
+      </header>
+
+      <div class="wx-main">
+        <!--
+          图形用 <use> 指到下面那份 symbol 表。
+          不拼 SVG 字符串：innerHTML 在组件里是"把外部内容塞进 DOM"的口子，
+          虽然这里内容全由自己决定，但这条线一开，下次就会有人拿它塞天气文案。
+        -->
+        <svg class="wx-glyph" id="glyph" viewBox="0 0 32 32" aria-hidden="true">
+          <use id="glyph-use" href="#g-cloud" />
+        </svg>
+        <div class="wx-figures">
+          <p class="wx-temp" id="temp">—</p>
+          <p class="wx-cond" id="cond"></p>
+        </div>
+      </div>
+
+      <dl class="wx-meta" id="meta">
+        <div class="wx-pair"><dt>H</dt><dd id="high">—</dd></div>
+        <div class="wx-pair"><dt>L</dt><dd id="low">—</dd></div>
+        <div class="wx-pair"><dt>Feels</dt><dd id="feels">—</dd></div>
+        <div class="wx-pair"><dt>Wind</dt><dd id="wind">—</dd></div>
+      </dl>
+
+      <p class="wx-hint" id="hint"></p>
+    </main>
+
+    <svg class="wx-sprite" aria-hidden="true" focusable="false">
+      <symbol id="g-sun" viewBox="0 0 32 32">
+        <circle cx="16" cy="16" r="6.2" />
+        <path d="M16 3.4v3M16 25.6v3M3.4 16h3M25.6 16h3M7.1 7.1l2.1 2.1M22.8 22.8l2.1 2.1M24.9 7.1l-2.1 2.1M9.2 22.8l-2.1 2.1" />
+      </symbol>
+      <symbol id="g-moon" viewBox="0 0 32 32">
+        <path d="M23.6 20.2A9.2 9.2 0 0 1 11.8 8.4a9.2 9.2 0 1 0 11.8 11.8z" />
+      </symbol>
+      <symbol id="g-partly" viewBox="0 0 32 32">
+        <circle cx="20.4" cy="11" r="5" />
+        <path d="M20.4 3.6v2.2M27 5.6l-1.6 1.6M28.4 11h-2.2" />
+        <path d="M8.4 25.4h12.2a4.4 4.4 0 0 0 .4-8.8 6.2 6.2 0 0 0-11.8-1.2 5 5 0 0 0-.8 10z" />
+      </symbol>
+      <symbol id="g-moon-cloud" viewBox="0 0 32 32">
+        <path d="M25 14.6a6.4 6.4 0 0 1-8.2-8.2 6.4 6.4 0 1 0 8.2 8.2z" />
+        <path d="M8.4 25.4h11.8a4.2 4.2 0 0 0 .4-8.4 6 6 0 0 0-11.4-1.2 4.8 4.8 0 0 0-.8 9.6z" />
+      </symbol>
+      <symbol id="g-cloud" viewBox="0 0 32 32">
+        <path d="M8.6 24.6h14.2a5 5 0 0 0 .4-10 7 7 0 0 0-13.4-1.4 5.6 5.6 0 0 0-1.2 11.4z" />
+      </symbol>
+      <symbol id="g-fog" viewBox="0 0 32 32">
+        <path d="M9.4 18.6h13a4.4 4.4 0 0 0 .4-8.8 6.2 6.2 0 0 0-11.8-1.2 5 5 0 0 0-1.6 10z" />
+        <path d="M6 23.4h14M12 27.4h14" />
+      </symbol>
+      <symbol id="g-drizzle" viewBox="0 0 32 32">
+        <path d="M8.6 18.4h14.2a5 5 0 0 0 .4-10 7 7 0 0 0-13.4-1.4 5.6 5.6 0 0 0-1.2 11.4z" />
+        <path d="M11.6 22.4l-1.2 3.4M16.6 22.4l-1.2 3.4M21.6 22.4l-1.2 3.4" />
+      </symbol>
+      <symbol id="g-rain" viewBox="0 0 32 32">
+        <path d="M8.6 17.4h14.2a5 5 0 0 0 .4-10 7 7 0 0 0-13.4-1.4 5.6 5.6 0 0 0-1.2 11.4z" />
+        <path d="M11.4 21.2l-2 5.4M17 21.2l-2 5.4M22.6 21.2l-2 5.4" />
+      </symbol>
+      <symbol id="g-snow" viewBox="0 0 32 32">
+        <path d="M8.6 17.4h14.2a5 5 0 0 0 .4-10 7 7 0 0 0-13.4-1.4 5.6 5.6 0 0 0-1.2 11.4z" />
+        <path d="M11 23.4v3.2M9.4 25l3.2 0M17 23.4v3.2M15.4 25l3.2 0M23 23.4v3.2M21.4 25l3.2 0" />
+      </symbol>
+      <symbol id="g-storm" viewBox="0 0 32 32">
+        <path d="M8.6 16.4h14.2a5 5 0 0 0 .4-10 7 7 0 0 0-13.4-1.4 5.6 5.6 0 0 0-1.2 11.4z" />
+        <path d="M17.6 19.4l-4 5h3l-1.2 4.4 4.6-5.6h-3.2z" />
+      </symbol>
+    </svg>
+
+    <script src="widget.js"></script>
+  </body>
+</html>

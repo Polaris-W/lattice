@@ -189,6 +189,7 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
           }
           post(payload);
         },
+        egress: record.manifest.network.hosts,
         close: () => remove(placement.instanceId),
         trace: (entry) => {
           trace({

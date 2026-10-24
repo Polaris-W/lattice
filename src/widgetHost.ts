@@ -64,6 +64,14 @@ interface HostConfig {
   appearance: Appearance;
   /** 已经合并过出厂值的实例配置（见 runtime/config.ts） */
   config: ConfigValues;
+  /**
+   * 清单里的联网白名单（`network.hosts`）。
+   *
+   * 桌面窗口这边 Rust 自己也记着一份、并且优先用它，所以这个字段在桌面
+   * 路径上其实用不上 —— 带着它是为了让桥的上下文形状一致：画布上的实例
+   * 没有窗口、没有注册表条目，只能靠这份名单出网。
+   */
+  network?: string[];
 }
 
 const win = getCurrentWindow();
@@ -1027,6 +1035,7 @@ async function boot() {
       granted,
       config: instanceConfig,
       schedule: scheduler,
+      egress: config.network ?? [],
       reply: post,
       close: () => {
         // 组件自己要退出：关窗口，但不删用户的 placement

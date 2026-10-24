@@ -1,0 +1,201 @@
+/*
+ * 天气组件
+ *
+ * 颜色全部走 --lattice-* 令牌（短名由 widget.js 从主题字典映射过来）：
+ * 底板可能是深色壁纸上的浅色卡片，也可能是浅色壁纸上的深色卡片，写死颜色
+ * 就一定有一半场景看不清。
+ *
+ * html/body 必须保持透明 —— 底板和磨砂是平台画的，这里刷一层底色就白做了。
+ */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--fg, #1c1c1e);
+  font-family: var(--font, system-ui, sans-serif);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/*
+ * symbol 表：只当定义用，不占位置。
+ * 不能用 display:none —— 有的实现会连 <use> 的引用一起丢掉；宽高归零是稳的。
+ */
+.wx-sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.wx {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 12px 14px 10px;
+  gap: 2px;
+  user-select: none;
+  cursor: default;
+}
+
+/* ---- 顶行：地名 + 多久之前 ----
+ *
+ * 右上角那排窗饰浮在内容之上而且**真的能点**（约 120×28）。地名是通栏的
+ * 一行字，不避开就有一半落在按钮底下。所以右边直接留出位置，让 "42 min ago"
+ * 停在按钮左边，而不是被压住。
+ */
+.wx-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  padding-right: 104px;
+  min-height: 14px;
+}
+
+.wx-place {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wx-age {
+  flex: none;
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted, #6b6b70);
+  white-space: nowrap;
+}
+
+/* ---- 主体：图形 + 温度 ---- */
+
+.wx-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  min-height: 46px;
+}
+
+.wx-glyph {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.9;
+}
+
+.wx-figures {
+  min-width: 0;
+}
+
+.wx-temp {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 300;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.wx-cond {
+  margin: 1px 0 0;
+  font-size: 11.5px;
+  color: var(--muted, #6b6b70);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- 底行：今日高低温 / 体感 / 风 ---- */
+
+.wx-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 10px;
+  margin: 7px 0 0;
+  font-size: 10.5px;
+  color: var(--muted, #6b6b70);
+  font-variant-numeric: tabular-nums;
+}
+
+.wx-pair {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.wx-pair dt {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.7;
+}
+
+.wx-pair dd {
+  margin: 0;
+}
+
+/* ---- 提示行 ----
+ *
+ * 只在"这一份数据不是刚拿到的"时候出现：权限没给、清单里没列主机、
+ * 断网退回上次读数、城市查不到。平时 display:none，不占位置。
+ */
+.wx-hint {
+  margin: auto 0 0;
+  font-size: 9.5px;
+  line-height: 1.35;
+  color: var(--accent, #3b7ddd);
+  display: none;
+}
+
+.wx-hint.is-visible {
+  display: block;
+}
+
+/*
+ * 没有数据的时候（没配城市 / 权限没给 / 主机没列 / 查不到 / 连不上），
+ * 卡片只剩一句标题 + 一句解释：
+ *
+ *   - 高低温、体感、风那一排全是破折号，没有信息量，占着地方还显得像没加载完
+ *   - 大字号那个位置改成 13px 的一句短话 —— 32px 的 "Set a city" 会撑破卡片
+ *
+ * 判据写成"不是 ready 也不是 stale"，而不是把每个状态列一遍：以后再加状态
+ * 时默认走"只显示一句话"这一支，不会忘。
+ */
+.wx:not([data-state="ready"]):not([data-state="stale"]) .wx-meta {
+  display: none;
+}
+
+.wx:not([data-state="ready"]):not([data-state="stale"]) .wx-temp {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+/* 解释那行可能是一整句（"api.example.com is not in the manifest."），要能折行 */
+.wx:not([data-state="ready"]):not([data-state="stale"]) .wx-cond {
+  white-space: normal;
+  overflow: visible;
+  line-height: 1.35;
+}
+
+/* 拿不到数据时图形别继续画着晴天 —— 那是在编 */
+.wx[data-state="unconfigured"] .wx-glyph,
+.wx[data-state="failed"] .wx-glyph,
+.wx[data-state="denied"] .wx-glyph,
+.wx[data-state="blocked"] .wx-glyph,
+.wx[data-state="loading"] .wx-glyph {
+  opacity: 0.28;
+}

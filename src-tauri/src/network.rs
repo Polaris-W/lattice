@@ -35,7 +35,7 @@ use std::os::windows::ffi::OsStrExt;
 use serde::Serialize;
 use tauri::State;
 
-use crate::network_policy::{host_allowed, parse_url, ALLOWED_METHODS, Target};
+use crate::network_policy::{egress_for, host_allowed, parse_url, ALLOWED_METHODS, Target};
 use crate::runner::Runner;
 use windows_sys::Win32::Foundation::GetLastError;
 use windows_sys::Win32::Networking::WinHttp::{
@@ -330,6 +330,9 @@ fn read_body(request: *mut core::ffi::c_void, limit: usize) -> Result<(Vec<u8>, 
 ///
 /// 参数都走单独的名字而不是一个结构体：桥那边 `params` 的形状由组件决定，
 /// 少一层嵌套少一处校验。
+///
+/// `hosts` 只对**画布上的实例**有用 —— 它们不是窗口，不在注册表里，白名单
+/// 只能由宿主页随请求带过来。桌面窗口在册，这个参数被忽略（见 `egress_for`）。
 #[tauri::command]
 pub async fn network_fetch(
     window: tauri::WebviewWindow,
@@ -338,24 +341,38 @@ pub async fn network_fetch(
     method: Option<String>,
     headers: Option<Vec<(String, String)>>,
     body: Option<String>,
+    hosts: Option<Vec<String>>,
 ) -> Result<NetworkResponse, String> {
     // 先在同步阶段把该查的都查完：State 不跨 await 持有
-    let config = runner
-        .get(window.label())
-        .ok_or_else(|| "this window is not a registered widget window".to_string())?;
+    let registered = runner.get(window.label());
 
-    if !config.permissions.iter().any(|item| item == "network") {
-        return Err("permission not granted: network".to_string());
+    /*
+     * 权限这一层只在桌面窗口查得到。
+     *
+     * 画布上没有 HostConfig，也就没有"用户授了哪几项"—— 但那里不需要：
+     * 桥在 JS 侧已经把 `network` 挡在方法表上了（没授权根本发不出这次
+     * invoke）。Rust 这边再查一遍，是因为桌面窗口的宿主页在另一个 webview 里，
+     * 不能假设它一定挡住了。
+     */
+    if let Some(config) = &registered {
+        if !config.permissions.iter().any(|item| item == "network") {
+            return Err("permission not granted: network".to_string());
+        }
     }
 
+    let (widget_id, allowed) = egress_for(
+        registered.map(|config| (config.widget_id, config.network)),
+        hosts,
+    )
+    .ok_or_else(|| "this window is not a registered widget window".to_string())?;
+
     let target = parse_url(&url)?;
-    if !host_allowed(&config.network, &target) {
+    if !host_allowed(&allowed, &target) {
         // 这条日志很重要：组件"突然连不上了"和"清单里根本没写这个主机"
         // 从外面看一模一样
         eprintln!(
             "[lattice] network blocked ({}): {} — not in the manifest's network.hosts",
-            config.widget_id,
-            target.host
+            widget_id, target.host
         );
         return Err(format!(
             "host \"{}\" is not listed in this widget's network.hosts",
@@ -392,7 +409,6 @@ pub async fn network_fetch(
         );
     }
 
-    let widget_id = config.widget_id.clone();
     let payload = if body.is_empty() || method == "GET" || method == "HEAD" {
         None
     } else {

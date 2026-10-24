@@ -101,10 +101,38 @@ pub(crate) fn host_allowed(entries: &[String], target: &Target) -> bool {
     })
 }
 
+/// 这次请求该按哪份白名单放行 —— 返回 `(用来打日志的组件 id, 主机白名单)`。
+///
+/// 两个来源，优先级是硬的：
+///
+/// 1. **窗口在注册表里**（桌面窗口）：用窗口创建时写进去的那份。这份和窗口
+///    一起存在 Rust 侧，宿主页改不了，是这条链路上最结实的一段。
+/// 2. **窗口不在注册表里**（主窗口的画布）：用宿主页随请求带过来的那份。
+///
+/// 为什么必须有第 2 条：画布上的实例不是一个窗口，它跑在主窗口的 iframe 里，
+/// 注册表里没有它的条目。没有这条兜底时，同一个组件"桌面上能联网、设计器里
+/// 不能"，而设计器恰好是用户第一次配置它的地方 —— 症状是刚加进来的天气组件
+/// 报"连不上服务"，看上去像组件坏了。
+///
+/// 安全性没有因此变弱：组件只能 `postMessage` 一个 `{url}` 出来，白名单是
+/// **宿主页**按清单填的，组件碰不到。而桌面那条路的 `network.hosts` 本来
+/// 也是前端在 `sync_widget_windows` 里传进来的 —— 信任边界是同一个。
+///
+/// 反过来说，**注册表优先**这条别放宽：窗口已经在册还去信请求里那份，
+/// 等于让一个前端 bug 悄悄扩大出网范围。
+pub(crate) fn egress_for(
+    registered: Option<(String, Vec<String>)>,
+    declared: Option<Vec<String>>,
+) -> Option<(String, Vec<String>)> {
+    if let Some(found) = registered {
+        return Some(found);
+    }
+    declared.map(|hosts| ("canvas".to_string(), hosts))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
     fn target(url: &str) -> Target {
         parse_url(url).expect("should parse")
     }
@@ -174,5 +202,30 @@ mod tests {
     fn empty_entries_are_ignored() {
         let list = vec!["".to_string(), "   ".to_string()];
         assert!(!host_allowed(&list, &target("https://example.com/")));
+    }
+
+    #[test]
+    fn a_registered_window_uses_its_own_list() {
+        let registered = Some(("lattice.weather".to_string(), vec!["api.example.com".to_string()]));
+        let declared = Some(vec!["evil.example.com".to_string()]);
+        let picked = egress_for(registered, declared).expect("should resolve");
+        assert_eq!(picked.0, "lattice.weather");
+        // 在册的窗口，请求里带什么都不算数
+        assert_eq!(picked.1, vec!["api.example.com".to_string()]);
+    }
+
+    #[test]
+    fn an_unregistered_window_falls_back_to_the_declared_list() {
+        let declared = Some(vec!["api.open-meteo.com".to_string()]);
+        let picked = egress_for(None, declared).expect("should resolve");
+        assert_eq!(picked.1, vec!["api.open-meteo.com".to_string()]);
+    }
+
+    #[test]
+    fn neither_source_means_no_egress() {
+        assert!(egress_for(None, None).is_none());
+        // 空名单也是一份名单：能出网，但哪儿都去不了
+        let picked = egress_for(None, Some(vec![])).expect("an empty list still resolves");
+        assert!(picked.1.is_empty());
     }
 }

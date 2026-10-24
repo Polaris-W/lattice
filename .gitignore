@@ -49,3 +49,7 @@ dist-packs/
 # 公钥在 tauri.conf.json 里，私钥只在这台机器和 CI 的 Secrets 里。
 .keys/
 
+
+# 临时预览页与截图（.shot-*.png 之外的整页截图）
+.preview/
+preview-tmp.html

@@ -58,6 +58,15 @@ export interface BridgeContext {
   config: ConfigValues;
   /** 回话给组件（由宿主注入，负责 postMessage 到正确的窗口） */
   reply: (payload: BridgeResponseMessage) => void;
+  /**
+   * 这个组件清单里声明的联网白名单（`network.hosts`）。
+   *
+   * 桌面窗口那边 Rust 自己记着一份（建窗口时写进去的），所以这个字段在那里
+   * 用不上；**画布上的实例不是窗口**，注册表里没有它的条目，出网时只能把
+   * 名单随请求带过去。不带的话同一个组件会"桌面上能联网、设计器里不能"，
+   * 而设计器正是用户第一次配置它的地方。
+   */
+  egress: readonly string[];
   /** 组件请求关闭自己 */
   close: () => void;
   /**
@@ -398,7 +407,7 @@ defineMethod("media.control", "media:control", async (params) => {
  *
  * `headers` 收普通对象（组件作者写起来自然），这里转成 Rust 要的键值对数组。
  */
-defineMethod("network.fetch", "network", async (params) => {
+defineMethod("network.fetch", "network", async (params, ctx) => {
   const input = (params ?? {}) as {
     url?: unknown;
     method?: unknown;
@@ -434,6 +443,8 @@ defineMethod("network.fetch", "network", async (params) => {
     method: input.method ?? null,
     headers,
     body: input.body ?? null,
+    // 桌面窗口会忽略这份（它在 Rust 的注册表里），画布上的实例靠它出网
+    hosts: [...ctx.egress],
   });
 });
 
