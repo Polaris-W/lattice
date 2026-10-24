@@ -1,0 +1,225 @@
+# 从 vela-cleanroom 能搬什么
+
+> 邻仓 `D:/GitDev/vela-cleanroom`（Vela / Focus Desk）是同一个技术栈上的另一个桌面产品：Tauri 2 + React 19 + TS，34 种桌面组件 + 灵动岛 + 设置窗 + 一整套 Win32/WinRT 胶水（前端 `src/` 8.3 MB、Rust `src-tauri/src/` 2.2 MB）。
+>
+> 这份清单回答一个问题：**它的哪些东西能拿到 Lattice 用，以什么形式用。**
+>
+> 读的版本：本地工作区，2026-10-24。行数用 `wc -l` 实测。
+
+---
+
+## 0. 先说结论
+
+两个项目的技术栈一样，**分发哲学相反**：
+
+| | vela-cleanroom | lattice |
+| --- | --- | --- |
+| 组件是什么 | 应用内的 React 组件，编译进 bundle（懒加载分 chunk） | 独立静态目录（HTML/CSS/JS），签名后可分发 |
+| 组件从哪来 | 只有内置的 34 种 | 内置 8 个 + 目录安装 + 拖文件夹安装 |
+| 依赖 | zustand / zod / lucide-react / motion / SQLite | 组件零依赖；平台不引 UI 库 |
+| 持久化 | localStorage + SQLite | 纯文件（`state.json` / `widget-data/*.json`） |
+| 权限 | 没有（组件即应用代码） | 按组件授权，桥上一道道闸 |
+
+所以：**没有一个 React 组件能直接拖过来**。Lattice 的组件是"不许构建的静态目录"，React 那套（hooks、JSX、`import`）在那边根本跑不起来。
+
+能搬的是三样东西，价值从高到低：
+
+1. **纯逻辑**（零依赖 TS，`src/domain/*` 与部分 `src/lib/*`）—— 整段抄，改写成 ES5 风格的 IIFE 就能塞进组件。**这是性价比最高的一档。**
+2. **交互与取舍**（怎么拖、怎么提醒、怎么降级、什么时候不提醒）—— vela 在这些细节上踩过坑，它的注释比代码值钱。
+3. **Rust 平台能力**（Win32 / WinRT 胶水）—— 搬"怎么做"，代码要按 Lattice 的权限模型重写。
+
+下面分四张表：A 类（直接抄）、B 类（做成 Lattice 组件）、C 类（平台层借思路）、D 类（明确别搬）。
+
+---
+
+## 1. A 类：能直接抄的纯逻辑
+
+判定标准：**不 import React / zustand / zod / lucide，也不碰 `window` / `localStorage`**（少数碰 `fetch` 的已注明）。这些文件搬到 Lattice 只需要一件事：把 TS 的 `export` 改成组件里的函数，或者（平台侧）直接 import。
+
+### 1.1 `src/domain/`（全部零依赖，除 `schemas.ts` 用 zod）
+
+| 文件 | 行数 | 干什么 | 搬到 Lattice 哪儿 |
+| --- | --- | --- | --- |
+| `pomodoro.ts` | 465 | 番茄钟领域层：配置规范化、状态机 reducer、会话/打断记录构造 | `lattice.focus` 现在是手写 if/else。**至少把"配置规范化 + 阶段推进"这两段对着抄**：它有计正/计倒两种模式、每日目标（按轮 / 按时长）—— 现在都还没有 |
+| `analytics.ts` | 931 | 把会话/打断聚合成统计口径：今日、本周（周一起）、趋势桶、热图、打断分解 | 做"专注统计"组件时直接抄。注意它 `import { t }` 取文案，抄的时候换成英文串 |
+| `palette-extract.ts` | 235 | 任意图片 → 7 档主题色板（中位切分 + 频率/灰度/明暗/饱和度惩罚） | 平台的"从壁纸取色"（`wallpaper.rs` 已经截了壁纸，但只做底板模糊，没取色）。纯函数，注入 `ImageData` 就能用 |
+| `md5.ts` | 88 | RFC 1321 的 MD5（WebCrypto 不提供） | `lattice.calculator` 的哈希页。文件哈希要走 Rust（`hashfile.rs` 114 行，流式 MD5/SHA-1/SHA-256/512） |
+| `csv.ts` | 240 | 任务/截止日期的 CSV 读写 | 任何要"导出成表格"的组件 |
+| `backup-validate.ts` | 215 | 备份结构校验 | 平台的备份/恢复（现在只有组件包备份，没有数据备份） |
+| `errors.ts` / `flags.ts` | 62 / 44 | 错误分类、特性开关 | 参考价值大于代码价值 |
+
+### 1.2 `src/lib/`（挑零依赖的）
+
+| 文件 | 行数 | 干什么 | 备注 |
+| --- | --- | --- | --- |
+| `ics.ts` | 544 | ICS 订阅解析：VEVENT、全天事件、`RRULE`（DAILY/WEEKLY/MONTHLY/YEARLY + INTERVAL/UNTIL/COUNT/BYDAY，含"第 N 个星期几"）、`EXDATE`、`VALARM` → 提前分钟数 | **做日历组件的核心，直接决定这个组件能不能做**。不解析 VTIMEZONE（按浮动本地时间算），对桌面场景够用 |
+| `lunar.ts` | 353 | 农历换算（1900–2100 表）、24 节气、中国法定节假日与纪念日 | 日历/时钟的"今天宜什么"那一层 |
+| `holiday-update.ts` | 173 | 节假日表远程补齐（默认 holiday-cn，7 天缓存，失败静默回退内置表） | 搬的时候要走 `network.fetch` 白名单，并且把源站加进 `manifest.network.hosts` |
+| `natural-date.ts` | 234 | "明天下午3点" / "下周五 14:30" → `Date` | 任何带日期的组件（倒计时、日历、待办）都能用。**注意它是中文规则**，英文界面要重写词表 |
+| `match-tier.ts` | 134 | 五级匹配打分：exact > prefix > 词首 > 子串 > 子序列，字段权重 name 80 / generic 60 / keywords 40 / id 20 | **能直接把 Lattice 的库搜索从"布尔 AND"升级成"带排序"**（现在搜到就是搜到，不排序）。见 §3.1 |
+| `pinyin.ts` | 53 | 汉字 → 拼音首字母的压缩表（"wx" 搜"微信"） | Lattice 组件名是英文，暂时用不上；等有中文别名再抄 |
+| `color.ts` | 154 | sRGB/HSL 转换、`withAlpha`、对比度 | 组件里算颜色别自己写 |
+| `bezier.ts` | 165 | cubic-bezier 的合法性判定 + 求值（控制点 X 在 [0,1] 且 x(t) 单调） | 只有在做"动效曲线编辑器"时才需要 |
+| `durations.ts` | 84 | 动效时长派生（CSS 令牌与 JS 常量同一套规则） | Lattice 的动效是 CSS 静态令牌，用不上，但**"两套时长必须同源"这个教训值得记** |
+| `serial-chain.ts` | 82 | 串行执行链（避免并发写互相盖） | Lattice 的 `store.ts` 落盘已经有排队，可以对照 |
+| `retry.ts` | 130 | 带退避的重试 | 联网组件通用 |
+
+### 1.3 `src/widget/`（纯几何/纯数据，但跟 vela 的 store 形状耦合）
+
+| 文件 | 行数 | 干什么 | 搬的难度 |
+| --- | --- | --- | --- |
+| `align-guides.ts` | 61 | **拖拽三线吸附**：左/中/右、上/中/下互吸，取最小偏差，返回吸附后坐标 + 该亮哪条参考线 | **最容易见效的一个**。纯函数，Lattice 的画布拖拽直接能接（现在只有网格吸附，没有对齐参考线） |
+| `arrange.ts` | 93 | 多选批量排布成网格/横排/纵列，按包围盒、逐卡 clamp 到视口 | 需要先有"多选"，可以作为画布的下一步 |
+| `expand-size.ts` | 87 | 展开面板按屏、按面板键记尺寸（只保证下限与结构合法，视口钳制交给调用方） | 等 Lattice 有"展开"这个层级（见 §3.2）再说 |
+| `layout-timeline.ts` | 424 | 布局变更的自动快照 + 撤销/重做（订阅 store、500ms 尾沿去抖、只对增删和编组成员变化落历史、每键上限 20 条） | Lattice 现在只有"关窗 8 秒撤销"。**这套"什么算值得记一笔"的判定可以直接抄** |
+| `clock-timezones.ts` | 51 | 常用时区表 + IANA 枚举 | 想做世界时钟时抄 |
+
+**A 类的搬运成本**：全部是"复制 + 去掉 import + 改文案"。真正的工作量在**给它写测试**——vela 每个文件旁边都有 `.test.ts`，抄逻辑不抄测试等于白抄。
+
+---
+
+## 2. B 类：值得做成 Lattice 组件的
+
+判定标准：能落成一个静态目录（`manifest.json` + `index.html` + `widget.js` + `style.css`），不需要新的窗口形态。
+
+**"需要的新平台能力"一栏写的是 Lattice 现在没有的东西**——没有就是"零"，说明这个组件今天就能开工。
+
+标 ✅ 的是已经做完的（2026-10-24，`public/widgets/` 下三个包，各带自检页）。它们和这份清单的关系值得记一笔：**做的时候都改过方案**，因为 vela 那边跑在浏览器里，很多"省事"的写法在沙箱 iframe + 桥的环境里不成立 ——
+
+- 计算器不能用 `eval`（输入框是别人能粘东西的地方），改成自己写词法 + 调度场算法。
+- 单位换算的温度必须是仿射（`toBase` / `fromBase` 两个函数），塞进系数表会出现"0°C 换出来 32°F，换回去 0.000…1°C"。
+- 秒表**不需要心跳**：vela 那版每 100ms `setInterval`，而 Lattice 的心跳最小间隔是 250ms（`MIN_INTERVAL`），拿它刷百分秒每帧跳 25 个数。正确做法是存"按下去的那一刻"、用 `requestAnimationFrame` 画读数 —— 卡片藏起来 rAF 自己会停，回来按时间戳重算一次就是对的。
+
+| vela 类型 | 建议 id | 它有什么值得抄 | 需要的新平台能力 | 难度 |
+| --- | --- | --- | --- | --- |
+| `calculator`（649 行） | ✅ `lattice.calculator` | 三个页签：计算 / 编解码（Base64、URL…）/ 哈希（文本走 JS MD5，文件走 Rust 流式） | 无 | ★ |
+| `unitconverter`（706 行） | ✅ `lattice.convert` | 长度 / 重量 / 温度 / 数据量；换算表是纯数据 | 无 | ★ |
+| `stopwatch`（286 行） | ✅ `lattice.stopwatch` | 正计时 + 计次（lap）；和 Focus 反过来——它数的是"已经过去多久" | 无（**连心跳都不用**：存起点 + rAF 刷显示，见下） | ★ |
+| `bookmarks`（685 行） | `lattice.links` | 分组 + 图标 + 点击用系统浏览器打开 | `open.url`（桥方法 + `tauri-plugin-opener` 已经在依赖里） | ★ |
+| `habit`（638 行） | `lattice.habit` | 每日打卡 + 连续天数（streak）+ 月历热图 | 无（`storage` 就够） | ★★ |
+| `calendar`（1783 行） | `lattice.calendar` | 月视图 + 事件编辑 + **ICS 订阅**（`lib/ics.ts` 现成） | `storage`；订阅要 `network`（白名单加 ICS 源） | ★★ |
+| `todayoverview`（627 行） | `lattice.today` | 一屏聚合"今天"：待办未完成数 + 最近截止 + 今日课程 | 无，但要**跨组件读数据**（见下方"一个硬问题"） | ★★ |
+| `analytics` | 并进 `lattice.focus` | 专注时长趋势、热图、打断分解 | 无，但同样卡在跨组件数据 | ★★ |
+| `hardware`（558 行） | `lattice.hardware` | GPU / 电池 / 温度 / 磁盘分区（Lattice 的 sysmon 只有 CPU/内存/系统盘/网络） | 扩 `metrics.rs`（现在手搓 Win32，没有 sysinfo） | ★★★ |
+| `timetable`（1248 行 + `excel.rs` 267 行） | `lattice.timetable` | Excel/CSV 课表导入、周视图 | 文件选择对话框 + xlsx 解析（`calamine`） | ★★★ |
+| `sketch`（887 行） | `lattice.sketch` | 画布手写，存成图片 | 组件里存图要么走 `storage`（JSON 里塞 base64，有上限），要么加 `file.save` | ★★★ |
+| `colorpicker`（490 行） | `lattice.pick` | 全屏取色 + 调色板 | 一个全屏覆盖窗口 + `color.rs`（80 行） | ★★★ |
+| `recycle`（398 行） | 平台功能，不是组件 | **组件回收站**：删掉的组件进回收站，可单条/批量恢复、彻底删除、保留期可配 | 无——Lattice 已有 `lastClosed` + 8 秒撤销，把它扩成列表即可（见 §3.3） | ★★ |
+| `clipboard`（559 行） | `lattice.clipboard` | 剪贴板历史，点击即再次复制 | `clipboard.rs` 2139 行 + 常驻监听 + 缩略图 | ★★★★ |
+| `brightness` | `lattice.brightness` | 逐屏亮度（内置屏 WMI / 外接屏 DDC-CI） | `brightness.rs` 1161 行 | ★★★★ |
+| `bluetooth`（456 行） | `lattice.bluetooth` | 已连接设备 + 断开/连接 | `bluetooth.rs` 755 行 | ★★★ |
+| `music` / `AudioVisualizer`（710 / 944 行） | `lattice.spectrum` | WASAPI loopback 频谱可视化 | `audio.rs` 1323 行 | ★★★★ |
+| `files`（1473 行）/ `shortcuts`（1911 行） | — | 桌面文件夹浏览、快捷方式拖入、`.lnk` 解析、Shell 图标 | `files.rs` 2509 行 | ★★★★ |
+| `email`（551 行） | — | 多账号 IMAP 聚合 | 要存凭据、要长连接 | 不建议（和"没有服务端、不存密码"直接冲突） |
+
+**难度标尺**：★ 半天内 · ★★ 1–2 天 · ★★★ 3–5 天 · ★★★★ 一周以上。
+
+### 一个硬问题：组件之间读不到对方的数据
+
+Lattice 的存储是**按 `widgetId`** 的（`widget-data/<id>.json`），这是刻意的：`lattice.weather` 的注释里写着"两个实例共用一个键会互相盖掉，所以键里带城市和单位"。好处是隔离干净，代价是**没有"今日概览"这种组件的位置**——它要同时读待办、专注、日历的数据。
+
+三条路，按代价排：
+
+1. **把聚合做进组件自己**（推荐）：`lattice.focus` 自己长出一个展开视图显示趋势和热图，`lattice.todo` 自己算今日完成数。不需要动平台，代价是每个组件都变胖一点。
+2. **平台加"共享数据桶"**：`storage.shared("day-stats")` 之类，多个组件读写同一个键，权限单列一项（`storage:shared`）。要改桥 + 权限 + 文档，一次做对。
+3. **平台加只读查询**：`data.query({ from: "lattice.todo" })`，只读不写。比 2 安全，但一样要动平台。
+
+---
+
+## 3. C 类：平台层能借的思路（不是组件）
+
+这一档不是"搬代码"，是"照它的做法改 Lattice 自己的交互"。按值排序。
+
+### 3.1 库搜索从"布尔"升级成"带排序"
+
+Lattice 现在：切词 + 多词 AND，搜到就是搜到，**结果顺序固定**。
+vela 的 `match-tier.ts` 把"命中"分成五档（exact 5000 / prefix 4000 / 词首 3000 / 子串 2000 / 子序列 1000），字段再分权重（name 80 / keywords 40 / id 20），跨字段取最大分。档间差 1000 远大于字段权重 80，保证"先按档排、同档内按字段排"。
+
+搬过来大约 40 行，`tests/library-search.html` 加几条断言就能钉住。**这是投入产出比最高的一处**。
+
+### 3.2 展开 / 沉浸视图
+
+vela 的 `expand-store` 是**单值互斥**：同一时刻只有一个卡片处于展开态，展开的是"同一个组件的另一种脸"（待办展开成全任务板、天气展开成逐时预报、专注展开成趋势图）。
+
+Lattice 现在只有"卡片"这一种形态，属性面板在侧边。加这一层要动：画布 → 覆盖层、`Escape` 语义、焦点返回、按屏记尺寸（`expand-size.ts` 现成）。**但它是"组件变胖"的替代方案**——见 §2 那个硬问题：与其给每个组件加聚合视图，不如让一个组件有"大脸"。
+
+### 3.3 组件回收站（把 8 秒撤销扩成列表）
+
+Lattice 现在删掉一个组件只有 8 秒 `Undo`，之后布局就真没了。vela 的回收站保留 N 天，可搜索、单条/批量恢复、彻底删除、一键清空（两段式确认）。
+
+Lattice 已经有 `lastClosed` 快照和 `removePlacement` 的撤销路径，把它从"一个变量"改成"一个数组 + 保留期"就行，**不需要新的平台能力**。
+
+### 3.4 提醒的"补发语义"
+
+vela 的 `calendar-reminders.ts`（56 行）里有一条规则值得抄：提醒窗口是 `[开始−提前量, 开始+15 分钟]`，睡眠/晚启动错过到点时刻但仍在窗口内就**补发一次**；免打扰期内**不发送也不标记**（留到 DND 结束后下一轮），避免"被吞掉的提醒永久丢失"。
+
+Lattice 现在没有任何提醒通道。要做的话，这两条判定必须一开始就有——补一条规则比改一套实现便宜得多。
+
+### 3.5 其他可以扫一眼的
+
+- `edit-chrome.ts` / `resize-handles.ts`：编辑态的窗饰与手柄。Lattice 已经有了，可以对照看有没有漏的边界（比如最窄宽度下按钮挤爆）。
+- `widget-groups.ts`（256 行）：把多个组件编成一组、标签切换。Lattice 没有编组，但"编组只是渲染态、成员坐标原样保留、解散即回原位"这个设计很干净。
+- `use-os-file-drop.ts`：拖系统文件进组件。Lattice 已经有"拖文件夹安装"，可以对照它怎么区分"拖进来当数据"和"拖进来当包"。
+- `crash-log.ts` / `persist-gate.ts`：崩溃日志与落盘闸门。Lattice 的 `crash.rs` 更完整，这两份可以当交叉检查。
+
+---
+
+## 4. D 类：明确不建议搬
+
+| 东西 | 为什么不搬 |
+| --- | --- |
+| **灵动岛（dock）** | 36 个文件、约 6000 行。它解决的是"桌面不能长期占地方"这个 vela 的问题；Lattice 的答案是"桌面窗口 + 托盘暂停"，两套模型互斥。硬搬会把两个模型缝在一起 |
+| **任务栏 / 超管面板 / 全屏视图** | 要么改 Explorer（`taskbar/` 一整个模块），要么是另一个产品形态 |
+| **SQLite（`rusqlite`）** | Lattice 的全部持久化是文件 + 原子替换，而且"用户能直接看 `state.json`"是它的一个卖点。引入数据库会同时破坏可读性和单实例假设 |
+| **zustand / zod / lucide-react / motion** | 组件侧零依赖是硬约束（组件要能离线、能第三方写、能不构建）；平台侧也刻意不引 UI 库（`icons.tsx` 是手写 SVG path）。要图标就从 `lucide` 的源码里抄那个 path |
+| **i18n-lite** | Lattice 的界面文案统一英文（组件也是），没有多语言需求 |
+| **主题引擎（`theme-engine.ts` 840 行 + `theme-ink.ts` 400 行）** | vela 支持完整主题包、壁纸取色、明暗自动切换。Lattice 只有"暗 / 亮 + 底板浓度 + 磨砂"，把 1200 行主题引擎搬进来是另一种产品 |
+| **邮件（IMAP）/ 云同步 / 账号** | 要存凭据、要服务端，和 Lattice "没有服务端、包是静态文件"的前提直接冲突 |
+
+---
+
+## 5. 移植时的翻译表
+
+搬代码时最容易卡在"这个词在那边叫什么"。对照：
+
+| vela-cleanroom | lattice | 注意 |
+| --- | --- | --- |
+| `WidgetInstance`（含 x/y/w/h/z） | `Placement` | Lattice 的坐标是逻辑像素，跨屏重取 `scaleFactor` |
+| `localStorage["focus-desk.widget.<id>"]` | `storage.get` / `storage.set`（按 `widgetId`） | 键名要重排：Lattice 一个组件一个文件 |
+| `useEffect` + `setInterval` 轮询 | `schedule.every` + `tick` 推送 | **不许自己 `setInterval`**（不变量 10）：窗口藏起来要停 |
+| `invoke("cmd", args)` | 桥方法 `defineMethod` + 权限闸门 | 权限没给要返回结构化错误，组件自己降级 |
+| `zod` schema 校验配置 | `manifest.json` 的 `config`（5 类字段） | 组件不画设置 UI，属性面板渲染 |
+| `t("中文")` | 直接写英文串 | |
+| `lucide-react` 图标 | 内联 `<svg><path d="…"/></svg>` | 别引图标库 |
+| `--vela-*` CSS 变量 | `--lattice-*` 令牌（`surface` / `text` / `muted` / `accent` / `border` / `radius` / `font`） | **不许写死颜色**（不变量 6），底板一变浅平台会整体翻 |
+| `.test.ts`（vitest） | `tests/*.html` 浏览器断言 | Lattice 不引测试框架，断言写进 `#out` |
+
+---
+
+## 6. 如果只做三件事
+
+按"做完立刻能感觉到"排序：
+
+1. ✅ **对齐参考线**（`align-guides.ts` + 画布接线，已做）。拖组件时能看到它和别的组件对齐——这是画布最缺的一块手感。落地时比 vela 那版多做了两件事：**每条轴只留一条获胜线**（三个等宽组件左对齐会同时命中左/中/右三条，全画出来像界面卡死），以及**把画布边界也算进候选**（0 / 中线 / 满宽，否则"摆到画布中间"这个最常见动作反而没有线）。
+2. ✅ **计算器 + 单位换算 + 秒表**（已做，组件数 8 → 11）。三个都零平台依赖，覆盖的是"工具"这一整类。
+3. **日历**（`ics.ts` 544 行现成）。两三天能出一个"月视图 + 手动事件"的版本；ICS 订阅留到第二步，那时候才需要动 `network` 白名单。
+
+再往后看"组件回收站"（§3.3）和"库搜索排序"（§3.1）——这两个不新增组件，但每天都在被用到。
+
+---
+
+## 附：怎么核对这些数字
+
+```bash
+# 组件与纯逻辑的行数
+wc -l /d/GitDev/vela-cleanroom/src/widget/widgets/*.tsx
+wc -l /d/GitDev/vela-cleanroom/src/domain/*.ts
+
+# 某个模块有没有框架依赖（应该只看到相对路径的 import）
+grep -ho 'from "[^"]*"' /d/GitDev/vela-cleanroom/src/lib/ics.ts | grep -v '^\.'
+
+# Rust 侧能力清单
+grep -n "generate_handler" -A 200 /d/GitDev/vela-cleanroom/src-tauri/src/lib.rs
+```
+
+判定一个模块能不能直接抄，就看第二行命令**有没有输出**：只 import 相对路径的，就是纯的。

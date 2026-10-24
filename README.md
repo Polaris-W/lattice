@@ -195,6 +195,8 @@ Open it for the first time and the desktop has nothing on it — like a fresh VS
 - **Official widgets get no privileges**: the packages under `public/widgets` go through exactly the same manifest, sandbox and permission bridge as third-party ones. They are "already on your disk", not "compiled into the kernel"
 - **Discovery ≠ installation**: `bundled` packages must be installed explicitly; `user` packages (under `%APPDATA%`) count as installed as soon as they exist on disk
 - **The library is searchable**: one field above the list filters by name, id, description, author or permission — so "which widget can read system metrics?" is one word away
+- **The library folds**: installed, available and catalogue are three collapsible groups, and everything installable is gathered into one "Can be installed" block with a single *Install all* — a dozen packages no longer push the first card off screen
+- **Every widget explains itself**: a widget's own how-to lives in its manifest, so it travels with the package. Read it from the inspector, or from the `?` on its library card, together with a short "what changed" history
 
 The full argument is in [ARCHITECTURE](./docs/ARCHITECTURE.md) (Chinese).
 
@@ -256,7 +258,7 @@ src/
 public/widgets/      Official widget packages (only "available" until installed)
 public/store/        Offline-fallback catalogue (generated at build time: registry.json + signed packages)
 examples/counter/    Third-party sample (drag it in to install)
-tests/               Self-check pages: 24 pages, 665 assertions, all in the browser (+1 fixture page)
+tests/               Self-check pages: 30 pages, 890 assertions, all in the browser (+1 fixture page)
 scripts/             Build helpers (widget index, store index, signing, toolchain PATH, diagnostics injection)
 src-tauri/
   src/widgets.rs     Widget scanning / install / uninstall
@@ -279,6 +281,7 @@ docs/
   ARCHITECTURE.md    Architecture and trade-offs
   WIDGET_SPEC.md     Widget spec (read this to write one; publishing and signing in §9)
   ROADMAP.md         Progress, iteration timeline, overturned decisions, pitfalls
+  VELA-REUSE.md      What can be borrowed from the sibling project (vela-cleanroom)
 ```
 
 ## Writing a widget

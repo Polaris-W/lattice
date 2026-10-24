@@ -49,7 +49,9 @@ src/
     Canvas.tsx            画布：放置、空态、缺失组件占位
     WidgetFrame.tsx       画布里的一个组件实例 = 一个沙箱 iframe + 拖拽缩放
     LibraryPanel.tsx      组件库：已安装 / 可安装 / 加载失败 + 搜索过滤 + 评分与举报入口
+    LibSection.tsx        组件库里可折叠的一段：标题行（开合 + 计数）+ 右侧动作位
     CatalogueSection.tsx  商店区：目录条目的卡片、权限对比、安装 / 更新 / 换钥匙确认
+    HelpContent.tsx       组件的"怎么用"：分节正文 + 可折叠变更记录；属性面板与卡片 `?` 共用这一份
     ReportDialog.tsx      举报与评分对话框（没有服务端，落成一份 JSON 文件）
     InspectorPanel.tsx    属性面板：层级、穿透、尺寸、权限授予
     SettingsMenu.tsx      设置浮层：本机档案、外观、网格吸附、目录地址、关于（Ctrl+, 唤出）
@@ -61,6 +63,7 @@ src/
   runtime/
     manifest.ts           清单校验与归一化；Permission 类型与中文标签（唯一真源）
     config.ts             每实例配置：清单 schema（5 类字段）、归一化、值合并
+    help.ts               组件说明与变更记录：清单里的 `help` / `changelog`、上限、逐条丢弃（纯函数，`tests/help.html` 钉着）
     registry.ts           组件发现：bundled（public/widgets）+ user（%APPDATA%）；入口地址解析
     bridge.ts             RPC 桥：方法表、权限闸门、平台内置方法
     appearance.ts         底板外观模型：归一化、合成色、亮度阈值
@@ -68,6 +71,7 @@ src/
     widget-reporter.js    注入进组件文档的上报脚本（**唯一真源**，两条发文档的路都读它）
     schedule.ts           心跳时间轴：可见性取"与"、不可见停摆、回来补一拍
     screen-fit.ts         纯几何：锚点选屏、夹紧（入参一律物理像素，`tests/screen-fit.html` 钉着）
+    align-guides.ts       拖动时的对齐吸附：每条轴只挑一条获胜线，画布边界也是候选（纯函数，`tests/align-guides.html` 钉着）
     library-search.ts     组件库搜索：切词 + 单包命中判定（纯函数，`tests/library-search.html` 钉着）
     debug.ts              调试总线：环形缓冲 400 条、攒批镜像到主窗口、过滤 / 统计纯函数
     semver.ts             版本号与范围：解析 / 比较 / `^ ~ >= <= > < =` / 通配 / `||`（纯函数，`tests/semver.html` 钉着）
@@ -129,7 +133,7 @@ docs/                     架构、组件规范、路线图与踩坑
 
 ---
 
-## 4. 十六条不变量（改代码前必读）
+## 4. 十八条不变量（改代码前必读）
 
 1. **零内置**。平台本身不含任何组件。随应用分发的包（`bundled`）必须显式"安装"（记进 `installedIds`）才可用；用户目录里的包（`user`）在磁盘上即已装。不要为了"体验好一点"让 bundled 自动可用，那会把扩展平台退化成桌面工具。
 
@@ -150,6 +154,7 @@ docs/                     架构、组件规范、路线图与踩坑
 9. **`emit_to` 是广播，收件人自己认领**。`emit_to(label)` 听着像"只发给那个窗口"，其实不是：JS 侧 `listen()` 注册的监听器 target 是 `Any`，而 Tauri 的匹配规则是 `target == Any || filter(target)`（`event/listener.rs::match_any_or_filter`）—— **任何** emit 都会送到**每个**窗口的 `Any` 监听器上。所以凡是"发给某个窗口"的事件，载荷里都要带身份（`instanceId` 或窗口 `label`），由宿主页比一次再处理。不带的后果不是报错，是**串味**：拖 A 的底板滑杆四张卡片一起变色，撤 A 的一项权限四个组件一起重载、未落盘的草稿当场丢。`lattice:theme` 是唯一**故意**全局的（平台切明暗，所有窗口都该跟着换）。
 
 10. **看不见就别跑**。组件的心跳一律挂在 `runtime/schedule.ts` 的时间轴上，不自己 `setInterval`。窗口不可见时整条时间轴停摆，回来只补一拍。**"不可见"有两个来源**：`document.visibilityState` 和 Rust 发来的 `lattice:window-visible` —— 前者对"窗口最小化"完全无感（实测最小化前后都是 `visible`），只盯它等于没停。加了新的"窗口状态"判断，先想清楚该不该停摆，别在组件里各写一套。
+    - **`requestAnimationFrame` 不是例外，是另一件事**：它画的是"这一帧的读数"，正确性不依赖它跑多少拍 —— 秒表存的是按下去的那一刻，卡片藏起来时 rAF 自然停，回来按时间戳重算一次就是对的。需要**平台在不可见时也保持节奏**、或者要**多组件对齐同一拍**的，才必须走时间轴。另外时间轴的最小间隔是 250ms（`MIN_INTERVAL`），拿它刷百分秒会每帧跳 25 个数，看着像卡了而不是在计时。
 
 11. **关窗口 ≠ 删用户数据**。`widget_close` 收一个 `reason`，**只有 `reason == "user"`（宿主页 ✕ 按钮）才发 `lattice:widget-close` 让主窗口删 placement**；别的来路（组件自己调桥的 `window.close`、或将来任何新入口）只关窗口，实例记进 `Runner.suppressed`，本次运行不再重建。placement 是用户摆好的布局，属于用户数据；窗口只是它的一个渲染。一条命令兼两种语义的代价，是任何一次意外调用都会静默删掉用户的东西 —— 这条坑真实发生过三次。加新的"关闭"入口时，`reason` 必须显式传，不许省；`widget_close` 里那行 `eprintln!` 也不许删，它记录的正是"谁关的"。（`reason: user` 这一路仍然会真的删 —— 手滑的兜底不在这里，在 UI 侧：`removePlacement` 会把快照留在 `lastClosed` 里，主窗口底部弹 8 秒 `Undo`。所以**别在 `removePlacement` 之外的地方直接 `filter` 掉 placement**，那等于绕开撤销。）
 
@@ -181,7 +186,18 @@ docs/                     架构、组件规范、路线图与踩坑
     - **只在用户点击时检查，没有后台轮询**。加了轮询就要回答"多久一次、失败重试几次、用户关了怎么办"，而收益只是"早几天知道"。
     - **装完 `restart()`，不是 `exit()`**。新二进制只有新进程才会跑；更新完应用自己消失，用户会当成更新失败。走自定义命令 `restart_app`，不引 `plugin-process`。
     - **release 先出草稿**。`/releases/latest` 只认已发布的 release，草稿期间更新器查不到东西（等于没发）。先发再验 = 拿全体用户当灰度。
-    - **发布时别勾 "Set as a pre-release"**。`/releases/latest` 跳过的不只是草稿，还有**预发布**：勾上之后 release 页面正常、产物都在、`releases/download/v0.1.0/latest.json` 也 200，唯独 `releases/latest/download/latest.json` 是 404 —— 也就是更新器唯一会去敲的那个地址。v0.1.0 就这么挂了一版。症状更坑：插件对**任何非 2xx** 都只记日志，最后统一抛 `Error::ReleaseNotFound`，跟真断网**是同一句话**，界面上于是显示"检查你的网络"。`describeUpdateError` 现在先认这一条再认网络（`tests/updater.html` 14 条断言钉着），但根治还是别勾那个框。
+    - **发布时别勾 "Set as a pre-release"**。`/releases/latest` 跳过的不只是草稿，还有**预发布**：勾上之后 release 页面正常、产物都在、`releases/download/v0.1.0/latest.json` 也 200，唯独 `releases/latest/download/latest.json` 是 404 —— 也就是更新器会去敲的那个地址。v0.1.0 就这么挂了一版。症状更坑：插件对**任何非 2xx** 都只记日志，最后统一抛 `Error::ReleaseNotFound`，跟真断网**是同一句话**，界面上于是显示"检查你的网络"。`describeUpdateError` 现在先认这一条再认网络（`tests/updater.html` 14 条断言钉着），但根治还是别勾那个框。
+
+17. **说明写在清单里，改了行为就补一条 changelog**。组件的"怎么用"是 `manifest.json` 的 `help`，不是包里的 README —— 组件是纯静态目录，平台没有 Markdown 渲染器，写进清单才能跟着包走（同目录、同提交、同签名）、离线能看、第三方能用，还能被 `tests/help.html` 真的读出来对账。四条别踩回去：
+    - **坏条目逐条丢**，和 `config` / `icon` 同一条规矩。一节没标题、一条是空串、版本号不合法 —— 丢那一条，包照常加载。说明是锦上添花，不该有"让组件打不开"的权力。
+    - **上限不是建议**。6 节 × 6 条 × 160 字、变更 12 条 × 8 项，`runtime/help.ts` 里是真截断。放宽它之前先想清楚 320px 面板放不放得下。
+    - **改了组件行为，同一次提交里把当前版本那一条 changelog 补上**。`tests/help.html` 会红：写了说明的组件，changelog 里必须有 `version === manifest.version` 的那一条。写用户能看懂的话（"拖动排序"），不写内部重构。
+    - **每个 `config` 字段都得有交代**：要么字段自带 `help`，要么在说明正文里被提到。用户看见一个开关却不知道它干什么，等于没做这个开关。这条也是 `tests/help.html` 钉着的。
+
+18. **先画第一帧，再等桥**。组件的 `config.get` / `storage.get` 都是往返，宿主慢一点（或者根本没宿主）就是几秒钟的空白卡片 —— 而第一帧要画的通常只是默认值（`00:00.00`、`m → ft`）。正确顺序是：同步按默认值渲染 → 发请求 → 回来再改。三条别踩回去：
+    - **存档迟到时用 `touched` 闸门挡住**。桥回来之前用户完全可能已经点过分类、打过数字，这时候再把存档盖上去，等于把他刚做的选择撤销掉。宁可这次不恢复，也不能吃掉用户的操作。
+    - **别把"等桥"写进首屏路径**，也别用"加载中"占位 —— 空白卡片和骨架屏只是把同一个等待画得更久。
+    - 自检页顺带受益：DOM 同步就有了，`tests/convert.html` / `tests/stopwatch.html` 可以直接操作组件自己的按钮，不用先等桥超时（`config.get` + `storage.get` 各 3 秒，最坏 6 秒）。
 
 ---
 
@@ -478,7 +494,7 @@ public/widgets/<id>/
 ## 11. 验证
 
 - `npm run typecheck` —— 必跑，当前是干净的
-- **`npm run test:browser`** —— 跑一遍 `tests/*.html` 里的全部断言（24 页 / 665 条）。先 `npm run dev` 起 dev server（默认 1420），另一个终端跑它；`--filter catalogue` 只跑匹配的页。它用 headless Chrome 的 `--dump-dom` 读 `<pre id="out">`，所以**页面的断言必须写成 `PASS …` / `FAIL …` 两行式**，别的格式它数不到。CI 里这条是 `browser` job，红在哪一页会直接打出来。
+- **`npm run test:browser`** —— 跑一遍 `tests/*.html` 里的全部断言（30 页 / 890 条）。先 `npm run dev` 起 dev server（默认 1420），另一个终端跑它；`--filter catalogue` 只跑匹配的页。它用 headless Chrome 的 `--dump-dom` 读 `<pre id="out">`，所以**页面的断言必须写成 `PASS …` / `FAIL …` 两行式**，别的格式它数不到。CI 里这条是 `browser` job，红在哪一页会直接打出来。
 - 改了组件 UI：`npm run dev` 后在浏览器里看；要截固定尺寸的图，用 Edge headless：
   ```bash
   msedge --headless=new --disable-gpu --force-device-scale-factor=2 \
