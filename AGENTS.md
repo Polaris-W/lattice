@@ -383,7 +383,7 @@ public/widgets/<id>/
 
 已修（别再改回去）：**换钥匙必须让用户看见两把指纹**。`planInstall` 先验签名再看版本（反过来的话，换了钥匙的包会被当成一次普通更新装进去），返回 `untrusted` 时 `CatalogueSection` 印出本地钥匙和新钥匙的指纹，点确认才走 `trustKey` + 安装。别加"检测到新钥匙就自动信任"的分支 —— 那等于把第三道校验删了。
 
-已修（别再改回去）：**改组件文件不用再手动重载**。`watch.rs` 用 `ReadDirectoryChangesW` 盯两个根（用户组件目录 + `public/widgets`），递归，合并成一条 `lattice:widgets-changed` 发给主窗口；`widgetHost.ts` 按 `${config.widgetId}/` 前缀过滤后自己 `reloadWidget()`。四条别踩回去：**去抖按"静默 300ms"算、不是固定 300ms**（存一次盘会连出三四个事件，固定窗口会把一次保存切成两次重载，组件闪两下）；**必须有 `MAX_HOLD` 上限（2000ms）**——一直存盘的话"静默"永远等不到，没有上限就永不触发；**安装/卸载期间要抑制**（`SUPPRESS` 那个 `AtomicBool` + `Suppress` RAII），装一个组件是几十个文件的批量拷贝，不抑制就是十几次重载；**只重载受影响的组件**，别的组件跟着刷新等于把用户正在打的字清掉。
+已修（别再改回去）：**改组件文件不用再手动重载**。`watch.rs` 用 `ReadDirectoryChangesW` 盯两个根（用户组件目录 + `public/widgets`），递归，合并成一条 `lattice:widgets-changed` 发给主窗口；`widgetHost.ts` 按 `${config.widgetId}/` 前缀过滤后自己 `reloadWidget()`，画布上的 `WidgetFrame` 听同一个事件、做同一件事（按前缀筛 + 给 `src` 加时间戳重挂 iframe）。五条别踩回去：**去抖按"静默 300ms"算、不是固定 300ms**（存一次盘会连出三四个事件，固定窗口会把一次保存切成两次重载，组件闪两下）；**必须有 `MAX_HOLD` 上限（2000ms）**——一直存盘的话"静默"永远等不到，没有上限就永不触发；**安装/卸载期间要抑制**（`SUPPRESS` 那个 `AtomicBool` + `Suppress` RAII），装一个组件是几十个文件的批量拷贝，不抑制就是十几次重载；**只重载受影响的组件**，别的组件跟着刷新等于把用户正在打的字清掉；**两条宿主都要接**——画布那条以前漏了，症状是"改一行 CSS，桌面上的卡片自己变了、画布上那张一动不动"，而画布恰好是先把样子调好再投到桌面的地方，于是每改一次都要删掉重拖。
 
 已修（别再改回去）：**有托盘了**。`tray.rs` 三项：打开主窗口 / 暂停全部组件 / 退出，左键单击直接唤回主窗口（`show_menu_on_left_click(false)`）。两条：**托盘菜单和设置菜单必须走同一组命令**（`toggle_paused` / `instance::show_main` / `app.exit`），各写一套的话两边状态会飘——托盘说"Resume"、设置菜单里那个勾却是空的；**暂停项的文案要跟着 `widgets_paused` 走**，每次点击后重新 `set_text`，别只在建菜单时写一次。
 

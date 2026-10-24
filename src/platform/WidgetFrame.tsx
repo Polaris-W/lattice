@@ -36,6 +36,20 @@ import { snap, useLattice, type Placement } from "./store";
 /** 画布上最多记几条。这里只显示一条，其余靠 +N 提示，不需要留太多 */
 const MAX_CANVAS_ERRORS = 6;
 
+/**
+ * 给入口地址加一个重载戳。
+ *
+ * 重挂 iframe（`key` 变了）只说明 React 重建了元素，浏览器那边照样可以命中
+ * 缓存 —— 改完 CSS 一看没变化，人会去怀疑"是不是没存盘"。加上时间戳之后
+ * 每次都是新 URL，缓存一定落空。
+ *
+ * 两种协议都忽略 query：内置组件走应用自己的源，用户组件走 `lattice-widget://`，
+ * 而 `protocol.rs` 取的是 `uri().path()`，query 不参与文件解析。
+ */
+function withReloadStamp(url: string, stamp: number): string {
+  return `${url}${url.includes("?") ? "&" : "?"}__lattice_reload=${stamp}`;
+}
+
 interface WidgetFrameProps {
   record: WidgetRecord;
   placement: Placement;
@@ -255,6 +269,39 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
     };
   }, [post, record.manifest.id]);
 
+  /*
+   * 组件文件变了就重挂 iframe。
+   *
+   * 桌面窗口那条路早就这么做了（`widgetHost.ts` 听同一个事件，给 iframe 的
+   * `src` 加一个时间戳），画布这边一直没接 —— 差别很难受：改一行 CSS，
+   * 桌面上的卡片自己就变了，画布上那张一动不动。而画布恰好是"先在这儿把样子
+   * 调好、再投到桌面"的地方，于是每改一次都要把组件删掉再拖一个回来。
+   *
+   * 只认自己那一份：桌面上摆五个组件，改一个另外四个一起闪的话，每次闪都
+   * 意味着重建一次 iframe、重跑一遍组件脚本、丢掉它内存里的状态。
+   */
+  useEffect(() => {
+    if (!isTauri()) return;
+    let dispose: (() => void) | undefined;
+    let disposed = false;
+    const prefix = `${record.manifest.id}/`;
+
+    void listen<{ files: string[] }>("lattice:widgets-changed", (event) => {
+      const mine = event.payload.files.some(
+        (file) => file === record.manifest.id || file.startsWith(prefix),
+      );
+      if (mine) setReloadKey((value) => value + 1);
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else dispose = unlisten;
+    });
+
+    return () => {
+      disposed = true;
+      dispose?.();
+    };
+  }, [record.manifest.id]);
+
   // ---- 拖动 ----
   const dragState = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(
     null,
@@ -375,7 +422,14 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
           ref={iframeRef}
           className="lattice-widget-frame"
           title={record.manifest.name}
-          src={record.entryUrl}
+          /*
+           * 重挂时带一个时间戳，否则拿回来的还是缓存里那一份 ——
+           * `key` 换了只说明 React 重建了元素，浏览器那边仍然可以命中缓存。
+           * 内置组件走应用自己的源、用户组件走 `lattice-widget://`，两种协议
+           * 都会忽略 query（`protocol.rs` 取的是 `uri().path()`），所以拼上去
+           * 对文件解析没有影响。
+           */
+          src={reloadKey === 0 ? record.entryUrl : withReloadStamp(record.entryUrl, reloadKey)}
           sandbox="allow-scripts allow-forms"
           referrerPolicy="no-referrer"
           style={{ pointerEvents: placement.clickThrough ? "none" : "auto" }}
