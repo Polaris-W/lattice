@@ -708,6 +708,14 @@ npm run sign:widget -- --gen-key --out publisher.key    # 只做一次，私钥�
 npm run sign:widget -- dist-packs/my-widget-1.0.0.lattice --key publisher.key
 ```
 
+发到**公共目录**（`lattice-registry`）不用手工走这三步，一条命令做完打包、签名、写 sidecar、重建 `registry.json`：
+
+```bash
+npm run publish:widget -- public/widgets/lattice.note --key ../lattice-registry/.keys/publisher.key
+```
+
+它只回答一件事：registry 仓库里改了哪几个文件、下一条 `git` 命令是什么。两道闸值得知道：**同一个版本号但内容变了会被拒**（版本号没变，装过旧包的人收不到更新，等于把新代码埋了），确实要覆盖加 `--force`；同样的内容重发是幂等的，不会产生一个"什么都没变"的提交。`npm run store:index` 是另一件事 —— 它生成跟着应用一起发的**内置演示目录**，用的是仓库里那把公开钥匙，别和真私钥混用。
+
 签名是 **ed25519，签的是整个包文件的字节**（不是清单、不是文件树）。输出的 `publicKey` 和 `sha256` 要写进目录条目。一份真实的目录长这样（`npm run store:index` 生成的那份）：
 
 ```json

@@ -307,7 +307,7 @@ public/widgets/lattice.hello/
 
 这些样板可以不写：`npm run create:widget -- demo.mine` 会一次写好清单、页面、样式、图标和已经带心跳的组件脚本；`@lattice/sdk`（`packages/sdk`）把桥包成 `await`——写一次存储不用再自己维护一张 promise 表。SDK **是可选的**，`public/widgets` 下的官方组件全部手写，它们就是"不装 SDK 也能写"的证明。
 
-写完了要发出去：`npm run pack:widget -- <目录>` 打成一个 `.lattice`（确定性 zip，谁都能拖进自己窗口装上）；要进商店就 `npm run store:index`，它会打包、签名、写目录。**版本号决定一切** —— 抬了 `version` 用户才会看到"可更新"，签名和换钥匙的规矩见 [WIDGET_SPEC §9](./docs/WIDGET_SPEC.md#9-发布版本与签名)。
+写完了要发出去：`npm run pack:widget -- <目录>` 打成一个 `.lattice`（确定性 zip，谁都能拖进自己窗口装上）；要进商店就 `npm run store:index`，它会打包、签名、写目录。发到**公共目录**（`lattice-registry`）用 `npm run publish:widget -- <目录> --key <私钥>` —— 打包、签名、重建目录一次做完，最后只告诉你该提交哪几个文件。**版本号决定一切** —— 抬了 `version` 用户才会看到"可更新"，签名和换钥匙的规矩见 [WIDGET_SPEC §9](./docs/WIDGET_SPEC.md#9-发布版本与签名)。
 
 **不随应用分发的组件不用改仓库**：把整个目录从资源管理器拖进棂的窗口就装好了，文件会复制到 `%APPDATA%\com.iron-tom.lattice\widgets\<id>\`，由自定义协议 `lattice-widget://` 直接加载。[`examples/counter`](./examples/counter) 是一个可以直接拖进去的样本。
 

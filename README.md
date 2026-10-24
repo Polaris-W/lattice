@@ -311,7 +311,7 @@ You can skip the boilerplate: `npm run create:widget -- demo.mine` writes the ma
 
 To hand a widget to someone else, pack it first: `npm run pack:widget -- examples/counter` writes `dist-packs/counter.lattice`, and that single file installs the same way when dropped in. The pack is deterministic (sorted entries, fixed timestamp), so the same folder always produces the same bytes — which is what makes "is this the package I shipped?" answerable, and what the signature check is built on.
 
-To publish it in the catalogue, run `npm run store:index`: it packs, signs and writes `registry.json`. **The version number is what counts** — users only see "update available" when `version` goes up. The signing rules and the key-change flow are in [WIDGET_SPEC](./docs/WIDGET_SPEC.md) §9 (the doc is in Chinese).
+To publish it in the catalogue, run `npm run store:index`: it packs, signs and writes `registry.json`. For the **public** catalogue (`lattice-registry`), use `npm run publish:widget -- <dir> --key <private key>` — it packs, signs, rebuilds the catalogue and ends by telling you exactly which files to commit. **The version number is what counts** — users only see "update available" when `version` goes up. The signing rules and the key-change flow are in [WIDGET_SPEC](./docs/WIDGET_SPEC.md) §9 (the doc is in Chinese).
 
 ## License
 
