@@ -210,12 +210,12 @@ fn split_path(raw: &str) -> Option<(String, PathBuf)> {
     Some((id.to_string(), relative))
 }
 
-/// 和 `install_widget` 用的是同一套规则
+/// 和安装、备份、报告用的是同一套规则 —— 别再写第二份。
+///
+/// 以前这里抄了一份，四份都少了"不许以点或连字符开头/结尾"那一句，
+/// 于是 `/../index.html` 的 id 是 `..`，`root.join("..")` 直接跳到父目录。
 fn is_safe_id(id: &str) -> bool {
-    !id.is_empty()
-        && id
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-')
+    crate::signature_policy::safe_id(id).is_some()
 }
 
 /// 把相对路径拼到组件目录下，并确认拼完还在目录里。

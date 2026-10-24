@@ -162,10 +162,22 @@ pub(crate) fn base64_encode(bytes: &[u8]) -> String {
     out
 }
 
-/// 组件 id 能不能直接当文件名用（报告文件、备份目录）。
-/// 和清单里的 id 规则一致，但这里**只**关心"不能有路径分隔符"。
+/// 组件 id 能不能直接当文件名 / 目录名用（协议路径、报告文件、备份目录、安装目标）。
+///
+/// 规则：只允许小写字母、数字、`.`、`-`，**而且不许以 `.` 或 `-` 开头/结尾**。
+///
+/// 最后那半句不是洁癖。`.` 本身是合法字符，所以 `".."` 和 `"."` 都能过"只允许
+/// 这些字符"那一关 —— 而 `root.join("..")` 正好是 root 的**父目录**。
+/// `protocol.rs` 里那条 `/../index.html` 的断言（"id 是 `..` 时必须 404"）
+/// 就是这么红的：它一直没在任何机器上跑过，直到 CI 补上 `cargo test`。
+///
+/// 这条规则以前在四个地方各写了一份（`protocol` / `package` / `widgets` / 这里），
+/// 四份都少了同一句 —— 现在只剩这一份，另外三处都调它。
 pub(crate) fn safe_id(id: &str) -> Option<&str> {
     if id.is_empty() || id.len() > 128 {
+        return None;
+    }
+    if id.starts_with('.') || id.starts_with('-') || id.ends_with('.') || id.ends_with('-') {
         return None;
     }
     if id
@@ -246,5 +258,19 @@ mod tests {
         assert!(safe_id("../evil").is_none());
         assert!(safe_id("Lattice.Clock").is_none());
         assert!(safe_id("").is_none());
+    }
+
+    #[test]
+    fn an_id_made_only_of_dots_is_not_an_id() {
+        // 这几个都能过"只允许小写字母/数字/点/连字符"，但拼进路径就是"上一级"
+        assert!(safe_id("..").is_none());
+        assert!(safe_id(".").is_none());
+        assert!(safe_id("-").is_none());
+        assert!(safe_id(".hidden").is_none());
+        assert!(safe_id("trailing.").is_none());
+        assert!(safe_id("trailing-").is_none());
+        // 中间连续的点无所谓：拼进路径还是一个段，不会变成目录跳转
+        assert_eq!(safe_id("a..b"), Some("a..b"));
+        assert_eq!(safe_id("demo.counter"), Some("demo.counter"));
     }
 }

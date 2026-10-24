@@ -73,10 +73,11 @@ jobs:
           npm run test:browser -- --base http://localhost:1420 2>&1 | tee /tmp/browser.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            # 把失败那几行写成 annotation。
+            # 把最后十几行写成 annotation。
             # 理由很实在：runner 上的完整日志要登录才看得到，而 annotation 走
             # `/check-runs/<id>/annotations` 是公开可读的 —— 下次排查不用再找人贴日志。
-            grep -E "FAIL |^  ! |0 条|——" /tmp/browser.log | head -10 | while IFS= read -r line; do
+            # 用 tail 而不是 grep：脚本自己崩掉时，要看的正是那段堆栈。
+            tail -12 /tmp/browser.log | while IFS= read -r line; do
               echo "::error::$line"
             done
             exit 1
@@ -108,19 +109,9 @@ jobs:
         working-directory: src-tauri
         shell: pwsh
         run: |
-          cargo test --lib --no-run
-
-          # tauri 的 build script 把 WebView2Loader.dll 放在 target/debug/，
-          # 而测试二进制在 target/debug/deps/ —— Windows 的 DLL 搜索只看 exe 所在目录
-          # 和系统目录，不看上两级。少了这个文件，测试进程根本起不来
-          # （0xc0000135 STATUS_DLL_NOT_FOUND），看起来却像"测试挂了"。
-          if (Test-Path target/debug/WebView2Loader.dll) {
-            Copy-Item target/debug/WebView2Loader.dll target/debug/deps/ -Force
-            Write-Host "WebView2Loader.dll copied next to the test binary"
-          } else {
-            Write-Host "::warning::WebView2Loader.dll is not in target/debug — the test binary may not start"
-          }
-
+          # 测试二进制在 target/debug/deps/，而 WebView2Loader.dll 在 target/debug/ ——
+          # 一度以为 DLL 搜不到会让进程起不来（0xc0000135），实测不需要：
+          # 97 条断言跑起来了，唯一红的是断言本身。
           $output = cargo test --lib 2>&1
           $code = $LASTEXITCODE
           $output | Tee-Object -FilePath ../cargo-test.log

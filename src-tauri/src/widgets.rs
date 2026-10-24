@@ -118,12 +118,8 @@ pub fn install_widget(app: AppHandle, source: String) -> Result<String, String> 
         .and_then(|value| value.as_str())
         .ok_or_else(|| "manifest.json is missing the id field".to_string())?;
 
-    // 防目录穿越：id 只允许小写字母、数字、点、连字符
-    if id.is_empty()
-        || !id
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-')
-    {
+    // 防目录穿越：id 的规则只有一份，在 `signature_policy::safe_id`
+    if crate::signature_policy::safe_id(id).is_none() {
         return Err(format!("widget id \"{id}\" contains illegal characters"));
     }
 

@@ -51,11 +51,7 @@ pub(crate) fn extract(archive: &[u8], root: &Path, backups: Option<&Path>) -> Re
         .ok_or_else(|| "manifest.json is missing the id field".to_string())?
         .to_string();
 
-    if id.is_empty()
-        || !id
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-')
-    {
+    if crate::signature_policy::safe_id(&id).is_none() {
         return Err(format!("widget id \"{id}\" contains illegal characters"));
     }
 
