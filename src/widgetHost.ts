@@ -38,6 +38,7 @@ import {
   readThemeTokens,
 } from "./runtime/bridge";
 import { enableMirror, isWidgetLog, trace } from "./runtime/debug";
+import { decideClose, type CloseDecision } from "./runtime/close-guard";
 import { createScheduler } from "./runtime/schedule";
 import { fitAnchor, type FitOptions, type ScreenBox } from "./runtime/screen-fit";
 import type { ConfigValues } from "./runtime/config";
@@ -816,37 +817,102 @@ function buildChrome(config: HostConfig) {
    */
   reloadBtn.addEventListener("click", reloadWidget);
 
+  /*
+   * 关窗：从"点一下就算"改成"按下和松开都落在 ✕ 上才算"。
+   *
+   * 原来的写法只挂了一个 `click`，判断里只有"窗饰淡到几成了"。可日志里那几次
+   * 幽灵关闭带着完整的指针特征（`isTrusted`、`detail: 1`、`pointer: mouse`），
+   * 落点正好在 ✕ 中心 —— 光看 click 分不出它和真点击。现在把整段指针序列
+   * 收下来交给 `decideClose`（runtime/close-guard.ts，22 条断言钉着）：
+   * 没有 pointerdown 的点击一律不认，坐标已经不在按钮上的也不认。
+   *
+   * 键盘（Enter / 空格）走另一条：那类 `click` 的 `detail` 是 0，没有指针
+   * 序列，用指针规则去卡它等于把键盘用户挡在门外。
+   */
+  let press: { id: number; x: number; y: number } | null = null;
+
+  closeBtn.addEventListener("pointerdown", (event) => {
+    press = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  });
+
+  // 松手可能落在按钮外面（拖出去再松），所以监听挂在 window 上，
+  // 用捕获阶段，免得被别的处理器 stopPropagation 掉
+  window.addEventListener(
+    "pointerup",
+    (event) => {
+      const started = press;
+      press = null;
+      if (!started || event.button !== 0) return;
+      // 不是按在 ✕ 上开始的松开，和关窗无关（可能是拖窗、点组件）
+      if (started.id !== event.pointerId) return;
+
+      const decision = decideClose({
+        opacity: chromeOpacity(),
+        keyboard: false,
+        downOnButton: true,
+        upOnButton: closeBtn.contains(event.target as Node),
+        hitAtRelease: closeBtn.contains(document.elementFromPoint(event.clientX, event.clientY)),
+        samePointer: true,
+        travel: Math.hypot(event.clientX - started.x, event.clientY - started.y),
+      });
+      if (!decision.accept) {
+        console.info(`[lattice] close refused (${decision.reason}): ${decision.detail}`);
+        return;
+      }
+      commitClose(decision, {
+        trusted: event.isTrusted,
+        detail: 0,
+        pointer: event.pointerType ?? "",
+        at: `${event.clientX},${event.clientY}`,
+      });
+    },
+    true,
+  );
+
   closeBtn.addEventListener("click", (event) => {
-    /*
-     * 手滑保护：窗饰是 `body:hover` 才显示的，从透明到可见要 100ms ——
-     * 而那颗 ✕ 在淡入的第一帧就已经能点。窗口刚在鼠标底下建出来的那一下，
-     * 随手一点就中招（真机上撞到过三次"组件自己从画布上消失"，探针最后抓到的
-     * 是一条落在 ✕ 中心、`isTrusted: true` 的 mousedown）。
-     *
-     * 判据直接用"窗饰淡到几成了"：还不到九成，说明用户几乎没看见这颗按钮，
-     * 这一下不认。不用计时器 —— 计时器要依赖 mouseenter，而指针一直停在
-     * iframe 里时那个事件可能压根不触发，测不出来就变成误挡。
-     */
-    const opacity = pill ? Number.parseFloat(getComputedStyle(pill).opacity) : 1;
-    if (opacity < 0.9) {
-      console.info(`[lattice] close ignored: chrome still fading (opacity ${opacity.toFixed(2)})`);
+    // 有指针序列的点击已经在上面的 pointerup 里处理过了，别关两次
+    if (event.detail > 0) return;
+
+    const decision = decideClose({
+      opacity: chromeOpacity(),
+      keyboard: true,
+      downOnButton: true,
+      upOnButton: true,
+      hitAtRelease: true,
+      samePointer: true,
+      travel: 0,
+    });
+    if (!decision.accept) {
+      console.info(`[lattice] close refused (${decision.reason}): ${decision.detail}`);
       return;
     }
+    commitClose(decision, {
+      trusted: event.isTrusted,
+      detail: event.detail,
+      pointer: "",
+      at: `${event.clientX},${event.clientY}`,
+    });
+  });
 
+  /** 窗饰现在有多不透明。读不到就按 0 算 —— 宁可挡一次，也别误删布局 */
+  function chromeOpacity(): number {
+    if (!pill) return 1;
+    const value = Number.parseFloat(getComputedStyle(pill).opacity);
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  function commitClose(decision: CloseDecision, input: { trusted: boolean; detail: number; pointer: string; at: string }) {
     /*
      * 点击特征跟着 IPC 一起走，**不再**用 console.info 打。
      *
      * 这条路径会动用户的布局，"组件自己从画布上消失"那件事查到今天还没结案，
      * 缺的就是"那一下是什么点击"。宿主页的 console 在 vite dev 下不会转发到
      * 终端，写了也看不见；塞进参数里，Rust 侧就能和 `widget_close` 打在同一行。
+     *
+     * `why` 是这一轮新加的判据：它等于 `ok` 说明这次是"按在 ✕ 上又松在 ✕ 上"
+     * 的完整序列 —— 下次再复现，这一栏能直接告诉我们是哪条分支放过去的。
      */
-    const origin = {
-      trusted: event.isTrusted,
-      detail: event.detail,
-      // click 在 Chromium 里是 PointerEvent，触摸/笔会在这里露出来
-      pointer: (event as PointerEvent).pointerType ?? "",
-      at: `${event.clientX},${event.clientY}`,
-    };
+    const origin = { ...input, why: decision.reason };
 
     // 先让窗口自己消失，再走 IPC 去真正销毁。
     // 只调 window.close() 的话，要等 WebView2 把渲染进程拆完（几百毫秒），
@@ -860,7 +926,7 @@ function buildChrome(config: HostConfig) {
       closeBtn.disabled = false;
       void win.show().catch(() => {});
     });
-  });
+  }
 
   document.body.appendChild(chrome);
 }

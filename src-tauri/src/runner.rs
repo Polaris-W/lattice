@@ -905,6 +905,11 @@ pub fn widget_set_layer(
 /// - `synthetic` —— 脚本 `dispatchEvent` 出来的
 /// - `detail: 0` 且坐标 `0,0` —— 键盘激活（Enter / 空格）而非指针
 /// - `pointer: touch` / `pen` —— 触摸屏或笔，Windows 上可能被误判
+/// - `why: ok` —— 宿主页那条 `decideClose` 判据放行的原因（`runtime/close-guard.ts`）。
+///   现在是 `ok` / `keyboard` 两种之一；其余分支（`no-press`、`stale-position` …）
+///   根本不会走到这里，只留在宿主页的 console 里。**下次再撞到"组件自己消失"，
+///   先看这一栏**：`ok` 说明那确实是一段按下 + 松开的完整序列，`keyboard` 说明
+///   是键盘激活，两者指向的方向完全不同。
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseOrigin {
@@ -913,6 +918,8 @@ pub struct CloseOrigin {
     pointer: Option<String>,
     /// `clientX,clientY` 拼好的字符串 —— Rust 这边不拆，只为了能对上下文
     at: Option<String>,
+    /// 宿主页放行这次关闭的理由（见上）
+    why: Option<String>,
 }
 
 impl CloseOrigin {
@@ -927,9 +934,10 @@ impl CloseOrigin {
             None => "?".to_string(),
         };
         format!(
-            "{trusted} detail={detail} pointer={} at={}",
+            "{trusted} detail={detail} pointer={} at={} why={}",
             self.pointer.as_deref().filter(|text| !text.is_empty()).unwrap_or("?"),
             self.at.as_deref().unwrap_or("?"),
+            self.why.as_deref().unwrap_or("?"),
         )
     }
 }

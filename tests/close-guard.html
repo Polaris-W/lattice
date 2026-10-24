@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>close guard test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      /*
+       * ✕ 的判定规则。
+       *
+       * 这些断言的意义在于"挡住哪些不该发生的关闭" —— 每一条 reject 对应一种
+       * 真实撞见过的坏情况：窗饰还在淡入（点到了看不见的按钮）、没有按下的
+       * 幽灵点击、按下在别处、窗口挪走之后才被处理的迟到输入。
+       */
+      import { decideClose, MIN_OPACITY, MAX_TRAVEL_PX } from "../src/runtime/close-guard.ts";
+
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const eq = (actual, expected, text) =>
+        log(JSON.stringify(actual) === JSON.stringify(expected), `${text}（得到 ${JSON.stringify(actual)}）`);
+
+      /** 一次"标准的好点击"：其余用例都从它改一个字段 */
+      const good = {
+        opacity: 1,
+        keyboard: false,
+        downOnButton: true,
+        upOnButton: true,
+        hitAtRelease: true,
+        samePointer: true,
+        travel: 0,
+      };
+      const verdict = (patch) => decideClose({ ...good, ...patch });
+
+      // ---- 1. 该认的 ----
+
+      eq(verdict({}).accept, true, "按下 + 松开都在 ✕ 上 → 认");
+      eq(verdict({}).reason, "ok", "原因是 ok（日志里能靠它和别的分支分开）");
+      eq(verdict({ travel: MAX_TRAVEL_PX }).accept, true, "刚好在位移上限上也认（边界包含）");
+      eq(verdict({ travel: MAX_TRAVEL_PX + 1 }).accept, false, "超一个像素就是拖拽");
+      eq(verdict({ opacity: MIN_OPACITY }).accept, true, "刚好够亮就认（边界包含）");
+
+      // ---- 2. 窗饰还在淡入 ----
+
+      eq(verdict({ opacity: 0.89 }).reason, "fading", "没淡入完不认");
+      eq(verdict({ opacity: 0 }).accept, false, "完全透明更不认");
+      eq(verdict({ opacity: Number.NaN }).accept, false, "读不出透明度也不认（宁可挡一次，也别误删布局）");
+
+      // ---- 3. 幽灵点击 ----
+
+      eq(verdict({ downOnButton: false }).reason, "no-press", "没有按下的松开 = 幽灵点击");
+      eq(
+        verdict({ downOnButton: false, upOnButton: false, hitAtRelease: false }).reason,
+        "no-press",
+        "连按下都没有时，先报最根本的那条",
+      );
+
+      // ---- 4. 按下和松开不在同一处 ----
+
+      eq(verdict({ upOnButton: false }).reason, "released-elsewhere", "按下在 ✕ 上、松手在别处");
+      eq(verdict({ hitAtRelease: false }).reason, "stale-position", "坐标上已经不是 ✕ 了（输入迟到）");
+      eq(
+        verdict({ hitAtRelease: false, upOnButton: true }).reason,
+        "stale-position",
+        "命中测试比 target 更严：target 说是，位置说不是，就不认",
+      );
+
+      // ---- 5. 别的指针 / 拖拽 ----
+
+      eq(verdict({ samePointer: false }).reason, "pointer-mismatch", "按下和松开不是同一根指针");
+      eq(verdict({ travel: 40 }).reason, "dragged", "拖着划过去的不算点击");
+
+      // ---- 6. 键盘 ----
+
+      eq(verdict({ keyboard: true }).accept, true, "键盘激活直接认");
+      eq(verdict({ keyboard: true }).reason, "keyboard", "原因是 keyboard");
+      eq(
+        verdict({ keyboard: true, downOnButton: false, upOnButton: false, hitAtRelease: false }).accept,
+        true,
+        "键盘没有指针序列，指针那几条不能拿来卡它",
+      );
+      eq(
+        verdict({ keyboard: true, opacity: 0.1 }).accept,
+        true,
+        "键盘激活时也不看透明度（焦点不可能落在看不见的按钮上）",
+      );
+
+      // ---- 7. 边界值 ----
+
+      eq(decideClose(good).detail.length > 0, true, "每条判断都带一句人能读的说明");
+      eq(verdict({ travel: 3.4 }).accept, true, "小数点位移照常算");
+      eq(verdict({ opacity: 1.5 }).accept, true, "透明度大于 1 也不该炸（夹紧不是这里的事）");
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>
