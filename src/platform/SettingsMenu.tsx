@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { readAgentStatus, setAgentEnabled, type AgentStatus } from "./agent";
 import { isStaleTarget, readAutostart, writeAutostart, type AutostartState } from "./autostart";
 import { Glyph, ICON, ThemeGlyph } from "./icons";
 import { keyFingerprint } from "../runtime/catalogue";
@@ -94,6 +95,16 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
   const [autostartKnown, setAutostartKnown] = useState(false);
   const [autostartBusy, setAutostartBusy] = useState(false);
   const [autostartError, setAutostartError] = useState<string | null>(null);
+  /**
+   * Agent 端点。`null` = 还不知道（浏览器预览 / 读取失败），整行画成禁用。
+   *
+   * 开关只管"听不听"，令牌和端口从 Rust 那边读回来 —— 界面**不显示令牌**，
+   * 只说它在哪个文件里。理由：令牌是给 agent 用的，不是给人抄的；而把它摊在
+   * 设置面板里，截图发出去就泄露了。
+   */
+  const [agent, setAgent] = useState<AgentStatus | null>(null);
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [agentError, setAgentError] = useState<string | null>(null);
   /** 目录来源的草稿。保存之前不动真状态 —— 边打字边生效会一直发请求 */
   const [draftKind, setDraftKind] = useState<CatalogueDraftKind>("official");
   const [draftUrl, setDraftUrl] = useState("");
@@ -247,6 +258,40 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
     };
   }, [open]);
 
+  /*
+   * Agent 端点的状态在 Rust 那边（端口是它绑的），菜单一打开就问一次。
+   * 关掉之后端口就没了，缓存一份会让界面显示一个已经不存在的地址。
+   */
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    void readAgentStatus()
+      .then((status) => {
+        if (alive) setAgent(status);
+      })
+      .catch(() => {
+        if (alive) setAgent(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+
+  const toggleAgent = useCallback(async () => {
+    if (!agent || agentBusy) return;
+    setAgentBusy(true);
+    setAgentError(null);
+    try {
+      // 按返回值落状态，不自己取反：Rust 那边绑端口可能失败，
+      // 自取反就会出现"界面开着、实际没听"
+      setAgent(await setAgentEnabled(!agent.enabled));
+    } catch (error) {
+      setAgentError(String(error));
+    } finally {
+      setAgentBusy(false);
+    }
+  }, [agent, agentBusy]);
+
   const toggleAutostart = useCallback(async () => {
     if (!autostart || autostartBusy) return;
     setAutostartBusy(true);
@@ -399,6 +444,40 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
                       disabled={!autostartKnown || autostartBusy}
                       onChange={() => void toggleAutostart()}
                       aria-label="Start Lattice with Windows"
+                    />
+                  </label>
+                </div>
+
+                {/*
+                  Agent 接入。**默认关**，而且关着的时候 Rust 那边根本不 bind ——
+                  不是"绑上但拒绝"（见 agent.rs）。
+
+                  这里不显示令牌：它是给 agent 用的，不是给人抄的，摊在面板上
+                  截个图就泄露了。只显示端口，令牌位置写在 title 里。
+                */}
+                <div
+                  className="lattice-menu-row is-static"
+                  title="Token lives in %APPDATA%\com.iron-tom.lattice\agent\endpoint.json"
+                >
+                  <Glyph d={ICON.agent} />
+                  <span className="lattice-menu-label">Agent access</span>
+                  <span className="lattice-menu-note">
+                    {agentError
+                      ? agentError
+                      : agent?.enabled
+                        ? `127.0.0.1:${agent.port ?? "…"}`
+                        : ""}
+                  </span>
+                  <label
+                    className="lattice-switch"
+                    title="Let a local agent read and arrange the desktop over 127.0.0.1"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={Boolean(agent?.enabled)}
+                      disabled={!agent || agentBusy}
+                      onChange={() => void toggleAgent()}
+                      aria-label="Allow agent access"
                     />
                   </label>
                 </div>

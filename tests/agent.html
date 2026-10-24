@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>agent executor test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      /*
+       * Agent 动作执行器（前端那一半）。
+       *
+       * 这里跑的是**真的 store**，不是替身：agent 的每个动作都必须走用户点界面
+       * 时走的那条路（addPlacement / updatePlacement / setPaused…），副作用
+       * 才会一样 —— 撤销、落盘、桌面窗口同步。用替身测等于只测了 if 分支。
+       *
+       * Rust 那半边（HTTP、令牌、白名单）在 `agent_policy.rs` 里，21 条
+       * `rustc --test`。两边各测各的，唯一需要人肉对齐的是动作名清单，
+       * 所以第一条断言就把两张表逐字比一遍。
+       */
+      import {
+        AGENT_ACTIONS,
+        agentSnapshot,
+        runAgentAction,
+        runAgentRequest,
+      } from "../src/platform/agent.ts";
+      import { useLattice } from "../src/platform/store.ts";
+
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const eq = (actual, expected, text) =>
+        log(JSON.stringify(actual) === JSON.stringify(expected), `${text}（得到 ${JSON.stringify(actual)}）`);
+      const ok = (condition, text) => log(Boolean(condition), text);
+
+      // ---- 夹具 ----
+
+      const record = (id, size = {}) => ({
+        manifest: {
+          id,
+          name: id.split(".").pop(),
+          version: "1.0.0",
+          size: { w: 240, h: 140, minW: 160, minH: 110, ...size },
+          layer: "desktop",
+          permissions: ["clock"],
+        },
+        source: "builtin",
+        dir: "",
+        entryUrl: "",
+        iconUrl: null,
+      });
+
+      const records = [record("lattice.clock"), record("lattice.todo", { minW: 200, minH: 150 })];
+
+      const reset = (patch = {}) =>
+        useLattice.setState({
+          placements: [],
+          installedIds: ["lattice.clock", "lattice.todo"],
+          configs: {},
+          desktopRects: {},
+          theme: "dark",
+          paused: false,
+          lastClosed: null,
+          ...patch,
+        });
+
+      const act = (action, args) => runAgentAction(action, args, records);
+      const place = (args) => act("placement.add", args);
+      const firstId = () => useLattice.getState().placements[0].instanceId;
+
+      // ---- 1. 动作名清单必须和 Rust 那边逐字一致 ----
+
+      eq(
+        [...AGENT_ACTIONS],
+        [
+          "placement.add",
+          "placement.move",
+          "placement.resize",
+          "placement.remove",
+          "placement.pin",
+          "placement.front",
+          "theme.set",
+          "widgets.pause",
+        ],
+        "白名单就是这 8 个，顺序也一样（agent_policy::ACTIONS）",
+      );
+
+      // ---- 2. 快照 ----
+
+      reset();
+      const snap = agentSnapshot(records);
+      eq(snap.app, "lattice", "快照自称 lattice");
+      eq(snap.placements, [], "空桌面的 placements 是空数组");
+      eq(snap.theme, "dark", "快照带主题");
+      eq(snap.paused, false, "快照带暂停状态");
+      eq(snap.widgets.length, 2, "快照列出所有能装的组件");
+      eq(snap.widgets[0].installed, true, "已装的标 installed");
+      eq(snap.actions.length, 8, "快照自己告诉 agent 有哪些动作");
+      ok(
+        !JSON.stringify(snap).includes("storage"),
+        "快照里不该出现组件存储 —— 那是用户的内容，不是布局",
+      );
+
+      // ---- 3. 加一个 ----
+
+      reset();
+      const added = place({ widgetId: "lattice.clock" });
+      eq(added.ok, true, "装好的组件可以加");
+      ok(added.result.instanceId.startsWith("lattice.clock#"), "实例 id 是 widgetId#后缀");
+      eq(added.result.w, 240, "宽度取清单默认值，不是调用方随便给");
+      eq(useLattice.getState().placements.length, 1, "store 里真的多了一个");
+      eq(agentSnapshot(records).placements[0].name, "clock", "快照里带上了人能读的名字");
+
+      const second = place({ widgetId: "lattice.clock" });
+      ok(second.result.instanceId !== added.result.instanceId, "同一个组件可以放多份，实例 id 不同");
+      ok(second.result.x !== added.result.x, "第二份不会叠在第一份上（复用 nextFreeSlot）");
+
+      eq(place({ widgetId: "lattice.weather" }).code, "not_installed", "没装的组件不给加");
+      eq(place({}).code, "bad_args", "缺 widgetId 是参数错");
+
+      // ---- 4. 移动 / 缩放 ----
+
+      reset();
+      place({ widgetId: "lattice.clock" });
+      const id = firstId();
+      eq(act("placement.move", { instanceId: id, x: 300, y: 120 }).ok, true, "移动成功");
+      eq(useLattice.getState().placements[0].x, 300, "x 真的改了");
+      eq(act("placement.move", { instanceId: id, x: 12.4, y: 0 }).ok, true, "小数坐标照收");
+      eq(useLattice.getState().placements[0].x, 12, "坐标四舍五入成整数（渲染要整数）");
+      eq(act("placement.move", { instanceId: "nope", x: 1, y: 1 }).code, "not_found", "不存在的实例");
+      eq(act("placement.move", { instanceId: id, x: "10" }).code, "bad_args", "字符串坐标不收");
+
+      reset();
+      place({ widgetId: "lattice.clock" });
+      const resized = act("placement.resize", { instanceId: firstId(), w: 400, h: 300 });
+      eq(resized.ok, true, "缩放成功");
+      eq(useLattice.getState().placements[0].w, 400, "宽改了");
+      const clamped = act("placement.resize", { instanceId: firstId(), w: 50, h: 40 });
+      eq(clamped.result.minW, 160, "回报清单里的最小宽度");
+      eq(useLattice.getState().placements[0].w, 160, "小于 minW 会被夹到 minW");
+      eq(useLattice.getState().placements[0].h, 110, "高同理");
+
+      // ---- 5. 置顶 / 固定 / 删除 ----
+
+      reset();
+      place({ widgetId: "lattice.clock" });
+      place({ widgetId: "lattice.todo" });
+      const [a, b] = useLattice.getState().placements.map((item) => item.instanceId);
+      act("placement.front", { instanceId: a });
+      eq(useLattice.getState().placements.map((item) => item.instanceId), [b, a], "置顶 = 挪到数组末尾");
+
+      eq(act("placement.pin", { instanceId: a, pinned: true }).ok, true, "固定成功");
+      eq(useLattice.getState().placements.find((item) => item.instanceId === a).pinned, true, "pinned 真的改了");
+      eq(act("placement.pin", { instanceId: a, pinned: "yes" }).code, "bad_args", "pinned 只收布尔");
+
+      eq(act("placement.remove", { instanceId: b }).ok, true, "删除成功");
+      eq(useLattice.getState().placements.length, 1, "store 里少了一个");
+      ok(useLattice.getState().lastClosed?.placement?.instanceId === b, "删掉的留了一份撤销快照");
+      eq(act("placement.remove", { instanceId: b }).code, "not_found", "删两次第二次报找不到");
+
+      // ---- 6. 主题 / 暂停 ----
+
+      reset();
+      eq(act("theme.set", { theme: "light" }).ok, true, "切到浅色");
+      eq(useLattice.getState().theme, "light", "主题真的改了");
+      eq(act("theme.set", { theme: "system" }).ok, true, "system 也认");
+      eq(act("theme.set", { theme: "sepia" }).code, "bad_args", "没这个主题");
+
+      eq(act("widgets.pause", { paused: true }).ok, true, "暂停");
+      eq(useLattice.getState().paused, true, "paused 真的改了");
+      eq(act("widgets.pause", {}).code, "bad_args", "缺 paused");
+
+      // ---- 7. 白名单外的动作 ----
+
+      for (const denied of ["widget.grant", "widget.install", "widget.uninstall", "config.set", "state.clear"]) {
+        eq(act(denied, {}).code, "unknown_action", `${denied} 在前端这层也拒（第二道闸门）`);
+      }
+      eq(act("placement.explode", {}).code, "unknown_action", "不存在的动作");
+      eq(act("constructor", {}).code, "unknown_action", "原型链上的名字不算动作");
+
+      // ---- 8. op 分发 ----
+
+      reset();
+      eq(runAgentRequest({ op: "state" }, records).ok, true, "op=state 走快照");
+      eq(runAgentRequest({ op: "act", action: "theme.set", args: { theme: "light" } }).ok, true, "op=act 走动作");
+      eq(runAgentRequest({ op: "explode" }, records).code, "unknown_action", "未知 op");
+      eq(runAgentRequest({ op: "act" }, records).code, "unknown_action", "op=act 但没有 action");
+
+      // ---- 9. 一个坏动作不该让整条链路卡住 ----
+
+      reset();
+      const broken = runAgentAction("placement.move", null, records);
+      eq(broken.ok, false, "args 为 null 时返回错误而不是抛");
+      ok(typeof broken.error === "string" && broken.error.length > 0, "错误信息是人能读的一句话");
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>

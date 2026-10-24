@@ -5,12 +5,13 @@
  * 这里只做编排，业务都在 platform/ 与 runtime/ 里。
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Canvas } from "./platform/Canvas";
+import { startAgentBridge } from "./platform/agent";
 import { DebugPanel } from "./platform/DebugPanel";
 import { InspectorPanel } from "./platform/InspectorPanel";
 import { LibraryPanel, type InstallNotice } from "./platform/LibraryPanel";
@@ -122,6 +123,17 @@ export default function App() {
   const [widgets, setWidgets] = useState<WidgetRecord[]>([]);
   const [errors, setErrors] = useState<WidgetLoadError[]>([]);
   const [loading, setLoading] = useState(true);
+
+  /*
+   * agent 端点（见 platform/agent.ts）。
+   *
+   * 用 ref 而不是把 widgets 塞进依赖数组：订阅只该建一次。清单每变一次就
+   * 重订的话，中间那段空窗里来的请求会全部超时 —— 而"装一个组件"恰好是
+   * agent 最常触发的动作之一。
+   */
+  const widgetsRef = useRef<WidgetRecord[]>([]);
+  widgetsRef.current = widgets;
+  useEffect(() => startAgentBridge(() => widgetsRef.current), []);
 
   const placements = useLattice((state) => state.placements);
   const addPlacement = useLattice((state) => state.addPlacement);

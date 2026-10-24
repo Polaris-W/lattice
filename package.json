@@ -18,6 +18,8 @@
     "typecheck": "tsc --noEmit",
     "test:injection": "node --test scripts/widget-diagnostics.test.mjs",
     "test:sdk": "node --test scripts/sdk.test.mjs",
+    "test:agent": "node --test scripts/lattice-agent.test.mjs",
+    "agent": "node scripts/lattice-agent.mjs",
     "tauri": "tauri",
     "tauri:dev": "node scripts/tauri.mjs dev",
     "tauri:build": "node scripts/tauri.mjs build",

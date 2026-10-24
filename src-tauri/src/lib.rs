@@ -9,6 +9,8 @@
 //! 点"投放到桌面"之后，每个 Placement 变成一个独立的 WebviewWindow，
 //! 主窗口最小化退场，组件就留在桌面上。
 
+pub mod agent;
+pub mod agent_policy;
 pub mod autostart;
 pub mod autostart_policy;
 pub mod backup;
@@ -74,6 +76,9 @@ pub fn run() {
         // 后台轮询一个只发布几次的项目，等于每台机器每天替你发一次请求
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(runner::Runner::default())
+        // agent 端点：默认关，开关在设置菜单里。它要转发请求给主窗口，
+        // 所以状态得先 manage 好（见 agent.rs 的模块注释）
+        .manage(agent::Agent::default())
         .setup(|app| {
             // 第二次启动 → 唤回主窗口的那条线程
             instance::listen(app.handle().clone());
@@ -94,6 +99,9 @@ pub fn run() {
             // 自启那条注册表命令可能指着上一次的安装位置（升级、换盘、
             // 或者开发态写进去的 target\debug 路径）。启动时对一次账
             autostart::reconcile();
+            // agent 端点：磁盘上说开着才开。关着的时候**不 bind**，
+            // 不是"绑上但拒绝"（见 agent.rs）
+            agent::start(app.handle().clone());
             Ok(())
         })
         // 用户组件不在前端资源里，得靠自定义协议把 %APPDATA% 下的文件发给 iframe
@@ -136,6 +144,9 @@ pub fn run() {
             store::store_download,
             store::store_install,
             store::store_report,
+            agent::agent_status,
+            agent::agent_set_enabled,
+            agent::agent_reply,
             quit_app,
             show_main_window,
             restart_app,

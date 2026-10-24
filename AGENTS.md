@@ -2,7 +2,7 @@
 
 写给任何要在这个仓库里改代码的人或模型。目标：读完这一页，不用通读源码就能动手，且不会踩已经踩过的坑。
 
-> 约定：这份文件只写**稳定事实**和**判断依据**。具体的坑与解法在 [docs/ROADMAP.md](./docs/ROADMAP.md)，组件协议在 [docs/WIDGET_SPEC.md](./docs/WIDGET_SPEC.md)，取舍论证在 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)，代码签名的取舍在 [docs/CODE_SIGNING.md](./docs/CODE_SIGNING.md)。它们与本文冲突时，以代码为准，并顺手修文档。
+> 约定：这份文件只写**稳定事实**和**判断依据**。具体的坑与解法在 [docs/ROADMAP.md](./docs/ROADMAP.md)，组件协议在 [docs/WIDGET_SPEC.md](./docs/WIDGET_SPEC.md)，取舍论证在 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)，代码签名的取舍在 [docs/CODE_SIGNING.md](./docs/CODE_SIGNING.md)，agent 接入的协议与威胁模型在 [docs/AGENT_ACCESS.md](./docs/AGENT_ACCESS.md)。它们与本文冲突时，以代码为准，并顺手修文档。
 
 ---
 
@@ -72,6 +72,7 @@ src/
     schedule.ts           心跳时间轴：可见性取"与"、不可见停摆、回来补一拍
     screen-fit.ts         纯几何：锚点选屏、夹紧（入参一律物理像素，`tests/screen-fit.html` 钉着）
     close-guard.ts        ✕ 该不该认这一下：指针序列 + 命中测试（纯函数，`tests/close-guard.html` 钉着）
+    agent.ts              agent 动作执行器：白名单动作走真 store，回快照（`tests/agent.html` 57 条）
     align-guides.ts       拖动时的对齐吸附：每条轴只挑一条获胜线，画布边界也是候选（纯函数，`tests/align-guides.html` 钉着）
     library-search.ts     组件库搜索：切词 + 单包命中判定（纯函数，`tests/library-search.html` 钉着）
     debug.ts              调试总线：环形缓冲 400 条、攒批镜像到主窗口、过滤 / 统计纯函数
@@ -113,6 +114,8 @@ src-tauri/src/
   visibility.rs           真实可见性：最小化 / 收起 / 被整个盖住，发 lattice:window-visible
   occlusion.rs            遮挡判定（Win32）：九点 WindowFromPoint + DWMWA_CLOAKED，点透窗口跳过
   occlusion_policy.rs     遮挡的纯逻辑：采样点怎么取、几个没命中算挡住（8 条 rustc --test）
+  agent.rs                Agent 端点：只绑 127.0.0.1 的 HTTP、令牌、审计、转发给主窗口（默认关）
+  agent_policy.rs         上面那道的纯逻辑：HTTP 三态解析、Bearer 常量时间比对、动作白名单（21 条 rustc --test）
   wallpaper.rs            截壁纸（宿主页底板的第一层）
   metrics.rs              系统指标（sysmon 组件用），直接调 Win32 不引 crate
   media.rs                SMTC 媒体会话：读当前播放 + playPause/next/previous/stop（WinRT）
@@ -379,6 +382,7 @@ public/widgets/<id>/
 
 | 缺口 | 影响 | 需要的动作 |
 | --- | --- | --- |
+| **agent 端点没真机验过** | Rust 那半（回环监听、Tauri 往返、关掉之后端口释放）只过了 `cargo check`，没跑过。协议本身两边都测了（`agent_policy.rs` 21 条 + `tests/agent.html` 57 条 + CLI 11 条），差的是「能不能真的跑起来」 | 起一次 `tauri:dev` 走一遍：设置里打开 → `npm run agent -- state` → `act placement.move` → 关掉再 `state`（应该报端点文件没了）。**起之前先确认没有残留的 `lattice.exe`** —— 孤儿进程会用内存里那份盖掉 `state.json` |
 | **安装包没有代码签名** | 第一次运行被 SmartScreen 拦成"未知发布者"，点"仍要运行"才装得上。用户流失基本都发生在这一步 | 买 OV/EV 证书（EV 能立刻建立信誉，OV 要攒），或走 winget / Microsoft Store 分发绕开 |
 | **平台更新只走 GitHub Releases** | `plugins.updater.endpoints` 写死一条 GitHub 地址。国内网络环境下 `github.com` 和 `objects.githubusercontent.com` 都可能连不上，更新会失败 | 加第二个 endpoint（自建静态站 / 对象存储），更新器按顺序试。注意**两个地址要放同一份 `latest.json`**，否则两边版本会飘 |
 | **底板透不出后面的窗口** | 磨砂层是"壁纸"，不是"压在组件后面的浏览器窗口"——系统的模糊半径写死，做不成滑杆，二者只能选一个 | 要么接受，要么换 `SetWindowCompositionAttribute` 并放弃连续滑杆（见 ROADMAP 被推翻的决定 7） |
@@ -509,7 +513,7 @@ public/widgets/<id>/
 ## 11. 验证
 
 - `npm run typecheck` —— 必跑，当前是干净的
-- **`npm run test:browser`** —— 跑一遍 `tests/*.html` 里的全部断言（32 页 / 1003 条）。先 `npm run dev` 起 dev server（默认 1420），另一个终端跑它；`--filter catalogue` 只跑匹配的页。它用 headless Chrome 的 `--dump-dom` 读 `<pre id="out">`，所以**页面的断言必须写成 `PASS …` / `FAIL …` 两行式**，别的格式它数不到。CI 里这条是 `browser` job，红在哪一页会直接打出来。
+- **`npm run test:browser`** —— 跑一遍 `tests/*.html` 里的全部断言（33 页 / 1060 条）。先 `npm run dev` 起 dev server（默认 1420），另一个终端跑它；`--filter catalogue` 只跑匹配的页。它用 headless Chrome 的 `--dump-dom` 读 `<pre id="out">`，所以**页面的断言必须写成 `PASS …` / `FAIL …` 两行式**，别的格式它数不到。CI 里这条是 `browser` job，红在哪一页会直接打出来。
 - 改了组件 UI：`npm run dev` 后在浏览器里看；要截固定尺寸的图，用 Edge headless：
   ```bash
   msedge --headless=new --disable-gpu --force-device-scale-factor=2 \

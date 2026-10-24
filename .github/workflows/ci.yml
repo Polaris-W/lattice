@@ -1,8 +1,8 @@
 name: ci
 
 # 三件事分开跑，谁红看谁：
-#   frontend —— 类型 + 构建 + 两个 node:test（注入规则、SDK 副本一致性）
-#   browser  —— tests/*.html 里的 499 条断言（以前靠人肉开 22 个标签页）
+#   frontend —— 类型 + 构建 + 三个 node:test（注入规则、SDK 副本一致性、agent CLI）
+#   browser  —— tests/*.html 里的 1060 条断言（以前靠人肉开 33 个标签页）
 #   rust     —— cargo test。本机跑不了（安全策略拦 target/debug/deps 下的 exe），
 #               所以那 21 条断言从来没有在任何人的机器上跑过，runner 是唯一的机会
 #
@@ -29,6 +29,8 @@ jobs:
       # 两个都是 node:test，不需要 dev server，跑一遍不到一秒
       - run: npm run test:injection
       - run: npm run test:sdk
+      # agent CLI：起一个假端点，测请求形状和退出码。不需要应用在跑
+      - run: npm run test:agent
 
   browser:
     runs-on: ubuntu-latest
