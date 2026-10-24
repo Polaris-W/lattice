@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>blocked keys test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      /*
+       * 拉黑名单在 store 里的那一半行为。
+       *
+       * `tests/catalogue.html` 钉的是"命中之后不装"（纯函数）；
+       * 这一页钉的是"名单本身怎么存"：
+       *
+       *   1. 写进去之前归一化 —— 同一把钥匙换个大小写不该变成两条
+       *   2. 重复拉黑是幂等的（按钮连点两下不该多一条）
+       *   3. 空钥匙不写（"没签名的条目"没有可拉黑的对象）
+       *   4. 解黑只删命中的那一条，别的不动
+       *   5. 名单在 `partialize` 里 —— 不在的话重启就丢，用户会以为拉黑没生效
+       *
+       * 第 5 条是最容易漏的：`partialize` 是一份手写白名单，加了字段忘了改它，
+       * 单测全绿、界面上也真的拉黑了，一重启就没了。
+       */
+      import { useLattice } from "/src/platform/store.ts";
+
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const eq = (actual, expected, text) =>
+        log(
+          JSON.stringify(actual) === JSON.stringify(expected),
+          `${text}（得到 ${JSON.stringify(actual)}）`,
+        );
+
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      const KEY = "11".repeat(32);
+      const OTHER = "44".repeat(32);
+      const state = () => useLattice.getState();
+
+      // 水合是异步的，先等它落定再动手 —— 早一步写会被磁盘上那份盖回去
+      await sleep(120);
+
+      state().unblockKey(KEY);
+      state().unblockKey(OTHER);
+
+      // ---- 1. 归一化 ----
+      const spaced = KEY.replace(/(.{4})(?=.)/g, "$1 ").toUpperCase();
+      state().blockKey(spaced);
+      eq(state().blockedKeys, [KEY], "带分隔符 + 大写写进来，存的是小写纯 hex");
+
+      // ---- 2. 幂等 ----
+      state().blockKey(KEY);
+      state().blockKey(KEY.toUpperCase());
+      eq(state().blockedKeys.length, 1, "同一把钥匙拉黑两次还是一条");
+
+      // ---- 3. 空钥匙不写 ----
+      state().blockKey("");
+      state().blockKey("   ");
+      state().blockKey("zzzz");
+      eq(state().blockedKeys, [KEY], "空钥匙 / 非 hex 不写进名单");
+
+      // ---- 4. 多把、按序 ----
+      state().blockKey(OTHER);
+      eq(state().blockedKeys, [KEY, OTHER].sort(), "两把钥匙按同一顺序排（界面上不会跳来跳去）");
+
+      // ---- 5. 解黑只删命中 ----
+      state().unblockKey(KEY);
+      eq(state().blockedKeys, [OTHER], "解黑删掉那一把，别的还在");
+      state().unblockKey(KEY);
+      eq(state().blockedKeys, [OTHER], "解黑一个不在名单里的钥匙是空操作");
+
+      // ---- 6. 落盘字段 ----
+      const persisted = useLattice.persist.getOptions().partialize?.(state()) ?? {};
+      eq(persisted.blockedKeys, [OTHER], "blockedKeys 在 partialize 里（重启不丢）");
+
+      // 收尾：别把测试留下的名单带进下一次运行
+      state().unblockKey(OTHER);
+
+      const out = document.getElementById("out");
+      out.textContent = lines.join("\n");
+      out.className = lines.some((line) => line.startsWith("FAIL")) ? "bad" : "ok";
+    </script>
+  </body>
+</html>

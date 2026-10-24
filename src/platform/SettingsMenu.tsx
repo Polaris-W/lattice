@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isStaleTarget, readAutostart, writeAutostart, type AutostartState } from "./autostart";
 import { Glyph, ICON, ThemeGlyph } from "./icons";
+import { keyFingerprint } from "../runtime/catalogue";
 import { useLattice, type ThemeMode } from "./store";
 
 type View = "menu" | "signin" | "profile" | "catalogue";
@@ -65,6 +66,8 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
   const setPaused = useLattice((state) => state.setPaused);
   const catalogueSource = useLattice((state) => state.catalogueSource);
   const setCatalogueSource = useLattice((state) => state.setCatalogueSource);
+  const blockedKeys = useLattice((state) => state.blockedKeys);
+  const unblockKey = useLattice((state) => state.unblockKey);
 
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<View>("menu");
@@ -525,6 +528,40 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
                   A plain JSON file — any static host works, no server needed. Packages are verified
                   against the publisher key in that file before they are installed.
                 </p>
+
+                {/*
+                  拉黑名单放在这一页，因为它是"信任"的另一半：上面那格决定
+                  **从哪儿取包**，这里决定**谁的包不装**。
+                  卡片上也能拉黑（换钥匙时那句"旧的那把可能泄露了"），但只在
+                  目录里还有那个条目时才有入口 —— 条目下架之后，这里是唯一的出口。
+                */}
+                <div className="lattice-blocked">
+                  <div className="lattice-blocked-head">
+                    <span>Blocked publishers</span>
+                    <span className="lattice-blocked-count">{blockedKeys.length}</span>
+                  </div>
+                  {blockedKeys.length === 0 ? (
+                    <p className="lattice-account-hint">
+                      Nothing blocked. Blocking a publisher key means nothing signed with it will be
+                      installed — pinned keys do not help if the key itself leaks.
+                    </p>
+                  ) : (
+                    <ul className="lattice-blocked-list">
+                      {blockedKeys.map((key) => (
+                        <li key={key}>
+                          <code title={key}>{keyFingerprint(key)}</code>
+                          <button
+                            type="button"
+                            className="lattice-btn is-small"
+                            onClick={() => unblockKey(key)}
+                          >
+                            Unblock
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               </div>
 
               <footer className="lattice-account-form-foot">

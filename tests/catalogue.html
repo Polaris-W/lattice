@@ -24,17 +24,20 @@
       /*
        * 组件目录（registry.json）的校验与安装计划。
        *
-       * 这页钉四件事：
+       * 这页钉五件事：
        *   1. 坏条目单独丢弃、不整包失败；整份不是目录才明确拒绝
        *   2. 相对地址按目录地址补全（少一个 `/` 就是全部 404）
-       *   3. 安装计划的五种结论：装 / 更新 / 已最新 / 没签名 / 换人了
+       *   3. 安装计划的六种结论：装 / 更新 / 已最新 / 目录更旧 / 没签名 / 换人了 / 被拉黑
        *   4. "换人了"优先于"有新版本" —— 警告不能被包装成一次普通更新
+       *   5. "被拉黑"优先于前两者 —— 拉黑是用户说过的话，不该被换钥匙绕过
        */
       import {
         addedPermissions,
+        isBlockedKey,
         isNewer,
         keyFingerprint,
         latestPackage,
+        normalizeKey,
         parseCatalogue,
         pickPackage,
         planInstall,
@@ -199,7 +202,16 @@
         eq(planInstall(clock, { installedVersion: "1.0.0" }).kind, "update", "旧版本 -> 更新");
         eq(planInstall(clock, { installedVersion: "1.0.0" }).from, "1.0.0", "更新时带着原版本");
         eq(planInstall(clock, { installedVersion: "1.2.0" }).kind, "current", "已经最新");
-        eq(planInstall(clock, { installedVersion: "9.0.0" }).kind, "current", "本地更新时不劝降级");
+        /*
+         * 目录比本地旧。以前这一支也算 `current`，界面写 `Up to date` ——
+         * 那句话在"我有 1.0.0、目录只到 0.9.0"的时候是假的。
+         */
+        eq(planInstall(clock, { installedVersion: "9.0.0" }).kind, "older", "目录更旧 -> older，不谎称已最新");
+        eq(
+          planInstall(clock, { installedVersion: "9.0.0" }).installed,
+          "9.0.0",
+          "older 带着本地那个版本，界面要说得清两边各是多少",
+        );
         eq(
           planInstall(clock, { installedVersion: "1.0.0", pinnedKey: OTHER_KEY }).kind,
           "untrusted",
@@ -225,6 +237,62 @@
           BASE,
         ).catalogue.entries[0];
         eq(planInstall(badKey).kind, "unsigned", "公钥形状不对也算没签名");
+      }
+
+      // ---- 6c. 拉黑发布者 ----
+      {
+        const { catalogue } = parseCatalogue(
+          doc({
+            widgets: [
+              entry({ versions: [version({ version: "1.0.0" }), version({ version: "1.2.0" })] }),
+            ],
+          }),
+          BASE,
+        );
+        const clock = catalogue.entries[0];
+
+        eq(normalizeKey(KEY.toUpperCase()), KEY, "归一化：大写摊平");
+        eq(normalizeKey("11:11 11"), "111111", "归一化：分隔符去掉，只留 hex");
+        eq(normalizeKey(""), "", "归一化：空串还是空串");
+        eq(isBlockedKey(KEY, []), false, "空名单不拦任何人");
+        eq(isBlockedKey(KEY, null), false, "名单没给也不拦");
+        eq(isBlockedKey(KEY, [KEY]), true, "同一把钥匙命中");
+        eq(isBlockedKey(KEY.toUpperCase(), [KEY]), true, "大小写不同也算命中");
+        eq(isBlockedKey(OTHER_KEY, [KEY]), false, "别的钥匙不误伤");
+        eq(isBlockedKey("", [""]), false, "空钥匙不会被空名单项命中");
+
+        eq(planInstall(clock, { blockedKeys: [KEY] }).kind, "blocked", "拉黑 -> 不装");
+        eq(planInstall(clock, { blockedKeys: [KEY] }).key, KEY, "blocked 带着那把钥匙，界面要能解黑");
+        eq(
+          planInstall(clock, { blockedKeys: [KEY] }).pkg.version,
+          "1.2.0",
+          "blocked 也带出版本 —— 卡片上仍要说清是哪一版被挡了",
+        );
+        /*
+         * 顺序：拉黑必须压过"有新版本"和"换人了"。
+         * 反过来的话，一把被拉黑的旧钥匙换了个新钥匙，卡片会给用户一个
+         * "信任新钥匙并安装"的按钮 —— 拉黑的意图被一次换钥匙绕过。
+         */
+        eq(
+          planInstall(clock, { blockedKeys: [KEY], installedVersion: "1.0.0" }).kind,
+          "blocked",
+          "拉黑优先于更新",
+        );
+        eq(
+          planInstall(clock, { blockedKeys: [KEY], pinnedKey: OTHER_KEY }).kind,
+          "blocked",
+          "拉黑优先于换钥匙确认",
+        );
+        eq(
+          planInstall(clock, { blockedKeys: [OTHER_KEY], pinnedKey: KEY }).kind,
+          "install",
+          "拉黑的不是这把钥匙 -> 照常",
+        );
+        eq(
+          planInstall(clock, { blockedKeys: [], installedVersion: "1.0.0" }).kind,
+          "update",
+          "名单为空 -> 照常更新",
+        );
       }
 
       // ---- 6b. 目录级发布者 ----

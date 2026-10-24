@@ -5,16 +5,17 @@
  * 一份外部 JSON，不是磁盘上已经有的东西。所以每张卡片都要说清三件事：
  *
  *   1. 从哪儿来（Bundled / 远端目录的名字）
- *   2. 签名状态（谁签的、钥匙指纹；换过人要点一次确认）
- *   3. 点下去会发生什么（安装 / 更新到 x.y.z / 已经最新 / 不能装）
+ *   2. 签名状态（谁签的、钥匙指纹；换过人要点一次确认；被拉黑的一律不能装）
+ *   3. 点下去会发生什么（安装 / 更新到 x.y.z / 已经最新 / 目录落后了 / 不能装）
  *
  * 界面上的判断全部来自 `runtime/catalogue.ts::planInstall` —— 这里不再算一遍。
- * "换人了"和"有新版本"谁优先这种顺序，只应该在一个地方决定（有单测钉着）。
+ * "拉黑"和"换人了"和"有新版本"谁优先这种顺序，只应该在一个地方决定（有单测钉着）。
  */
 
 import { useMemo } from "react";
 import {
   addedPermissions,
+  isBlockedKey,
   keyFingerprint,
   planInstall,
   type CatalogueEntry,
@@ -36,10 +37,15 @@ export interface StoreBinding {
   installedPermissions: Map<string, Permission[]>;
   /** 第一次安装时记下的发布者公钥 */
   pinnedKeys: Record<string, string>;
+  /** 用户拉黑的发布者公钥（归一化后的 hex） */
+  blockedKeys: string[];
   /** 待确认的"新版本多要了权限" */
   reviews: Record<string, PermissionReview>;
   onRefresh: () => void;
   onInstall: (entry: CatalogueEntry, pkg: CataloguePackage, acceptNewKey: boolean) => void;
+  /** 拉黑一把钥匙（"这人的东西我不装"，以及换钥匙时"旧的那把可能泄露了"） */
+  onBlockKey: (key: string) => void;
+  onUnblockKey: (key: string) => void;
 }
 
 interface CatalogueSectionProps {
@@ -148,7 +154,11 @@ function CatalogueCard({
 }) {
   const pinned = store.pinnedKeys[entry.id] ?? null;
   const currentVersion = store.installedVersions.get(entry.id) ?? null;
-  const plan = planInstall(entry, { installedVersion: currentVersion, pinnedKey: pinned });
+  const plan = planInstall(entry, {
+    installedVersion: currentVersion,
+    pinnedKey: pinned,
+    blockedKeys: store.blockedKeys,
+  });
   const review = store.reviews[entry.id];
   const busy = store.busyId === entry.id;
 
@@ -157,6 +167,9 @@ function CatalogueCard({
   const before = store.installedPermissions.get(entry.id) ?? [];
   const added = addedPermissions(before, plan.pkg.permissions);
   const key = entry.publisher?.key ?? "";
+  /** 换钥匙那一支里，"旧的那把"是不是已经被拉黑了 —— 拉过就别再给一次按钮 */
+  const pinnedBlocked =
+    plan.kind === "untrusted" && isBlockedKey(plan.pinned, store.blockedKeys);
 
   return (
     <div className={`lattice-card is-store${installed ? " is-installed" : ""}`}>
@@ -172,7 +185,9 @@ function CatalogueCard({
           <span className="lattice-card-name">{entry.name}</span>
           <code className="lattice-card-id">{entry.id}</code>
         </span>
-        {review ? (
+        {plan.kind === "blocked" ? (
+          <span className="lattice-chip is-warn">Blocked</span>
+        ) : review ? (
           <span className="lattice-chip is-warn">Review</span>
         ) : installed ? (
           <span className="lattice-chip is-accent">Installed</span>
@@ -245,6 +260,33 @@ function CatalogueCard({
           </span>
         )}
 
+        {/*
+          目录比本地旧。以前这一支混在 `Up to date` 里 —— 那句话在
+          "我有 1.0.0、目录只到 0.9.0" 的时候是假的。这里不提供任何按钮：
+          降级是个需要人明确说"我知道"的动作，不该长成一颗随手能点的按钮。
+        */}
+        {plan.kind === "older" && (
+          <span className="lattice-store-note">
+            The catalogue only has {plan.pkg.version} — you have {plan.installed}. Nothing to do.
+          </span>
+        )}
+
+        {plan.kind === "blocked" && (
+          <div className="lattice-store-trust">
+            <span className="lattice-store-note is-warn">
+              You blocked this publisher key ({keyFingerprint(plan.key)}). Nothing signed with it
+              will be installed.
+            </span>
+            <button
+              type="button"
+              className="lattice-btn is-small"
+              onClick={() => store.onUnblockKey(plan.key)}
+            >
+              Unblock this key
+            </button>
+          </div>
+        )}
+
         {plan.kind === "unsigned" && (
           <span className="lattice-store-note is-warn">
             No publisher signature — this catalogue entry cannot be installed
@@ -264,6 +306,23 @@ function CatalogueCard({
             >
               Trust the new key and install
             </button>
+            {/*
+              换钥匙是"私钥泄露"最像的样子：旧钥匙还在本地被钉着，而它可能已经
+              在别人手上。所以这个对话框里要有一条"旧的那把别再用了"的路 ——
+              点完之后这把钥匙进拉黑名单，将来哪怕它又签了什么，也装不进来。
+            */}
+            {pinnedBlocked ? (
+              <span className="lattice-store-note">The old key is blocked — it can no longer ship to you.</span>
+            ) : (
+              <button
+                type="button"
+                className="lattice-btn is-small"
+                onClick={() => store.onBlockKey(plan.pinned)}
+                title="Stop trusting the previous key entirely — use this if it may have leaked"
+              >
+                Block the old key instead
+              </button>
+            )}
           </div>
         )}
       </div>

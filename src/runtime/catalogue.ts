@@ -22,6 +22,16 @@
  * 只有把钥匙钉在本地状态里，换人才会变成一件**用户看得见、必须点一下**的事。
  * 第一次安装没有可钉的东西，只能是"信这次看到的"（TOFU）——所以界面上要
  * 把钥匙指纹露出来，让人有机会对一下。
+ *
+ * # 三道都过了，还剩一种情况
+ *
+ * 钉住的那把钥匙**本身**泄露了。这时候 1、2、3 全都照过 —— 用偷来的私钥签的包
+ * 是"合法签名"，钥匙也和上次一模一样。密码学在这里帮不上忙，能挡住的只有
+ * 用户自己的一句话："这把钥匙别再用了"。
+ *
+ * 所以 `blockedKeys` 是这套信任模型里唯一**由人维护**的一环，也是唯一一处
+ * 不需要"谁来签这份清单"的地方：名单在本地，谁都改不了。它是 `planInstall`
+ * 的第一道闸（见下面的注释），命中的包连"换人了"的确认都不给。
  */
 
 import { ID_RE, type Permission } from "./manifest";
@@ -303,14 +313,18 @@ export type InstallPlan =
   | { kind: "install"; pkg: CataloguePackage }
   | { kind: "update"; pkg: CataloguePackage; from: string }
   | { kind: "current"; pkg: CataloguePackage }
+  | { kind: "older"; pkg: CataloguePackage; installed: string }
   | { kind: "unsigned"; pkg: CataloguePackage }
-  | { kind: "untrusted"; pkg: CataloguePackage; pinned: string; offered: string };
+  | { kind: "untrusted"; pkg: CataloguePackage; pinned: string; offered: string }
+  | { kind: "blocked"; pkg: CataloguePackage; key: string };
 
 export interface PlanOptions {
   /** 本地已装的版本，没装就是 null */
   installedVersion?: string | null;
   /** 这个组件第一次安装时记下的公钥，没有就是 null（TOFU 阶段） */
   pinnedKey?: string | null;
+  /** 用户拉黑的公钥（归一化后的 hex）。命中的一律不装 */
+  blockedKeys?: readonly string[] | null;
   /** 可选：只在这个范围里挑版本 */
   range?: string;
 }
@@ -318,9 +332,20 @@ export interface PlanOptions {
 /**
  * 决定点下"安装"该做什么。
  *
- * 顺序是有讲究的：**先看签名，再看版本**。反过来的话，一个被换掉的钥匙
- * 会先被报成"有新版本可以更新"，用户点了更新才看到警告 —— 那时候他已经在
- * 期待"更新"了，警告更容易被当成噪音划过去。
+ * 顺序是有讲究的，四道闸从前到后：
+ *
+ *   1. **拉黑**（`blocked`）—— 用户明确说过"这个人的东西我不装"
+ *   2. **没签名**（`unsigned`）—— 没有钥匙就没有可信任的对象
+ *   3. **换人了**（`untrusted`）—— 钥匙和第一次装的不一样，必须点一次确认
+ *   4. **版本**（`install` / `older` / `current` / `update`）
+ *
+ * 拉黑必须排在最前面。放到"换人了"后面的话，一把被拉黑的旧钥匙一旦换成新钥匙，
+ * 卡片会给他一个"信任新钥匙并安装"的按钮 —— 拉黑的意图被一次换钥匙绕过，
+ * 而"私钥泄露"恰恰是最需要拉黑的场景。放到版本判断后面更糟：拉黑过的发布者
+ * 发了个新版本，界面只会说"可以更新"。
+ *
+ * 第 3 道压在第 4 道前面也是同一个道理：一个被换掉的钥匙不该先被报成
+ * "有新版本可以更新"，那会把一次信任变更包装成一次普通更新。
  */
 export function planInstall(entry: CatalogueEntry, options: PlanOptions = {}): InstallPlan | null {
   const pkg = pickPackage(entry, options.range);
@@ -328,6 +353,8 @@ export function planInstall(entry: CatalogueEntry, options: PlanOptions = {}): I
 
   const offered = entry.publisher?.key ?? "";
   if (!offered) return { kind: "unsigned", pkg };
+
+  if (isBlockedKey(offered, options.blockedKeys)) return { kind: "blocked", pkg, key: offered };
 
   const pinned = options.pinnedKey ?? null;
   if (pinned && pinned !== offered) return { kind: "untrusted", pkg, pinned, offered };
@@ -337,7 +364,14 @@ export function planInstall(entry: CatalogueEntry, options: PlanOptions = {}): I
 
   const order = compareVersions(pkg.version, installed);
   // 版本号写坏（不该发生，目录已经校验过）时按"没变化"处理，别怂恿用户降级
-  if (order === null || order <= 0) return { kind: "current", pkg };
+  if (order === null || order === 0) return { kind: "current", pkg };
+  /*
+   * 目录里只有更旧的版本 —— 以前这一支和"已最新"合并成 `current`，
+   * 界面上写的是 `Up to date`。那句话在"我手上是 1.0.0、目录只到 0.9.0"
+   * 的时候是**假的**：用户会以为目录跟他一样新，其实目录落后了。
+   * 分开之后界面能说清"目录只到 0.9.0，你有 1.0.0"，而不是替他圆过去。
+   */
+  if (order < 0) return { kind: "older", pkg, installed };
   return { kind: "update", pkg, from: installed };
 }
 
@@ -347,11 +381,36 @@ export function addedPermissions(before: Permission[], after: Permission[]): Per
 }
 
 /**
+ * 公钥归一化：小写、只留 hex。
+ *
+ * 钥匙在三个地方出现（目录里的 `publisher.key`、本地钉住的 `trustedKeys`、
+ * 拉黑名单），写法都可能带分隔符或大小写。比较之前一律过这一道，
+ * 否则"我明明拉黑了却还能装"这种问题会查很久 —— 因为它不报错。
+ */
+export function normalizeKey(key: string): string {
+  return key.toLowerCase().replace(/[^0-9a-f]/g, "");
+}
+
+/**
+ * 这把钥匙在不在拉黑名单里。
+ *
+ * 名单是**用户自己维护**的（`state.json` 的 `blockedKeys`），不是从网上下发的：
+ * 这个平台没有服务端，一份"谁来签都说得通"的吊销清单并不存在。用户能做的、
+ * 也真正管用的是"我记住这把钥匙，别再给我装它的东西"。
+ */
+export function isBlockedKey(key: string, blocked: readonly string[] | null | undefined): boolean {
+  if (!blocked || blocked.length === 0) return false;
+  const target = normalizeKey(key);
+  if (!target) return false;
+  return blocked.some((item) => normalizeKey(item) === target);
+}
+
+/**
  * 公钥指纹：前 16 位，四段一组。
  * 只做"人对一眼"，不是校验 —— 校验永远比完整的 64 位 hex。
  */
 export function keyFingerprint(key: string): string {
-  const clean = key.toLowerCase().replace(/[^0-9a-f]/g, "");
+  const clean = normalizeKey(key);
   if (clean.length < 16) return key;
   return clean.slice(0, 16).replace(/(.{4})(?=.)/g, "$1 ");
 }

@@ -25,7 +25,13 @@ import {
   type BackupInfo,
   type CatalogueSnapshot,
 } from "./platform/catalogue";
-import { addedPermissions, type CatalogueEntry, type CataloguePackage } from "./runtime/catalogue";
+import {
+  addedPermissions,
+  isBlockedKey,
+  keyFingerprint,
+  type CatalogueEntry,
+  type CataloguePackage,
+} from "./runtime/catalogue";
 import { buildSpecs, closeDesktop, minimizeMain, syncDesktop } from "./platform/desktop";
 import { Glyph, ICON, ThemeGlyph } from "./platform/icons";
 import { SettingsMenu } from "./platform/SettingsMenu";
@@ -163,6 +169,9 @@ export default function App() {
   const catalogueSource = useLattice((state) => state.catalogueSource);
   const trustedKeys = useLattice((state) => state.trustedKeys);
   const trustKey = useLattice((state) => state.trustKey);
+  const blockedKeys = useLattice((state) => state.blockedKeys);
+  const blockKey = useLattice((state) => state.blockKey);
+  const unblockKey = useLattice((state) => state.unblockKey);
   const ratings = useLattice((state) => state.ratings);
   const rateWidget = useLattice((state) => state.rateWidget);
   const permissionReviews = useLattice((state) => state.permissionReviews);
@@ -505,9 +514,12 @@ export default function App() {
   /**
    * 从目录装 / 更新。
    *
-   * `acceptNewKey` 是"用户已经在卡片上确认过换人了"。没有它的时候，一旦本地
-   * 钉住的公钥和目录里的不一样，这里直接拒绝 —— 界面上的那条警告必须真的
-   * 挡住动作，否则它只是一行字。
+   * 两道确认都在这里落地，缺一条界面上的警告就只是一行字：
+   *
+   * - `acceptNewKey` 是"用户已经在卡片上确认过换人了"。没有它的时候，一旦本地
+   *   钉住的公钥和目录里的不一样，这里直接拒绝。
+   * - 被拉黑的钥匙**没有确认入口**。卡片上不给按钮，这里再挡一次 —— 拉黑是
+   *   用户说过"这人的东西我不装"，不该存在一条"绕过它"的路径。
    */
   const installFromCatalogue = useCallback(
     async (entry: CatalogueEntry, pkg: CataloguePackage, acceptNewKey: boolean) => {
@@ -517,6 +529,14 @@ export default function App() {
       }
       const key = entry.publisher?.key;
       if (!key) return;
+
+      if (isBlockedKey(key, blockedKeys)) {
+        setNotice({
+          kind: "error",
+          text: `${entry.name} is signed with a key you blocked (${keyFingerprint(key)}) — unblock it first.`,
+        });
+        return;
+      }
 
       const pinned = trustedKeys[entry.id];
       if (!acceptNewKey && pinned && pinned !== key) {
@@ -551,6 +571,7 @@ export default function App() {
       }
     },
     [
+      blockedKeys,
       catalogueSource,
       flagPermissionReview,
       installWidget,
@@ -816,21 +837,33 @@ export default function App() {
       installedVersions,
       installedPermissions,
       pinnedKeys: trustedKeys,
+      blockedKeys,
       reviews: permissionReviews,
       onRefresh: () => void refreshCatalogue(),
       onInstall: (entry, pkg, acceptNewKey) =>
         void installFromCatalogue(entry, pkg, acceptNewKey),
+      onBlockKey: (key) => {
+        blockKey(key);
+        setNotice({ kind: "ok", text: `Blocked publisher key ${keyFingerprint(key)}` });
+      },
+      onUnblockKey: (key) => {
+        unblockKey(key);
+        setNotice({ kind: "ok", text: `Unblocked publisher key ${keyFingerprint(key)}` });
+      },
     }),
     [
       catalogue,
       catalogueBusy,
       catalogueBusyId,
+      blockedKeys,
+      blockKey,
       installFromCatalogue,
       installedPermissions,
       installedVersions,
       permissionReviews,
       refreshCatalogue,
       trustedKeys,
+      unblockKey,
     ],
   );
 

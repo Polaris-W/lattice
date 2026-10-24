@@ -141,10 +141,13 @@ const store: StoreBinding = {
     ["lattice.sysmon", ["system:monitor"]],
   ]),
   pinnedKeys: { "lattice.sysmon": KEY },
+  blockedKeys: [],
   reviews: {},
   onRefresh: () => calls.push("refresh"),
   onInstall: (item, version, acceptNewKey) =>
     calls.push(`install:${item.id}:${version.version}:${acceptNewKey ? "trust" : "normal"}`),
+  onBlockKey: (key) => calls.push(`block:${key}`),
+  onUnblockKey: (key) => calls.push(`unblock:${key}`),
 };
 
 const root = createRoot(document.getElementById("stage")!);
@@ -228,6 +231,19 @@ async function main() {
     sysmonCard?.textContent?.includes("Publisher key changed") ?? false,
     "换钥匙要说出来",
   );
+  log(
+    sysmonCard?.textContent?.includes("Block the old key instead") ?? false,
+    "换钥匙的对话框里有“旧的那把别再用了”这条路",
+  );
+
+  calls.length = 0;
+  sysmonCard
+    ?.querySelectorAll<HTMLButtonElement>(".lattice-btn")
+    .forEach((node) => {
+      if ((node.textContent ?? "").includes("Block the old key")) node.click();
+    });
+  await sleep(20);
+  eq(calls, [`block:${KEY}`], "拉黑旧钥匙时带的是钉住的那把，不是目录里新的那把");
 
   // ---- 2. 目录条目不在"可安装"里重复 ----
   const allIds = text(".lattice-card-id");
@@ -289,6 +305,79 @@ async function main() {
     (node) => node.textContent?.includes("lattice.clock") && node.textContent?.includes("Review"),
   );
   log(Boolean(reviewChip), "有待复核权限的组件在卡片上带 Review");
+
+  // ---- 5b. 被拉黑的发布者 / 目录落后 ----
+  /*
+   * 这两条都只能在界面上验：纯函数只回答"该不该装"，
+   * 而这里要看的是"卡片有没有把那句话说出来、按钮是不是真的没了"。
+   */
+  const BLOCKED_KEY = "77".repeat(32);
+  render({
+    store: {
+      ...store,
+      snapshot: {
+        ...store.snapshot!,
+        catalogue: {
+          ...catalogue,
+          entries: [
+            ...catalogue.entries,
+            entry("lattice.weather", "Weather", [pkg("1.0.0", ["network"])], BLOCKED_KEY),
+            entry("lattice.legacy", "Legacy", [pkg("1.0.0", ["clock"])], KEY),
+          ],
+        },
+      },
+      blockedKeys: [BLOCKED_KEY],
+      installedVersions: new Map([...store.installedVersions, ["lattice.legacy", "2.0.0"]]),
+    },
+  });
+  await sleep(60);
+
+  const cardOf = (id: string) =>
+    [...document.querySelectorAll<HTMLElement>(".lattice-card.is-store")].find((node) =>
+      node.textContent?.includes(id),
+    );
+
+  const weatherCard = cardOf("lattice.weather");
+  log(weatherCard?.textContent?.includes("Blocked") ?? false, "被拉黑的发布者：卡片上写 Blocked");
+  log(
+    weatherCard?.textContent?.includes("You blocked this publisher key") ?? false,
+    "被拉黑的发布者：说清为什么不能装（不是灰一颗按钮了事）",
+  );
+  log(
+    !weatherCard?.querySelector(".lattice-btn.is-primary"),
+    "被拉黑的发布者：没有安装按钮",
+  );
+
+  calls.length = 0;
+  weatherCard
+    ?.querySelectorAll<HTMLButtonElement>(".lattice-btn")
+    .forEach((node) => {
+      if ((node.textContent ?? "").includes("Unblock")) node.click();
+    });
+  await sleep(20);
+  eq(calls, [`unblock:${BLOCKED_KEY}`], "解黑带着完整钥匙（界面只显示指纹，回调要拿全的）");
+
+  const legacyCard = cardOf("lattice.legacy");
+  log(
+    legacyCard?.textContent?.includes("The catalogue only has 1.0.0 — you have 2.0.0") ?? false,
+    "目录比本地旧：说清两边各是多少",
+  );
+  log(!(legacyCard?.textContent?.includes("Up to date") ?? false), "目录比本地旧：不再谎称 Up to date");
+
+  // 旧钥匙已经被拉黑时，就别再给一次"拉黑旧钥匙"的按钮
+  render({
+    store: { ...store, blockedKeys: [KEY] },
+  });
+  await sleep(60);
+  const sysmonBlocked = cardOf("lattice.sysmon");
+  log(
+    sysmonBlocked?.textContent?.includes("The old key is blocked") ?? false,
+    "旧钥匙已拉黑：换钥匙卡片改成陈述，不再给按钮",
+  );
+  log(
+    !(sysmonBlocked?.textContent?.includes("Block the old key instead") ?? false),
+    "旧钥匙已拉黑：按钮消失",
+  );
 
   // ---- 6. 搜索同时过滤目录段 ----
   render();

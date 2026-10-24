@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 import type { Permission, WidgetLayer } from "../runtime/manifest";
+import { normalizeKey } from "../runtime/catalogue";
 import type { Appearance } from "../runtime/appearance";
 import type { ConfigValues } from "../runtime/config";
 
@@ -267,6 +268,16 @@ interface LatticeState {
    * 由用户点一次确认，否则一次目录劫持就等于一次静默的换包。
    */
   trustedKeys: Record<string, string>;
+  /**
+   * 用户拉黑的发布者公钥（归一化后的 64 位 hex）。
+   *
+   * 钉住一把钥匙只挡"换人"，挡不住"钥匙本身泄露" —— 偷来的私钥签出来的包
+   * 每一步校验都合法。这份名单是唯一能挡住那种情况的东西，所以它必须由用户
+   * 自己维护（平台没有服务端，也没有"谁来签吊销清单"的答案）。
+   *
+   * 语义是**按钥匙**、不是按组件：拉黑一个人，他的所有包都不装。
+   */
+  blockedKeys: string[];
   /** 本地评分，按 widgetId */
   ratings: Record<string, Rating>;
   /** 待处理的"新版本多要了权限"，按 widgetId */
@@ -305,6 +316,10 @@ interface LatticeState {
   setCatalogueSource: (source: CatalogueSource) => void;
   /** 记住这个组件的发布者公钥（第一次装、或者用户确认了换人之后） */
   trustKey: (widgetId: string, key: string) => void;
+  /** 拉黑一把发布者公钥：之后任何由它签的包都不装（不管版本、不管装没装过） */
+  blockKey: (key: string) => void;
+  /** 解除拉黑。名单里没有它就当没发生 */
+  unblockKey: (key: string) => void;
   /** 打星。0 分等于取消评分 */
   rateWidget: (widgetId: string, stars: number, version: string) => void;
   /** 记一条"新版本多要了权限"，界面据此一直提醒 */
@@ -339,6 +354,7 @@ export const useLattice = create<LatticeState>()(
       paused: false,
       catalogueSource: { kind: "bundled", url: "" },
       trustedKeys: {},
+      blockedKeys: [],
       ratings: {},
       permissionReviews: {},
 
@@ -529,6 +545,27 @@ export const useLattice = create<LatticeState>()(
             : { trustedKeys: { ...state.trustedKeys, [widgetId]: key } },
         ),
 
+      /*
+       * 名单写进去之前先归一化（小写 + 只留 hex）。
+       * 存原样的话，同一把钥匙换个大小写就能出现在名单里两次，而比较的时候
+       * 又各自归一化 —— 界面上看着有两条，实际是同一条，怎么删都删不干净。
+       */
+      blockKey: (key) =>
+        set((state) => {
+          const clean = normalizeKey(key);
+          const current = state.blockedKeys ?? [];
+          if (!clean || current.includes(clean)) return state;
+          return { blockedKeys: [...current, clean].sort() };
+        }),
+
+      unblockKey: (key) =>
+        set((state) => {
+          const clean = normalizeKey(key);
+          const current = state.blockedKeys ?? [];
+          if (!current.includes(clean)) return state;
+          return { blockedKeys: current.filter((item) => item !== clean) };
+        }),
+
       rateWidget: (widgetId, stars, version) =>
         set((state) => {
           const next = { ...state.ratings };
@@ -579,6 +616,7 @@ export const useLattice = create<LatticeState>()(
         inspectorOpen: state.inspectorOpen,
         catalogueSource: state.catalogueSource,
         trustedKeys: state.trustedKeys,
+        blockedKeys: state.blockedKeys,
         ratings: state.ratings,
         permissionReviews: state.permissionReviews,
       }),
