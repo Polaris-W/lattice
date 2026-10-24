@@ -1,0 +1,60 @@
+name: release
+
+# 打一个 tag（`v0.2.0`）→ 在 windows-latest 上出 NSIS 安装包 + 更新包 + latest.json，
+# 传成一条 **draft** release。确认无误后手动点 Publish，`releases/latest` 才会指向它。
+#
+# 为什么是 draft：`/releases/latest/download/latest.json` 这个地址只认已发布的
+# release。draft 期间更新器查不到任何东西（等于没发），发布那一刻全量生效 ——
+# 这比"发出去再后悔"好。
+#
+# 为什么要 Secrets：
+#   TAURI_SIGNING_PRIVATE_KEY          更新包的 minisign 私钥（`.keys/updater.key` 的内容）
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD 生成时设的密码；没设就留空（但那样建议别用）
+# 私钥进仓库 = 任何人都能给你所有用户推假更新。它只在这台机器和这个仓库的 Secrets 里。
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Rust 全量编一次要十几分钟，缓存能砍掉大半
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # 前端类型检查先过一遍：打包要跑 `npm run build`，类型错了会白等十分钟
+      - run: npm run typecheck
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Lattice ${{ github.ref_name }}
+          releaseBody: |
+            安装包在下面。已经装过旧版本的，可以在设置菜单里点 **Check for updates** 直接升级。
+
+            这个版本包含什么、修了什么，看仓库的提交记录。
+          # 先出草稿，人工过一眼再发布
+          releaseDraft: true
+          prerelease: false

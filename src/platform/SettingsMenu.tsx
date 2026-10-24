@@ -19,6 +19,7 @@ import { isStaleTarget, readAutostart, writeAutostart, type AutostartState } fro
 import { Glyph, ICON, ThemeGlyph } from "./icons";
 import { keyFingerprint } from "../runtime/catalogue";
 import { useLattice, type ThemeMode } from "./store";
+import { appVersion, checkForUpdate, installUpdate, type UpdateState } from "./updater";
 
 type View = "menu" | "signin" | "profile" | "catalogue";
 
@@ -87,6 +88,13 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
   /** 目录来源的草稿。保存之前不动真状态 —— 边打字边生效会一直发请求 */
   const [draftKind, setDraftKind] = useState<"bundled" | "url">("bundled");
   const [draftUrl, setDraftUrl] = useState("");
+  /**
+   * 平台自身的更新状态。**不进 store**：它是一次性的、跟这台机器这一次
+   * 会话有关，重启之后"上次检查过"没有任何意义 —— 存下来只会让菜单里
+   * 一直挂着一条过期的 "Up to date"。
+   */
+  const [update, setUpdate] = useState<UpdateState>({ status: "idle" });
+  const [version, setVersion] = useState("");
 
   const close = useCallback(() => {
     setOpen(false);
@@ -115,6 +123,57 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
     setCatalogueSource({ kind: draftKind, url: draftKind === "url" ? draftUrl : "" });
     setView("menu");
   }, [draftKind, draftUrl, setCatalogueSource]);
+
+  useEffect(() => {
+    void appVersion().then(setVersion);
+  }, []);
+
+  /**
+   * 一颗按钮两种含义：没查过就查，查到了就装。
+   *
+   * 没做成"查到之后长出一颗 Install 按钮"，是因为菜单高度会跟着跳 ——
+   * 用户点完"检查"之后，鼠标底下的东西换了位置，很容易点错。
+   */
+  const runUpdate = useCallback(async () => {
+    if (update.status === "available") {
+      const target = update.version;
+      setUpdate({ status: "downloading", version: target, percent: 0 });
+      try {
+        await installUpdate(target, (percent) =>
+          setUpdate({ status: "downloading", version: target, percent }),
+        );
+      } catch (error) {
+        setUpdate({
+          status: "error",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return;
+    }
+    if (update.status === "checking" || update.status === "downloading") return;
+    setUpdate({ status: "checking" });
+    setUpdate(await checkForUpdate());
+  }, [update]);
+
+  const updateNote =
+    update.status === "checking"
+      ? "Checking…"
+      : update.status === "current"
+        ? "Up to date"
+        : update.status === "available"
+          ? `Install v${update.version}`
+          : update.status === "downloading"
+            ? `${update.percent}%`
+            : update.status === "error"
+              ? "Failed"
+              : "Check";
+
+  const updateHint =
+    update.status === "error"
+      ? update.message
+      : update.status === "available"
+        ? `Update to v${update.version}, then Lattice restarts`
+        : "Ask the release page whether a newer version exists";
 
   // Ctrl+, 打开设置（和大多数桌面应用的约定一致），Esc 关闭
   useEffect(() => {
@@ -377,8 +436,22 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
                 <div className="lattice-menu-row is-static">
                   <Glyph d={ICON.info} />
                   <span className="lattice-menu-label">About Lattice</span>
-                  <span className="lattice-menu-note">v0.1.0 · local-first</span>
+                  <span className="lattice-menu-note">
+                    {version ? `v${version}` : "…"} · local-first
+                  </span>
                 </div>
+
+                <button
+                  type="button"
+                  className="lattice-menu-row"
+                  onClick={() => void runUpdate()}
+                  disabled={update.status === "checking" || update.status === "downloading"}
+                  title={updateHint}
+                >
+                  <Glyph d={ICON.refresh} />
+                  <span className="lattice-menu-label">Check for updates</span>
+                  <span className="lattice-menu-note">{updateNote}</span>
+                </button>
               </div>
 
               {signedIn && (

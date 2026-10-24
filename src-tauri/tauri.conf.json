@@ -29,7 +29,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -42,6 +45,17 @@
     "windows": {
       "nsis": {
         "installerHooks": "./installer-hooks.nsh"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/unraveltao/lattice/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZFRDA4MUJEMkZDQzlGNkQKUldSdG44d3Z2WUhRL3BBSDIwY040T3RNKzFRc00xSFpwQ0svVUs0L3BxVlVNTjRpWEVmUEVockEK",
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

@@ -24,6 +24,9 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
+# 平台自身的自动更新（组件更新是另一套：目录 + .lattice 包 + ed25519）。
+# 两者别混：组件更新由前端 `runtime/catalogue.ts` 驱动，这个只管"Lattice 本身要不要升级"
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 raw-window-handle = "0.6"

@@ -67,6 +67,9 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        // 自动更新：只在用户点了"Check for updates"时跑，不后台轮询。
+        // 后台轮询一个只发布几次的项目，等于每台机器每天替你发一次请求
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(runner::Runner::default())
         .setup(|app| {
             // 第二次启动 → 唤回主窗口的那条线程
@@ -130,6 +133,7 @@ pub fn run() {
             store::store_report,
             quit_app,
             show_main_window,
+            restart_app,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Lattice");
@@ -176,4 +180,14 @@ fn quit_app(app: tauri::AppHandle) {
 #[tauri::command]
 fn show_main_window(app: tauri::AppHandle) {
     instance::show_main(&app);
+}
+
+/// 更新装完之后重启自己。
+///
+/// 必须 `restart()` 而不是 `exit(0)`：装好的新二进制只有新进程才会跑，
+/// 而"更新完应用自己消失了"在用户眼里就是更新失败。`restart` 会重新拉起
+/// 一个进程，桌面上的组件窗口跟着重建（`restoreOnLaunch` 那条链路）。
+#[tauri::command]
+fn restart_app(app: tauri::AppHandle) {
+    app.restart();
 }
