@@ -69,9 +69,13 @@ jobs:
 
       - name: Run every self-check page
         run: |
-          set -o pipefail
+          # `run:` 默认是 `bash -e`：pipeline 一失败就整步退出，后面的 annotation
+          # 代码根本不会执行（上一轮就是这样，注解里一条都没出现）。先关掉 -e。
+          set +e
           npm run test:browser -- --base http://localhost:1420 2>&1 | tee /tmp/browser.log
           status=${PIPESTATUS[0]}
+          set -e
+
           if [ "$status" -ne 0 ]; then
             # 把最后十几行写成 annotation。
             # 理由很实在：runner 上的完整日志要登录才看得到，而 annotation 走
