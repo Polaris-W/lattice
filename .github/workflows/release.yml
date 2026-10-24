@@ -7,6 +7,11 @@ name: release
 # release。draft 期间更新器查不到任何东西（等于没发），发布那一刻全量生效 ——
 # 这比"发出去再后悔"好。
 #
+# 点 Publish 的时候**别勾 "Set as a pre-release"**：`/releases/latest` 跳过的
+# 不只是草稿，还有预发布。勾上之后 release 页面正常、产物都在、按 tag 直链的
+# latest.json 也 200，唯独更新器唯一会去敲的那个地址是 404 —— 而插件对任何
+# 非 2xx 都抛同一句 `ReleaseNotFound`，跟真断网长得一样。v0.1.0 就这么挂了一版。
+#
 # 为什么要 Secrets：
 #   TAURI_SIGNING_PRIVATE_KEY          更新包的 minisign 私钥（`.keys/updater.key` 的内容）
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD 生成时设的密码；没设就留空（但那样建议别用）
