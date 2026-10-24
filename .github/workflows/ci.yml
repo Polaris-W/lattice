@@ -68,7 +68,19 @@ jobs:
           echo "chrome: $CHROME_BIN"
 
       - name: Run every self-check page
-        run: npm run test:browser -- --base http://localhost:1420
+        run: |
+          set -o pipefail
+          npm run test:browser -- --base http://localhost:1420 2>&1 | tee /tmp/browser.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            # 把失败那几行写成 annotation。
+            # 理由很实在：runner 上的完整日志要登录才看得到，而 annotation 走
+            # `/check-runs/<id>/annotations` 是公开可读的 —— 下次排查不用再找人贴日志。
+            grep -E "FAIL |^  ! |0 条|——" /tmp/browser.log | head -10 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit 1
+          fi
 
       # 失败时把 dev server 的日志一起打出来 —— 页面渲染不出来最常见的原因在那边
       - name: Dump the dev server log
@@ -92,5 +104,30 @@ jobs:
       # tauri-build 要读 frontendDist（`../dist`），先把它建出来
       - run: npm run build
 
-      - run: cargo test --lib
+      - name: cargo test
         working-directory: src-tauri
+        shell: pwsh
+        run: |
+          cargo test --lib --no-run
+
+          # tauri 的 build script 把 WebView2Loader.dll 放在 target/debug/，
+          # 而测试二进制在 target/debug/deps/ —— Windows 的 DLL 搜索只看 exe 所在目录
+          # 和系统目录，不看上两级。少了这个文件，测试进程根本起不来
+          # （0xc0000135 STATUS_DLL_NOT_FOUND），看起来却像"测试挂了"。
+          if (Test-Path target/debug/WebView2Loader.dll) {
+            Copy-Item target/debug/WebView2Loader.dll target/debug/deps/ -Force
+            Write-Host "WebView2Loader.dll copied next to the test binary"
+          } else {
+            Write-Host "::warning::WebView2Loader.dll is not in target/debug — the test binary may not start"
+          }
+
+          $output = cargo test --lib 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath ../cargo-test.log
+
+          if ($code -ne 0) {
+            # 最后十几行才是重点（编译错误的 error、测试失败的 failures 列表）。
+            # 写成 annotation 是为了不登录也能读到，见 browser job 里那段说明。
+            Get-Content ../cargo-test.log -Tail 12 | ForEach-Object { Write-Host "::error::$_" }
+            exit 1
+          }
