@@ -273,12 +273,15 @@ if (data.type === "config-changed") {
 | `system:monitor` | `system.metrics` | 可用 |
 | `network` | `network.fetch`（还要求清单里列了目标主机） | 可用 |
 | `media:control` | `media.get` / `media.control`（系统媒体会话，见 §4.4） | 可用 |
+| `agent:activity` | `agent.activity`（本机 agent 做过的操作，读的是审计日志） | 可用 |
 
 只申请你真正用到的。申请一堆用不上的权限，用户会直接不装。
 
 `media:control` 一项权限同时管读和按。拆成"读会话"和"控制播放"两行，用户没法凭一行字分清区别，只会多点一次授权。
 
 `network` 是**两道锁**：用户授予权限只是第一道，第二道是清单里的 `network.hosts`（§3.2）。只授权、不列主机，等于哪儿都连不上。
+
+`agent:activity` 泄露的是**用户的操作历史**：谁在几点挪了什么、agent 说了什么。一块同时有 `network` 权限的组件拿到它就能把这份历史发出去 —— 所以默认不授，只在用户明确要看「agent 干了什么」时才给。
 
 `schedule.*` 不需要任何权限 —— 它只影响组件自己那条时间轴，碰不到系统资源。
 
@@ -372,6 +375,7 @@ parent.postMessage(
 | `network.fetch` | `network` | `{ url, method?, headers?, body? }` | `{ status, ok, headers, body, truncated }`，见 §3.2 |
 | `media.get` | `media:control` | — | 当前媒体会话，没有播放器时返回 `null`（不是错误），见 §4.4 |
 | `media.control` | `media:control` | `{ action }` | `{ ok }`；`action` 是 `playPause` / `next` / `previous` / `stop` |
+| `agent.activity` | `agent:activity` | `{ limit? }` | `{ enabled, entries }`；`entries` 是审计日志最后几条，新的在**后**（组件自己倒序） |
 | `window.close` | — | — | 关闭当前组件实例的窗口，**但不删用户的 placement** |
 
 **`window.close` 只是关窗，不是删组件。** 调用之后窗口消失，但用户摆在画布 / 桌面上的那个 placement 还在 `state.json` 里，下次启动照样回来；本次运行内不会再自动冒出来（平台记着"它自己退出了"）。真正删掉用户布局的只有用户自己按宿主页那颗 ✕。所以组件别把这个方法当"自毁"用 —— 它是"我先歇着"。

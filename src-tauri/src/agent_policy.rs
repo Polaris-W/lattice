@@ -207,6 +207,30 @@ pub fn parse_action(name: &str) -> Option<Action> {
     ACTIONS.iter().copied().find(|action| action.name() == name)
 }
 
+/// `say` 的长度上限，**按字符算不按字节算** —— 中文一个字三个字节，
+/// 按字节截会把字切开。
+pub const MAX_SAY_CHARS: usize = 500;
+
+/// 归一化 agent 想说的一句话。
+///
+/// 三件事一起做：去首尾空白、把连续空白（含换行）压成一个空格、超长拒绝。
+///
+/// **压成一行是硬要求**：审计日志是一行一条 JSON，多行内容会把它撑成两条，
+/// 之后每一条都解析失败。而这块板子本来就只有 320px 宽，换行也显示不出来。
+///
+/// 超长**拒绝而不是截断**：截断是替 agent 决定了什么不重要，它看到报错会自己
+/// 写短一点，而截断只会让它以为说全了。
+pub fn say_text(raw: &str) -> Result<String, &'static str> {
+    let text = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.is_empty() {
+        return Err("say needs some text");
+    }
+    if text.chars().count() > MAX_SAY_CHARS {
+        return Err("say text is too long (max 500 characters)");
+    }
+    Ok(text)
+}
+
 /// 组一个 HTTP/1.1 响应。永远 `Connection: close`：单请求短连接，
 /// 不实现 keep-alive 也就不需要处理分块和管道化。
 pub fn response(status: u16, body: &str) -> Vec<u8> {
@@ -407,5 +431,42 @@ mod tests {
         let token = token_from_bytes(&[0x00, 0x0f, 0xff, 0x5a]);
         assert_eq!(token, "000fff5a");
         assert_eq!(token_from_bytes(&[7u8; 32]).len(), 64);
+    }
+
+    // ---- say ----
+
+    #[test]
+    fn say_keeps_an_ordinary_sentence() {
+        assert_eq!(
+            say_text("Moved the clock to the top right"),
+            Ok("Moved the clock to the top right".to_string())
+        );
+    }
+
+    #[test]
+    fn say_collapses_newlines_into_one_line() {
+        // 审计日志一行一条 JSON，多行内容会把后面每一条都撑坏
+        assert_eq!(say_text("first\nsecond\r\n\nthird"), Ok("first second third".to_string()));
+    }
+
+    #[test]
+    fn say_trims_and_rejects_emptiness() {
+        assert_eq!(say_text("  padded  "), Ok("padded".to_string()));
+        assert_eq!(say_text(""), Err("say needs some text"));
+        assert_eq!(say_text("   \n\t "), Err("say needs some text"));
+    }
+
+    #[test]
+    fn say_counts_characters_not_bytes() {
+        // 500 个汉字是 1500 字节，按字节判会误拒
+        assert!(say_text(&"字".repeat(MAX_SAY_CHARS)).is_ok());
+        assert!(say_text(&"字".repeat(MAX_SAY_CHARS + 1)).is_err());
+    }
+
+    #[test]
+    fn say_refuses_instead_of_truncating() {
+        // 截断等于替 agent 决定什么不重要，它只会以为说全了
+        let long = "a".repeat(MAX_SAY_CHARS + 1);
+        assert_eq!(say_text(&long), Err("say text is too long (max 500 characters)"));
     }
 }

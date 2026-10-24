@@ -23,7 +23,8 @@ export type Permission =
   | "clipboard:write" // 写入剪贴板
   | "network" // 发起网络请求
   | "system:monitor" // 读取 CPU / 内存 / 磁盘等指标
-  | "media:control"; // 控制正在播放的媒体
+  | "media:control" // 控制正在播放的媒体
+  | "agent:activity"; // 读 agent 在本机做过的操作（审计日志）
 
 export interface WidgetSize {
   w: number;
@@ -193,17 +194,11 @@ export function normalizeManifest(raw: unknown, dirName: string): WidgetManifest
 
 function normalizePermissions(raw: unknown): Permission[] {
   if (!Array.isArray(raw)) return [];
-  const allowed = new Set<Permission>([
-    "clock",
-    "storage",
-    "clipboard:write",
-    "network",
-    "system:monitor",
-    "media:control",
-  ]);
   const out: Permission[] = [];
   for (const item of raw) {
-    if (typeof item === "string" && allowed.has(item as Permission) && !out.includes(item as Permission)) {
+    // 判据只留一份（`PERMISSION_READY`）。这里以前另抄了一份一模一样的七项名单，
+    // 加权限时漏抄一处，表现是"清单里写了、界面上没有"，而且不报错。
+    if (typeof item === "string" && PERMISSION_READY.has(item as Permission) && !out.includes(item as Permission)) {
       out.push(item as Permission);
     }
   }
@@ -266,20 +261,30 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   network: "Network access",
   "system:monitor": "System metrics",
   "media:control": "Media control",
+  "agent:activity": "Agent activity",
 };
 
 /**
- * 桥里真的有方法可调的权限。
+ * 已知权限，也是"能不能声明 / 能不能勾"的唯一判据。
  *
- * 六项现在全齐了（`media:control` 是最后补上的）。这张表仍然留着 —— 它是
- * "授权界面能不能勾"的唯一判据：将来再加一项权限，先让它在这里缺席，
- * 等桥里真有方法了再挪进来，界面就会自动把它画成禁用 + `soon`。
+ * `normalizePermissions` 也读这一份 —— 以前那里另抄了一份同样的名单，两处
+ * 各改各的，漏一处的表现是"清单里写了、界面上没有"，不报错。
  *
- * 加一项权限要**三处一起改**：`defineMethod` 注册方法、这个集合加进去、
- * `PERMISSION_LABELS` 补文案 —— 只改前两处，界面上会少个名字。
+ * 七项现在全齐了（`media:control` 在 v0.4、`agent:activity` 在 v0.8 补上）。
+ * 加一项权限要**四处一起改**：
  *
- * 注意：**不要**因为它们没实现就从 `Permission` 类型里删掉。清单里声明了
- * 它们的组件应当照常通过校验，只是暂时拿不到 —— 静默丢弃声明比明确拒绝更糟。
+ * 1. `Permission` 联合类型
+ * 2. 这个集合
+ * 3. `PERMISSION_LABELS` 补文案（漏了界面上就是个空标签）
+ * 4. `bridge.ts` 里 `defineMethod` 注册方法（漏了组件调不通）
+ *
+ * 还有第五处：`runtime/catalogue.ts` 的 `KNOWN_PERMISSIONS` —— 那是给商店卡片
+ * 认"这个包要什么权限"用的，漏了不会崩，只是卡片上少一行。
+ *
+ * 界面上那套 `soon`（`isPermissionReady` 为假时禁用开关）现在不会触发了：
+ * 集合和联合类型一样长，所以任何能被解析出来的权限都是"已就绪"。留着它是
+ * 给"先声明、后实现"留的位子 —— 真要那么干，得先让 `normalizePermissions`
+ * 放行集合外的名字，否则声明会在归一化那一步就被丢掉，`soon` 永远没机会出现。
  */
 export const PERMISSION_READY: ReadonlySet<Permission> = new Set<Permission>([
   "clock",
@@ -288,6 +293,7 @@ export const PERMISSION_READY: ReadonlySet<Permission> = new Set<Permission>([
   "system:monitor",
   "network",
   "media:control",
+  "agent:activity",
 ]);
 
 /** 这个权限是不是已经有桥方法了 */

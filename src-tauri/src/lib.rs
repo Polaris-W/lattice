@@ -145,6 +145,7 @@ pub fn run() {
             store::store_install,
             store::store_report,
             agent::agent_status,
+            agent::agent_activity,
             agent::agent_set_enabled,
             agent::agent_reply,
             quit_app,

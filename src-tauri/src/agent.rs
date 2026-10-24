@@ -23,7 +23,7 @@
 //! 是：默认关、动作白名单只有 8 个、每一步都进审计日志。
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -289,43 +289,65 @@ fn serve(app: &AppHandle, mut stream: TcpStream) {
         }
     };
 
-    let (status, body, detail) = dispatch(app, &request);
-    write_all(&stream, status, &body);
-    audit(app, &request.path, &detail, status, started.elapsed().as_millis());
+    let answer = dispatch(app, &request);
+    write_all(&stream, answer.status, &answer.body);
+    audit(app, &answer.op, &answer.detail, answer.status, started.elapsed().as_millis());
 }
 
-fn dispatch(app: &AppHandle, request: &agent_policy::Request) -> (u16, String, String) {
+/// 一次调用的结果。
+///
+/// `op` / `detail` 单独带着，是因为审计那一行要在 `serve` 里统一写一次 ——
+/// 让每个分支自己调 `audit` 的话，`say` 会写两行（一行带正文、一行只写 "say"），
+/// 而板子上就会把同一句话显示两遍。
+struct Answer {
+    status: u16,
+    body: String,
+    op: String,
+    detail: String,
+}
+
+impl Answer {
+    fn new(status: u16, body: String, op: &str, detail: impl Into<String>) -> Self {
+        Self { status, body, op: op.to_string(), detail: detail.into() }
+    }
+}
+
+fn dispatch(app: &AppHandle, request: &agent_policy::Request) -> Answer {
     let token = app.state::<Agent>().token.lock().unwrap().clone().unwrap_or_default();
     if token.is_empty() {
-        return (
+        return Answer::new(
             503,
             json!({ "ok": false, "code": "not_ready", "error": "the endpoint has no token yet" }).to_string(),
-            "no-token".to_string(),
+            "raw",
+            "no-token",
         );
     }
     if !agent_policy::authorized(request.authorization.as_deref(), &token) {
         // 401 只说明令牌不对，不说明哪个对 —— 别回显任何东西
-        return (
+        return Answer::new(
             401,
             json!({ "ok": false, "code": "unauthorized", "error": "missing or wrong bearer token" }).to_string(),
-            "unauthorized".to_string(),
+            "raw",
+            "unauthorized",
         );
     }
 
     if request.path == "/health" {
-        return (200, json!({ "ok": true, "app": "lattice" }).to_string(), "health".to_string());
+        return Answer::new(200, json!({ "ok": true, "app": "lattice" }).to_string(), "health", "health");
     }
     if request.path != "/rpc" {
-        return (
+        return Answer::new(
             404,
             json!({ "ok": false, "code": "not_found", "error": "only /rpc and /health exist" }).to_string(),
+            "raw",
             request.path.clone(),
         );
     }
     if request.method != "POST" {
-        return (
+        return Answer::new(
             405,
             json!({ "ok": false, "code": "method_not_allowed", "error": "/rpc is POST only" }).to_string(),
+            "raw",
             request.method.clone(),
         );
     }
@@ -333,17 +355,18 @@ fn dispatch(app: &AppHandle, request: &agent_policy::Request) -> (u16, String, S
     let body: Value = match serde_json::from_str(&request.body) {
         Ok(value) => value,
         Err(error) => {
-            return (
+            return Answer::new(
                 400,
                 json!({ "ok": false, "code": "bad_request", "error": format!("body is not JSON: {error}") }).to_string(),
-                "bad-json".to_string(),
+                "raw",
+                "bad-json",
             )
         }
     };
 
     let op = body.get("op").and_then(Value::as_str).unwrap_or("").to_string();
     match op.as_str() {
-        "state" => forward(app, json!({ "op": "state" }), "state".to_string()),
+        "state" => forward(app, json!({ "op": "state" }), "state", "state"),
 
         "act" => {
             let name = body.get("action").and_then(Value::as_str).unwrap_or("").to_string();
@@ -355,19 +378,43 @@ fn dispatch(app: &AppHandle, request: &agent_policy::Request) -> (u16, String, S
                     Some((_, why)) => format!("{name} is never available to an agent: {why}"),
                     None => format!("unknown action {name:?}"),
                 };
-                return (
+                return Answer::new(
                     403,
                     json!({ "ok": false, "code": "forbidden", "error": message }).to_string(),
+                    "act",
                     name,
                 );
             }
             let args = body.get("args").cloned().unwrap_or(Value::Null);
-            forward(app, json!({ "op": "act", "action": name, "args": args }), name)
+            forward(app, json!({ "op": "act", "action": name, "args": args }), "act", name)
+        }
+
+        /*
+         * 说一句话。
+         *
+         * 和 `act` 的区别：它不改任何状态，只往审计日志里写一行，桌面上的
+         * `lattice.agent` 板子会把这一行显示出来。这是 agent 唯一能"说话"的
+         * 地方 —— 没有它，板子上就只剩一串 `placement.move`，看得见发生了什么
+         * 但不知道为什么。
+         *
+         * 不需要前端往返：写日志是后端自己的事，绕一圈只会多一个会超时的环节。
+         */
+        "say" => {
+            let text = body.get("text").and_then(Value::as_str).unwrap_or("");
+            match agent_policy::say_text(text) {
+                Ok(line) => Answer::new(200, json!({ "ok": true }).to_string(), "say", line),
+                Err(reason) => Answer::new(
+                    400,
+                    json!({ "ok": false, "code": "bad_request", "error": reason }).to_string(),
+                    "say",
+                    "rejected",
+                ),
+            }
         }
 
         // 第二层（组件工具）协议先占着位置：宁可现在回一句"还没做"，
         // 也不要等接进来的时候临时发明一个形状
-        "tool" => (
+        "tool" => Answer::new(
             200,
             json!({
                 "ok": false,
@@ -375,13 +422,15 @@ fn dispatch(app: &AppHandle, request: &agent_policy::Request) -> (u16, String, S
                 "error": "widget tools are not wired up yet — see docs/AGENT_ACCESS.md"
             })
             .to_string(),
-            "tool".to_string(),
+            "tool",
+            "unsupported",
         ),
 
-        other => (
+        other => Answer::new(
             400,
-            json!({ "ok": false, "code": "bad_request", "error": format!("unknown op {other:?}; expected state, act or tool") })
+            json!({ "ok": false, "code": "bad_request", "error": format!("unknown op {other:?}; expected state, act, say or tool") })
                 .to_string(),
+            "raw",
             other.to_string(),
         ),
     }
@@ -391,23 +440,18 @@ fn dispatch(app: &AppHandle, request: &agent_policy::Request) -> (u16, String, S
 ///
 /// 回话体是**前端给的 JSON 原样** —— 后端不解释结果，也就不需要为每个动作
 /// 维护一份返回结构。少一层转译，少一处会不一致的地方。
-fn forward(app: &AppHandle, payload: Value, detail: String) -> (u16, String, String) {
+fn forward(app: &AppHandle, payload: Value, op: &str, detail: impl Into<String>) -> Answer {
     match call_frontend(app, payload) {
-        Ok(body) => {
-            // 前端自己会给出 ok 字段；它说失败就还是 200（请求确实被处理了），
-            // 只有"没答上来"才是 5xx
-            (200, body, detail)
-        }
+        // 前端自己会给出 ok 字段；它说失败就还是 200（请求确实被处理了），
+        // 只有"没答上来"才是 5xx
+        Ok(body) => Answer::new(200, body, op, detail),
         Err(error) => {
             let code = if error.starts_with("timeout") { "timeout" } else { "window_unreachable" };
-            (
-                503,
-                json!({ "ok": false, "code": code, "error": error }).to_string(),
-                detail,
-            )
+            Answer::new(503, json!({ "ok": false, "code": code, "error": error }).to_string(), op, detail)
         }
     }
 }
+
 
 fn call_frontend(app: &AppHandle, payload: Value) -> Result<String, String> {
     let state = app.state::<Agent>();
@@ -439,6 +483,44 @@ fn write_all(stream: &TcpStream, status: u16, body: &str) {
 // ---------------------------------------------------------------------------
 // 命令
 // ---------------------------------------------------------------------------
+
+/// 最近做过的操作，给桌面上的 `lattice.agent` 板子看。
+///
+/// 只读最后 64 KB：正常用一天也就几十 KB，但真有人拿脚本刷它的时候，
+/// 每次轮询都把整个文件读进内存是不必要的。
+///
+/// 从中间切进去的第一行是半截 JSON，解析会失败 —— `filter_map` 顺手丢掉，
+/// 下一次轮询就正常了。宁可少显示一行，也不要为它写一套"对齐到行首"的逻辑。
+#[tauri::command]
+pub fn agent_activity(app: AppHandle, limit: Option<usize>) -> Result<Value, String> {
+    let limit = limit.unwrap_or(20).clamp(1, 100);
+    let path = agent_dir(&app)?.join("audit.log");
+    let mut entries: Vec<Value> = Vec::new();
+
+    if let Ok(mut file) = std::fs::File::open(&path) {
+        let len = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+        if file.seek(SeekFrom::Start(len.saturating_sub(64 * 1024))).is_ok() {
+            let mut raw = Vec::new();
+            if file.read_to_end(&mut raw).is_ok() {
+                // 用 lossy 而不是 from_utf8：切在汉字中间会得到无效字节，
+                // 那时候整块内容都读不出来，而这不是用户的问题
+                let text = String::from_utf8_lossy(&raw);
+                entries = text
+                    .lines()
+                    .rev()
+                    .take(limit)
+                    .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                    .collect();
+                entries.reverse();
+            }
+        }
+    }
+
+    Ok(json!({
+        "enabled": *app.state::<Agent>().enabled.lock().unwrap(),
+        "entries": entries,
+    }))
+}
 
 #[tauri::command]
 pub fn agent_status(app: AppHandle) -> Status {

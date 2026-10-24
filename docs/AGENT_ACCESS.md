@@ -14,7 +14,7 @@
 | --- | --- | --- | --- |
 | **A 控制平面** | agent 摆组件、改布局、换主题、暂停 | `[已实现]` | 一条通道 + 一个新身份 + 审计 |
 | **B 数据平面** | agent 读待办、加日历事件、查天气 | `[设计]` | 组件清单加一节 `agent.tools`，**所有组件作者要跟着改** |
-| **C agent 当组件** | 一个聊天窗，模型在窗里指挥平台 | `[设计]` | 一个官方组件 + 模型配置 + 一条"组件能不能调端点"的规矩 |
+| **C agent 当组件** | 一块看板：agent 刚才说了什么、改了什么 | `[已实现]` | 一个官方组件 + 一条 `say` 通道 + 一项新权限 |
 
 顺序不能倒。B 要改组件规范（波及所有作者），C 依赖 A 已经能用；A 是地基。
 
@@ -57,6 +57,9 @@ HTTP 请求 → agent.rs → emit `lattice:agent` → platform/agent.ts 执行 �
 
 // 改
 {"op": "act", "action": "placement.move", "args": {"instanceId": "lattice.clock#a1b2", "x": 40, "y": 40}}
+
+// 说一句（agent 唯一的"嘴"，直接进审计日志，不经过前端）
+{"op": "say", "text": "Moved the clock to the top right"}
 
 // 第二层，先占位（现在回 unsupported）
 {"op": "tool", "instanceId": "…", "tool": "todo.add", "args": {"text": "buy milk"}}
@@ -178,20 +181,60 @@ npm run agent -- act placement.add --args '{"widgetId":"lattice.clock"}'
 没有 schema，agent 读了也只能瞎猜。要数据就走组件自己声明的工具 —— 由组件的代码决定
 暴露什么、怎么解释。平台不当数据出口。
 
-## 3. C agent 当组件 `[设计]`
+## 3. C agent 当组件 `[已实现]`
 
-一个官方组件 `lattice.agent`：聊天窗，模型配置（baseUrl / model / key）存在组件配置里，
-走现有 `network` 权限出网。
+一个官方组件 `lattice.agent`，但它**不是聊天窗，也不带模型**。
 
-它和 A 的关系有两种做法，**必须选一个**，别两边都做：
+这个决定值得写下来，因为它把一整套攻击面直接删掉了：没有 baseUrl、没有 API key、没有
+`network` 权限、不碰网络。它只做一件事 —— 读审计日志，把 agent 刚才说了什么、改了什么
+列出来。
 
-- **只对话，不调控**：组件只负责显示模型回答，真正操作桌面的是 agent 宿主（Claude
-  Desktop / CLI）。安全模型完全不变。
-- **组件也能调控**：那它就得调 `127.0.0.1` 端点，而 `network.fetch` 有主机白名单 ——
-  要么给 `127.0.0.1` 开个口子（等于给**任何**组件开），要么给这个组件一条专用桥方法。
-  后者更干净，但等于平台内置了一个"能改布局的组件"，这条口子以后收不回来。
+### 3.1 为什么不是聊天窗
 
-建议先做第一种。第二种要等 B 的授权轴做完，因为那时才有"agent 能做什么"这个概念可以复用。
+最初的设计是"模型在窗里指挥平台"。真做的时候发现它要付三笔钱，而且第三笔最贵：
+
+1. 组件的配置里要存一个 API key（用户的，落在 `widget-store` 里）
+2. 要开 `network` 权限，而 `network.fetch` 的主机白名单是给固定域名的 —— 让用户自己
+   填 baseUrl，白名单就形同虚设
+3. **有嘴就有手**。一个能发请求的组件，离"能改布局"只差一条桥方法；那条口子开出去
+   以后收不回来
+
+而它想解决的问题 —— "我看不见 agent 在干什么" —— 不需要模型就能解决。agent 宿主
+（Claude Desktop / CLI / 任何会说 HTTP 的东西）本来就有自己的界面，它只是**说不出话**。
+
+### 3.2 所以给了它一条 `say`
+
+`{"op": "say", "text": "…"}` 是 agent 唯一的嘴。它不走前端往返 —— `agent.rs` 直接写进
+`agent/audit.log`，和 `act` 那几行并排。理由很实在：说一句话不需要等窗口答上来，
+窗口没开的时候这句话也该留下。
+
+两条约束：
+
+- **压成一行**。审计日志是 JSONL，多行内容会把后面每一行都拆坏。所以
+  `say_text` 用 `split_whitespace().join(" ")` 压平。
+- **超长拒绝，不截断**。上限 500 字符。截断等于替 agent 决定"后半句不重要"，而它会以为
+  自己说完了。拒绝它，它下次会说短一点。
+
+### 3.3 看板为什么骗不了人
+
+`act` 那几行是**平台**写的，`say` 那几行是 agent 自己的话，两者在数据里就是不同的 `op`。
+组件只负责显示，不解释、不执行、没有任何调用动作的接口 —— 它结构上做不了事，也就没法
+被诱导去做事。
+
+另外它需要一项新权限 `agent:activity`：审计日志里有用户的操作历史，白给不合适。
+
+`agent` 关着的时候它照样显示历史（过去发生过的事不会因为关掉开关就变成没发生过），
+只是不再有新行进来。
+
+### 3.4 以后真要做聊天窗
+
+那就得先回答上面第 3 条 —— 组件的"手"从哪来。两个选项：
+
+- 给 `127.0.0.1` 在 `network.fetch` 上开个口子：等于给**任何**组件开
+- 一条专用桥方法：更干净，但平台从此内置了一个"能改布局的组件"
+
+两条都要等 B 的授权轴（`2.2` 第三条）做完，因为那时才有"agent 能做什么"这个概念可以复用。
+现在不做。
 
 ## 4. 明确不做（v1）
 
@@ -202,7 +245,8 @@ npm run agent -- act placement.add --args '{"widgetId":"lattice.clock"}'
 
 | 部分 | 怎么验 |
 | --- | --- |
-| `agent_policy.rs`（HTTP 解析 / 令牌 / 白名单） | 21 条 `rustc --test`，见 `.scratch/agent-test.rs` |
+| `agent_policy.rs`（HTTP 解析 / 令牌 / 白名单 / `say`） | 26 条 `rustc --test`，见 `.scratch/agent-test.rs` |
 | `platform/agent.ts`（动作执行器） | `tests/agent.html` 57 条，跑的是**真 store** |
 | `scripts/lattice-agent.mjs`（客户端） | `npm run test:agent`，11 条，起假端点测请求形状与退出码 |
+| `lattice.agent`（看板组件） | `tests/agent-widget.html` 50 条，iframe 里加载真组件，调 `window.__latticeAgentFeed` |
 | Rust 监听器 + Tauri 往返 | **没验过** —— 要起 `tauri:dev`。起之前先确认没有残留的 `lattice.exe`（孤儿进程会用内存里那份盖掉 `state.json`） |

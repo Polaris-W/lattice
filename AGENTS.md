@@ -10,7 +10,7 @@
 
 **棂 / Lattice** —— 可扩展的 Windows 桌面小组件平台。第三方用纯 HTML/CSS/JS 写组件，平台负责把它们安全地放到桌面上。
 
-当前状态：**v0.6 / v0.7 进行中**（v0.1–v0.5 全部落地）。组件能装（拖文件夹 / 拖 `.lattice` 包 / 从商店装）、能变成真的桌面窗口、能拖能缩能锁，布局与组件数据重启不丢；商店是一份签名过的静态 JSON，带更新、回滚、举报、新权限复核；目录已经挂在公网上（GitHub Pages），默认读线上那份，带磁盘缓存和断网兜底；平台自己有 NSIS 安装包和自动更新。没有服务端 —— 这是设计，不是还没做，见 [ROADMAP 的 v0.5 四个取舍](./docs/ROADMAP.md#v05-的四个取舍)。
+当前状态：**v0.8 进行中**（v0.1–v0.7 全部落地）。组件能装（拖文件夹 / 拖 `.lattice` 包 / 从商店装）、能变成真的桌面窗口、能拖能缩能锁，布局与组件数据重启不丢；商店是一份签名过的静态 JSON，带更新、回滚、举报、新权限复核；目录已经挂在公网上（GitHub Pages），默认读线上那份，带磁盘缓存和断网兜底；平台自己有 NSIS 安装包和自动更新；**agent 能调控桌面**（默认关的回环 HTTP 端点 + 8 个白名单动作 + 审计日志 + 一块看板组件），数据平面（组件把能力声明成工具）还没做。没有服务端 —— 这是设计，不是还没做，见 [ROADMAP 的 v0.5 四个取舍](./docs/ROADMAP.md#v05-的四个取舍)。
 
 想先知道"为什么现在是这样"，读 [ROADMAP 的「被推翻的八个决定」](./docs/ROADMAP.md#被推翻的八个决定)——每个决定都写着当初怎么选、被什么撞翻、现在怎么补。
 
@@ -94,6 +94,8 @@ scripts/
   sdk-sync.mjs            把 packages/sdk 的两个文件刷进所有内嵌副本（`--check` 只查不改）
   sdk.test.mjs            副本一致性 + SUPPORTED_SDK 版本对齐（`npm run test:sdk`）
   tauri.mjs               tauri CLI 包装（补工具链 PATH）
+  lattice-agent.mjs       agent 客户端 CLI（`npm run agent -- state|act|ping`，零依赖）
+  lattice-agent.test.mjs  上面那道的测试：起假端点，测请求形状与退出码（`npm run test:agent`）
 src-tauri/src/
   lib.rs                  命令注册、WebView2 启动参数、自定义协议注册、主窗口关闭守卫
   protocol.rs             lattice-widget:// 静态文件服务（用户组件的 HTML/CSS/JS）
@@ -115,7 +117,7 @@ src-tauri/src/
   occlusion.rs            遮挡判定（Win32）：九点 WindowFromPoint + DWMWA_CLOAKED，点透窗口跳过
   occlusion_policy.rs     遮挡的纯逻辑：采样点怎么取、几个没命中算挡住（8 条 rustc --test）
   agent.rs                Agent 端点：只绑 127.0.0.1 的 HTTP、令牌、审计、转发给主窗口（默认关）
-  agent_policy.rs         上面那道的纯逻辑：HTTP 三态解析、Bearer 常量时间比对、动作白名单（21 条 rustc --test）
+  agent_policy.rs         上面那道的纯逻辑：HTTP 三态解析、Bearer 常量时间比对、动作白名单、`say` 的单行化与超长拒绝（26 条 rustc --test）
   wallpaper.rs            截壁纸（宿主页底板的第一层）
   metrics.rs              系统指标（sysmon 组件用），直接调 Win32 不引 crate
   media.rs                SMTC 媒体会话：读当前播放 + playPause/next/previous/stop（WinRT）
@@ -286,7 +288,7 @@ registry.ts  entryUrl = http://lattice-widget.localhost/<id>/index.html
 
 ### 加一个桥方法
 
-1. 需要新权限 → `runtime/manifest.ts` 的 `Permission` 联合类型、`normalizePermissions` 的白名单、`PERMISSION_LABELS`
+1. 需要新权限 → **五处一起改**：`runtime/manifest.ts` 的 `Permission` 联合类型、`PERMISSION_READY`（`normalizePermissions` 读它，别另抄名单）、`PERMISSION_LABELS`、`runtime/catalogue.ts` 的 `KNOWN_PERMISSIONS`、以及 `docs/WIDGET_SPEC.md` 的权限表
 2. `runtime/bridge.ts` 里 `defineMethod("ns.method", "permission-or-null", handler)`；参数校验失败抛 `BridgeError("bad_params", ...)`
 3. 要碰系统/文件 → 写 Rust 命令，注册进 `lib.rs` 的 `invoke_handler`
 4. `docs/WIDGET_SPEC.md` 的方法表补一行（第三方只认这张表）
@@ -434,7 +436,7 @@ public/widgets/<id>/
 
 已修（别再改回去）：撤销授权必须当场生效。`HostConfig.permissions` 以前只在 `create()` 写一次，宿主页的 `granted` 也是启动时建一次 —— 撤掉 `storage` 之后桌面上那个组件照样能写盘。现在 `sync_widget_windows` 每轮比对权限（**先排序去重**，否则 grants 数组换个顺序就重载一次组件），变了 `emit_to("lattice:widget-permissions")`；宿主页清空重填集合并 `reloadWidget()`。只换集合不重载是不够的：组件在授权前写进界面的"权限被拒"不会自己回头。
 
-已修（别再改回去）：没有桥方法的权限不许出现在可勾选列表里。`PERMISSION_READY`（`runtime/manifest.ts`）是唯一的判据，`InspectorPanel` 据此禁用开关并打 `soon`，`LibraryPanel` 据此画灰色虚线标签。加一项权限时**三处一起改**：`defineMethod` 注册方法、`PERMISSION_READY` 加进去、`PERMISSION_LABELS` 补文案 —— 只改前两处，界面上会少个名字。
+已修（别再改回去）：没有桥方法的权限不许出现在可勾选列表里。`PERMISSION_READY`（`runtime/manifest.ts`）是**唯一**判据 —— `normalizePermissions` 也读它（以前那里另抄了一份同样的七项名单，漏抄一处的表现是"清单里写了、界面上没有"，不报错），`InspectorPanel` 据此禁用开关并打 `soon`，`LibraryPanel` 据此画灰色虚线标签。加一项权限要**五处一起改**：`Permission` 联合类型、`PERMISSION_READY`、`PERMISSION_LABELS` 文案、`bridge.ts` 的 `defineMethod`、`catalogue.ts` 的 `KNOWN_PERMISSIONS`（最后这处漏了只是商店卡片少一行权限）。`soon` 那套现在不会触发（集合和联合类型一样长），留着是给"先声明、后实现"占位 —— 真要那么干得先让归一化放行集合外的名字。
 
 已修（别再改回去）：重启会把组件放回桌面。`desktopMode` 与 `restoreOnLaunch` 都落盘，`App.tsx` 在**水合完成 + 清单读到**之后才恢复（少一个条件就会拿空列表同步一次，把窗口全关掉）。恢复时**不要**顺手最小化主窗口 —— 开机就把窗口藏起来，用户会以为应用没打开。
 
@@ -513,7 +515,8 @@ public/widgets/<id>/
 ## 11. 验证
 
 - `npm run typecheck` —— 必跑，当前是干净的
-- **`npm run test:browser`** —— 跑一遍 `tests/*.html` 里的全部断言（33 页 / 1060 条）。先 `npm run dev` 起 dev server（默认 1420），另一个终端跑它；`--filter catalogue` 只跑匹配的页。它用 headless Chrome 的 `--dump-dom` 读 `<pre id="out">`，所以**页面的断言必须写成 `PASS …` / `FAIL …` 两行式**，别的格式它数不到。CI 里这条是 `browser` job，红在哪一页会直接打出来。
+- **`npm run test:browser`** —— 跑一遍 `tests/*.html` 里的全部断言（34 页 / 1110 条）。先 `npm run dev` 起 dev server（默认 1420），另一个终端跑它；`--filter catalogue` 只跑匹配的页。它用 headless Chrome 的 `--dump-dom` 读 `<pre id="out">`，所以**页面的断言必须写成 `PASS …` / `FAIL …` 两行式**，别的格式它数不到。CI 里这条是 `browser` job，红在哪一页会直接打出来。
+- **断言页别等 iframe**。`--virtual-time-budget` 会让虚拟时钟一路快进到 9 秒，而 iframe 的 `load` 走真实网络 —— 谁先到看运气，快进赢了就 dump 到一个空的 `<pre>`，`test:browser` 报"0 条 —— 一条断言都没跑完"。那个症状和"页面没有断言"一模一样，别去调 budget（调大只是让赌局更偏一点，还是赌）。正确做法是**同步加载**：组件把纯逻辑挂在 `window.__latticeXxx` 上，普通 `<script src>` 引进来就能断言；拿不到那个对象时也要先 `log(false, …)` 再 `flush()`，否则页面永远吐 0 条。
 - 改了组件 UI：`npm run dev` 后在浏览器里看；要截固定尺寸的图，用 Edge headless：
   ```bash
   msedge --headless=new --disable-gpu --force-device-scale-factor=2 \
@@ -557,7 +560,8 @@ public/widgets/<id>/
   #[path = "../src-tauri/src/network_policy.rs"] mod network_policy;
   ```
   `rustc --test 壳子.rs -o 壳子.exe && ./壳子.exe`。**这就是"纯逻辑要单独拆成一个文件"的原因 —— 拆出来才测得到**。断言只有一份（`#[cfg(test)] mod tests` 在模块内部），壳子别复制。
-  能这么跑的现在是 80 条：`diagnostics.rs`（14）、`package_policy.rs`（11）、`network_policy.rs`（12）、`catalogue_policy.rs`（9，要 `--extern serde_json=<rlib>`）、`crash_policy.rs`（9）、`signature_policy.rs`（8）、`watch_policy.rs`（5）、`autostart_policy.rs`（5）、`signature.rs`（4）、`csp.rs`（3，要桩一个 `protocol::SCHEME` 常量）。剩下 22 条（`protocol.rs` 6、`widget_store.rs` 5、`backup.rs` 4、`egress.rs` 3、`media.rs` 2、`store.rs` 1、`package.rs` 1）在带依赖的模块里，只有 `cargo test` 能跑，本机跑不了 —— 改动它们时靠 review 和真机验证。
+  能这么跑的现在是 110 条：`agent_policy.rs`（26）、`diagnostics.rs`（14）、`network_policy.rs`（12）、`package_policy.rs`（11）、`catalogue_policy.rs`（9，要 `--extern serde_json=<rlib>`）、`crash_policy.rs`（9）、`signature_policy.rs`（9）、`occlusion_policy.rs`（8）、`watch_policy.rs`（5）、`autostart_policy.rs`（5）、`signature.rs`（4）、`csp.rs`（3，要桩一个 `protocol::SCHEME` 常量）、`package.rs`（1，跟着 `package_policy` 一起编）。剩下 26 条（`protocol.rs` 6、`widget_store.rs` 5、`backup.rs` 4、`egress.rs` 3、`media.rs` 2、`store.rs` 1、其余在带 `tauri::` 的胶水里）只有 `cargo test` 能跑，本机跑不了 —— 改动它们时靠 review 和真机验证。
+  **壳子会过期，过期了要修，不要当它不存在**：`extract-test.rs` 曾经在 `package.rs` 加上验签之后编不过（`extract` 多了第三个参数、还引用了 `signature_policy` 和 `backup`），但 `rustc` 编译失败时旧的 `.exe` 还在，`&&` 串起来的写法会**跑那个旧二进制并显示全绿** —— 那才是最坏的情况。所以：编不过就是红，先看 `rustc` 的退出码，别信后面那行 `test result`。修法是给壳子补 `#[path]` 把 `signature_policy.rs` 编进来，`backup` 依赖 `tauri` 编不进来，就写一个签名对得上的桩（四条用例传的都是 `None`，走不到那条分支）。
   `package.rs` 要用到 `flate2` / `serde_json`，`signature.rs` 要用到 `ed25519_dalek` / `sha2`，壳子得额外指路：`rustc --edition 2024 --test 壳子.rs -L src-tauri/target/debug/deps --extern flate2=<rlib> --extern serde_json=<rlib> -o 壳子.exe`（rlib 从 `target/debug/deps/` 里按 `libflate2-*.rlib` 找）。只给 `--extern` 不给 `-L` 会报 `can't find crate`。`csp.rs` 那个桩的值要抄对（`"lattice-widget"`，不是 `"lattice"`），抄错了单测会红 —— 这次正好被它抓了一下。
   **别把纯逻辑塞回带依赖的模块里**：`watch.rs` / `autostart.rs` 的解析和拼串本来就是搬出去的，搬回去等于这 10 条断言从此没人跑。
 - **CDP 选 target 必须认"完全相等"，不能只认"包含"**：主窗口是 `http://127.0.0.1:1420/`，宿主页是 `http://127.0.0.1:1420/widget-host.html` —— 后者**包含**前者的前缀，`url.includes(selector)` 会把主窗口的探针静默跑到宿主页上，返回空值也不报错（真踩过：以为桥坏了，其实是在一个已经卸载的页面上 `evaluate`）。所以先 `t.url === selector`，找不到再退到 `includes`。

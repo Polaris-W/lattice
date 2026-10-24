@@ -382,6 +382,29 @@ defineMethod("media.control", "media:control", async (params) => {
   return { ok: await invoke<boolean>("media_control", { action }) };
 });
 
+/*
+ * agent 在本机做过什么。
+ *
+ * 读的是 `agent/audit.log`（一行一条 JSON），所以它**跨重启还在** —— 这正是
+ * 这个方法存在的意义：桌面上放一块板子，看一眼 AI 刚才动了什么，不用去翻日志。
+ *
+ * 要权限是因为它泄露的是**你的操作历史**：一块同时有 `network` 权限的组件
+ * 拿到它，就能把"这个人几点摆了什么"发出去。这不是理论风险，所以默认不授。
+ *
+ * 端点关着的时候返回的是历史记录（`enabled: false`），不是错误 —— 关掉端点
+ * 之后板子还应该看得见之前发生过什么，那正是它存在的理由。
+ */
+defineMethod("agent.activity", "agent:activity", async (params) => {
+  const limit = (params as { limit?: unknown } | undefined)?.limit;
+  if (limit !== undefined && (typeof limit !== "number" || !Number.isFinite(limit))) {
+    throw new BridgeError("bad_params", "\"limit\" must be a number");
+  }
+  if (!bridgeInTauri()) {
+    throw new BridgeError("internal", "agent activity is only available in the desktop app");
+  }
+  return await invoke("agent_activity", { limit: limit ?? 20 });
+});
+
 /**
  * 联网。组件**不直连** —— 请求走这里，由 Rust 侧发出去。
  *
