@@ -61,6 +61,8 @@ windows = { version = "0.62", features = [
 ] }
 windows-sys = { version = "0.61.2", features = [
   "Win32_Foundation",
+  # DwmGetWindowAttribute(DWMWA_CLOAKED)：被系统 cloak 掉的窗口不算看得见
+  "Win32_Graphics_Dwm",
   "Win32_Graphics_Gdi",
   "Win32_NetworkManagement_IpHelper",
   "Win32_NetworkManagement_Ndis",

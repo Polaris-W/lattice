@@ -88,5 +88,16 @@ fn is_visible(window: &WebviewWindow) -> bool {
     // 读不到就当可见：宁可多跑几拍，也别因为一次查询失败把组件的时钟停死
     let minimized = window.is_minimized().unwrap_or(false);
     let shown = window.is_visible().unwrap_or(true);
-    !minimized && shown
+    if minimized || !shown {
+        return false;
+    }
+    /*
+     * 被别的窗口整个盖住也算看不见。
+     *
+     * 这一条以前没有，代价是"看不见就别跑"只管住了最小化和收起：浏览器一
+     * 最大化，桌面上每张卡的心跳都还在跳，系统监控每秒采一次 CPU 一直采。
+     * 判定见 occlusion.rs —— 它只在"九个采样点全被别人的窗口占住"时才说
+     * 挡住，露出一角就照跑。
+     */
+    !crate::occlusion::covered(window)
 }

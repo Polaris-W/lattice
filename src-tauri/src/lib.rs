@@ -26,6 +26,8 @@ pub mod network;
 pub mod package;
 pub mod package_policy;
 pub mod network_policy;
+pub mod occlusion;
+pub mod occlusion_policy;
 pub mod protocol;
 pub mod runner;
 pub mod signature;
@@ -87,6 +89,8 @@ pub fn run() {
             }
             // 组件目录的文件监听：改完文件存盘，卡片自己刷新
             watch::start(app.handle().clone());
+            // 被别的窗口挡住不产生任何事件，只能自己轮询（见 occlusion.rs）
+            occlusion::watch_all(app.handle());
             // 自启那条注册表命令可能指着上一次的安装位置（升级、换盘、
             // 或者开发态写进去的 target\debug 路径）。启动时对一次账
             autostart::reconcile();
