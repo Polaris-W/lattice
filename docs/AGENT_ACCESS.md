@@ -247,6 +247,6 @@ npm run agent -- act placement.add --args '{"widgetId":"lattice.clock"}'
 | --- | --- |
 | `agent_policy.rs`（HTTP 解析 / 令牌 / 白名单 / `say`） | 26 条 `rustc --test`，见 `.scratch/agent-test.rs` |
 | `platform/agent.ts`（动作执行器） | `tests/agent.html` 57 条，跑的是**真 store** |
-| `scripts/lattice-agent.mjs`（客户端） | `npm run test:agent`，11 条，起假端点测请求形状与退出码 |
+| `scripts/lattice-agent.mjs`（客户端） | `npm run test:agent`，14 条，起假端点测请求形状、`say` 的整句传递与退出码 |
 | `lattice.agent`（看板组件） | `tests/agent-widget.html` 50 条，iframe 里加载真组件，调 `window.__latticeAgentFeed` |
 | Rust 监听器 + Tauri 往返 | **没验过** —— 要起 `tauri:dev`。起之前先确认没有残留的 `lattice.exe`（孤儿进程会用内存里那份盖掉 `state.json`） |

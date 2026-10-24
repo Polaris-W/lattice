@@ -67,6 +67,17 @@ function startStub() {
         response.end(JSON.stringify({ ok: true, result: { action, echo: entry.body.args ?? null } }));
         return;
       }
+      if (op === "say") {
+        // 照 Rust 那边的规则：超长直接拒，不截断
+        if ((entry.body.text ?? "").length > 500) {
+          response.writeHead(400, { "content-type": "application/json" });
+          response.end(JSON.stringify({ ok: false, code: "bad_request", error: "say text is too long" }));
+          return;
+        }
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ ok: true }));
+        return;
+      }
       response.writeHead(400, { "content-type": "application/json" });
       response.end(JSON.stringify({ ok: false, code: "bad_request", error: "unknown op" }));
     });
@@ -157,8 +168,30 @@ test("被拒绝的动作：退出码 1，错误进 stderr，stdout 干净", asyn
   assert.match(result.stderr, /never available/);
 });
 
-test("--args 不是 JSON：本地就拒，不发请求", async () => {
+test("say 把整句话当成一个字段送出去", async () => {
   stub.seen.length = 0;
+  const result = await cli(appData, ["say", "Moved the clock to the top right"]);
+  assert.equal(result.code, 0);
+  assert.deepEqual(stub.seen[0].body, { op: "say", text: "Moved the clock to the top right" });
+  assert.deepEqual(JSON.parse(result.stdout), { ok: true });
+});
+
+test("say 没有正文：本地就拒，不发请求", async () => {
+  stub.seen.length = 0;
+  const result = await cli(appData, ["say"]);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /needs some text/);
+  assert.equal(stub.seen.length, 0);
+});
+
+test("say 被端点拒（超长）：退出码 1，stdout 干净", async () => {
+  const result = await cli(appData, ["say", "x".repeat(600)]);
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /too long/);
+});
+
+test("--args 不是 JSON：本地就拒，不发请求", async () => {  stub.seen.length = 0;
   const result = await cli(appData, ["act", "theme.set", "--args", "{nope"]);
   assert.equal(result.code, 1);
   assert.match(result.stderr, /--args is not valid JSON/);

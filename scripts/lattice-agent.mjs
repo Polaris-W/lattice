@@ -10,6 +10,7 @@
  *
  *   node scripts/lattice-agent.mjs ping
  *   node scripts/lattice-agent.mjs state
+ *   node scripts/lattice-agent.mjs say "Moved the clock to the top right"
  *   node scripts/lattice-agent.mjs act theme.set --args '{"theme":"dark"}'
  *   node scripts/lattice-agent.mjs act placement.add --args '{"widgetId":"lattice.clock"}'
  *
@@ -109,6 +110,7 @@ if (!args.command || args.command === "help" || args.command === "--help") {
       "用法：",
       "  lattice-agent ping                      端点还活着吗",
       "  lattice-agent state                     桌面现在长什么样",
+      "  lattice-agent say \"<一句话>\"             在 agent 看板上留一行（必须加引号）",
       "  lattice-agent act <动作> [--args JSON]   改点什么",
       "",
       "动作（只有这些，别的会被拒）：",
@@ -144,6 +146,20 @@ if (args.command === "state") {
     fail(`${body.code}: ${body.error}`);
   }
   process.stdout.write(`${JSON.stringify(body.result, null, 2)}\n`);
+  process.exit(0);
+}
+
+if (args.command === "say") {
+  // 正文就是第二个位置参数（**必须加引号**，否则 shell 会把它拆成几个词）。
+  // 不走 `--args`：说一句话不该要求调用方先拼一段 JSON。
+  const text = args.action;
+  if (!text) fail('say needs some text, e.g. `say "Moved the clock to the top right"`');
+  const { status, body } = await rpc(endpoint, { op: "say", text });
+  if (!body.ok) {
+    process.stderr.write(`${JSON.stringify({ status, ...body }, null, 2)}\n`);
+    process.exit(1);
+  }
+  process.stdout.write(`${JSON.stringify(body.result ?? body, null, 2)}\n`);
   process.exit(0);
 }
 
