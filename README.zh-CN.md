@@ -232,7 +232,18 @@ npm run tauri:build   # 出安装包：src-tauri/target/release/bundle/nsis
 
 > 只想看 demo 的话用 `npm run dev`，不需要 Rust。桌面端目前需要 `windres`（mingw binutils）或 MSVC 工具链，见 ROADMAP 的环境说明。
 
-接手这个仓库（或者换个模型 / 换个人接手）先读 [AGENTS.md](./AGENTS.md)：一页纸的项目地图、十五条不变量、常见改动的配方、以及"别修一半"的已知缺口。
+## 安装与更新
+
+发布出去的是 NSIS 安装包。装之前有两件事值得知道：
+
+- **Windows 会拦一下。** 安装包还没有代码签名证书，第一次运行 SmartScreen 会显示"未知发布者"，要手动点"仍要运行"。这是缺一张证书，不是打包坏了。
+- **Lattice 会自己更新。** 设置菜单里的 **Check for updates** 去 release 页取 `latest.json`，用编译进二进制的公钥验 minisign 签名，下载、安装、重启。**没有后台轮询**——你不点，它就不查。
+
+组件的更新走的是完全另一条路（目录 JSON + 签名过的 `.lattice` 包），见上面组件商店那一节。两者共用的只有"静态文件 + 签名 + 没有服务端"这个思路，代码路径一行都不重叠。
+
+发一个版本：把 `package.json` 和 `src-tauri/tauri.conf.json` 里的版本号一起改（必须和 tag 一致），推一个 `v*` tag，CI 在 `windows-latest` 上产出一条**草稿** release。点发布的那一刻，所有装过的机器才看得见——`/releases/latest` 只指向已发布的 release。
+
+接手这个仓库（或者换个模型 / 换个人接手）先读 [AGENTS.md](./AGENTS.md)：一页纸的项目地图、十六条不变量、常见改动的配方、以及"别修一半"的已知缺口。
 
 ## 目录
 

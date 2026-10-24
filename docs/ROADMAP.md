@@ -19,6 +19,8 @@
 | v0.3 | 平台能力 | ✅ 完成 | 调度器、系统指标、落盘备份、关闭撤销、CSP 锁定、出网闸门、每实例配置、网络白名单代理、托盘/自启、目录监听、崩溃隔离、双屏边界夹紧全部落地 |
 | v0.4 | 开发体验 | ✅ 完成 | SDK、脚手架、打包工具、媒体控制、调试面板 |
 | v0.5 | 分发 | ✅ 完成 | 目录是一份静态 JSON：装、更新、回滚、举报、新权限复核全部落地 |
+| v0.6 | 生态 | 🟡 进行中 | 目录上线了，等 Pages 开关 + 真机验收（见 v0.6 一节） |
+| v0.7 | 交付 | 🟡 进行中 | NSIS 安装包 + 自动更新（见 v0.7 一节） |
 
 **当前规模**（截至本次改动，2026-10-24 04:03）：
 
@@ -277,15 +279,20 @@
 默认工具链是 `stable-x86_64-pc-windows-gnu`，它不自带 `windres`，也没有 `gcc`，  
 而 `tauri-build` 要用 `windres` 编译 `resource.rc`、`windres` 又要调 `gcc -E`。
 
-`scripts/tauri.mjs` 在启动 `tauri` 之前把两个目录塞进 `PATH`：
+`scripts/tauri.mjs` 在启动 `tauri` 之前把目录塞进 `PATH`：
 
 ```
-.toolchain/mingw64/bin     # MSYS2 binutils 里的 windres.exe
-.toolchain/gcc-shim        # 一个只做透传的 gcc.exe（见 toolchain/gcc-shim/gcc.rs）
+.toolchain/msys64/mingw64/bin   # 完整 mingw-w64 工具链（gcc + as + ld + binutils）
+.toolchain/mingw64/bin          # 只有 binutils（windres.exe 在这里）
+.toolchain/gcc-shim             # 只做透传的 gcc.exe —— 没有真 gcc 时才用它
 ```
 
 `npm run tauri:dev` / `tauri:build` 都走这个包装脚本，所以直接跑就行。  
 换到 MSVC 工具链（`rustup default stable-x86_64-pc-windows-msvc`）就不需要这一套了。
+
+**为什么后来必须装一个真的 gcc。** 加了自动更新之后依赖里第一次出现 `ring`（更新器的 TLS 用它），它有一批 `.c` 文件要现编。而 `gcc-shim` 只会**把 `.c` 原样拷成 `.o`** —— 它本来只服务 `windres` 的预处理。结果是一堆"内容其实是 C 源码"的目标文件，链接时几百行 `undefined reference to ring_core_0_17_14__…`，看着像 ABI 或 LTO 问题，实际是根本没编译过。诊断方法很简单：`od -An -tx1 -N8 <ring 的 .o>`，正常目标文件开头是机器码，这里是 `2f 2f 20 43`（`// C`）。
+
+装法（不需要 pacman，也不动系统 PATH）：从 MSYS2 镜像取 `gcc` / `crt` / `headers` / `winpthreads` / `isl` / `gmp` / `mpfr` / `mpc` / `zlib` / `zstd` / `libgcc` / `libstdc++` 这批 `.pkg.tar.zst`，用系统自带的 `bsdtar`（`C:\Windows\System32\tar.exe`，带 libzstd）直接解到 `.toolchain/msys64/`。包装脚本发现 `.toolchain/msys64/mingw64/bin/gcc.exe` 就把它排在最前、并且**不再**放 `gcc-shim`。
 
 **`cargo test` 在这台机器上跑不了。** 本机安全策略禁止写 `target\debug\deps\*.exe`，而测试二进制正好生成在那里 —— 表现是链接出来的 exe 不完整，一跑就 `0xc0000139 STATUS_ENTRYPOINT_NOT_FOUND`（看着像链接错误，其实是文件没写全）。同一个策略也是"dev 任务莫名挂掉、报 `beforeDevCommand terminated with a non-zero status code`"的真正原因：`cargo` 想写 `deps\lattice-*.exe` 被拒。
 
@@ -494,6 +501,60 @@
 
 发布者自己的密钥：`npm run sign:widget -- --gen-key --out publisher.key`，把公钥写进 `registry.json` 的 `publisher.key`。仓库里那把 `scripts/dev-publisher.key` 是**公开的**，只签官方自带的 6 个组件 —— 它证明的是"这个包和这份目录是一起发的"，不是"这个人可信"。
 
+## v0.6 —— 生态（未开始）
+
+v0.5 把"能分发"做完了，但分发的前提是**有人托管**。这件事现在不存在：目录只有内置那一份（6 个官方包，跟着应用发），设置里那个 `Custom URL` 框能填任意地址 —— 问题是填什么？填完之后能装到什么？公网上没有一份可填的目录。
+
+所以 v0.6 只有一件事：**让目录真的存在于公网上，而且不止一份。**
+
+这一节全部是**静态文件**，没有一项需要服务器 —— 这条约束和 v0.5 同源，不是顺手选的。目录是 JSON，包是签名文件，托管是 Pages，发布是 Actions。任何一项如果开始需要"后端"，说明方案选错了。
+
+- [ ] **公开目录源上线** —— 单独一个仓库（`registry.json` + `packages/*.lattice` + 一个 GitHub Actions），push 到 main 自动跑 `npm run store:index` 并把结果部署到 Pages。用户填 `https://<user>.github.io/lattice-registry/registry.json` 就能装。
+  - **为什么单独一个仓库**：目录里的包天天变，平台代码不该跟着变；第三方作者提 PR 时改的是目录，不是平台。
+  - **为什么是 Pages 而不是对象存储**：`registry.json` 要能被 `fetch`，Pages 天然带 HTTPS + CORS，一行配置都不用写。对象存储要么配 CORS 要么配自定义域，两样都是纯成本。
+  - **代价**：Pages 有软限流（每 IP 每小时约 10 万次），个人目录远远够；但 `registry.json` 现在是每次启动全量 GET，包上限 16MB —— 量上来之后要靠下面那条增量。
+  - **顺带验一次真机**：现在所有验签都是打本地 `127.0.0.1:1420` 的目录。跨域 + 真 HTTPS + 真 DNS 的组合没跑过，第一次上线必须拿真地址装一遍、更新一遍、回滚一遍。
+  - **进度**：仓库骨架已经在本地建好（`D:/GitDev/lattice-registry`，尚未推到 GitHub）—— 六个官方包 + sidecar + 图标 + `build.mjs` / `sign.mjs` / `serve.mjs` / Pages workflow 都在，`registry.json` 已生成并通过真实解析器与真实 HTTP 的端到端校验。**目录自己不再签一遍**：签名在 sidecar 里，由作者在自己机器上做，CI 只校验不签名（一旦 CI 能签，私钥就得进仓库）。官方包用的是新生成的发布者钥匙 `f842c1bf…`，**不是**仓库里那把公开的 `dev-publisher.key` —— 后者任何人都能用，拿它签公开发布的包等于没有签名。代价：已经用内置目录装过组件的机器，第一次切到这个源会看到一次"发布者钥匙变了"的确认。
+- [ ] **多目录源（列表，不是单值）** —— `catalogueSource` 现在是 `{ kind, url }` 单值，切源等于"上一份目录整个消失"。真生态里一个人会同时订阅官方源和别人的源。改成 `sources: [{ id, url, enabled }]`：合并展示、按源分组、每个源单独显示"上次读到的时间 / 失败原因"。
+  - **id 冲突不做"高版本胜"**：那等于谁都能覆盖别人的包。按源优先级取一份，另一份明确标成"Source B also has `demo.clock`"。同名不是安全问题（信任锚点是包上的钥匙），是显示问题。
+  - 这条不做，"公开目录上线"就退化成"二选一"—— 用户填了第三方源就看不见官方更新，反过来也一样。
+- [ ] **目录的增量与缓存** —— 每次读目录都是全量 GET。加 `If-None-Match` / `If-Modified-Since`，304 就直接用内存里那份；网络失败时退回**上一次成功读到的那份**，并在界面上一行说明"Showing the catalogue from 3 hours ago"。断网等于商店空白，是现在最容易被误认为"应用坏了"的状态。
+- [ ] **作者发布流程写成文档** —— `docs/` 里有 WIDGET_SPEC（怎么写组件）和这份 ROADMAP（内部决策），**没有"我怎么把包发出去"这一页**。要写：`create:widget` → 改 manifest 版本 → `sign:widget --gen-key` → 向目录仓库提 PR（附公钥指纹）→ 合并后 Actions 自动打包签名发布。
+  - 同时定一条规则：**目录只收包，不收代码**。作者提交的是 `.lattice` + 公钥 + 一段说明，目录仓库不 clone 作者源码 —— 平台没有构建服务，也不该有。这条比它看起来重要：一旦目录开始"从源码构建"，就得为构建环境、依赖、可复现性负责，那是另一个项目。
+- [ ] **首次引导** —— 组件库"可安装"那一段现在只有 6 个官方包，装完就空了。冷启动的死结在这儿：新用户打开，装完 6 个，发现"没有别的了"，然后关掉。给一条预置的官方源 + 一句"这里可以加别人的目录"，比多写 4 个官方包更值。
+- [ ] **官方组件继续补** —— 和目录并行，但优先级**低于**"目录存在"。一个能装 30 个包的源，比 10 个更好的官方包更能说明这个平台是活的。
+
+**明确不做**：账号、云端评分、下载计数、组件市场首页。这些全都要服务端，而 v0.5 的整个前提是"没有服务端"。评分和举报继续落本地文件（`reports/*.json`），作者自己收 —— 假装有云端比没有更糟。
+
+## v0.7 —— 交付（进行中）
+
+v0.5 让**组件**能分发，v0.6 让**目录**存在，但**平台自己**一直停留在"开发者机器上的 `npm run tauri:dev`"：没有安装包，装好之后也没法升级。这一节补的就是这两件事。
+
+- [x] **NSIS 安装包** —— `npm run tauri:build` 出 `src-tauri/target/release/bundle/nsis/Lattice_<version>_x64-setup.exe`（本机实测 2.7 MB）+ 同名 `.sig`。和 `dev` 的区别不只是"能双击"：dev 的 exe 路径每次编译都变（所以自启的 `reconcile()` 只在 release 里修，见 v0.3 那条），dev 也不注入 CSP 头。
+- [x] **平台自动更新** —— `tauri-plugin-updater` + GitHub Releases 的 `latest.json` + minisign 验签，设置菜单里多一行 **Check for updates**。密钥：`.keys/updater.key`（私钥，不进仓库）/ `tauri.conf.json` 的 `plugins.updater.pubkey`（公钥）。
+- [ ] **代码签名证书** —— 没有证书，用户第一次运行会被 SmartScreen 拦成"未知发布者"，点"仍要运行"才装得上。这个不是代码问题，是要花钱买 OV/EV 证书（或走 winget / Store 分发）。
+- [ ] **发布流程跑通一次** —— 打 tag → Actions 出草稿 release → 人工发布 → 旧版本点 Check for updates 能升上来。本地已经把"构建 → 签名 → 出安装包"跑通了，缺的是 CI 那一侧（要在仓库 Secrets 里放 `TAURI_SIGNING_PRIVATE_KEY`）。
+
+### 三条边界，别改
+
+**一、只在用户点击时检查，不后台轮询。** 一个一年发几次版的项目，让每台机器每天替你发一次请求，换来的只是"可能早点知道"—— 而用户真正要问的是"我现在是不是最新的"，那是个点击动作。后台轮询还会让"更新失败"变成一个没人看着的静默错误。
+
+**二、release 先出草稿。** `/releases/latest/download/latest.json` 只认**已发布**的 release。草稿期间更新器查不到任何东西（等于没发），点 Publish 那一刻全量生效。反过来（先发再验）就是"所有用户帮你做灰度"。
+
+**三、装完必须 `restart()`，不是 `exit()`。** 新二进制只有新进程才会跑；更新完应用自己消失，在用户眼里就是更新失败。走的是自定义命令 `restart_app`（`app.restart()`），不是 `@tauri-apps/plugin-process` —— 少一个依赖，行为一样。
+
+### 和组件更新的关系：两套，别混
+
+| | 组件 | 平台 |
+| --- | --- | --- |
+| 清单 | `registry.json`（目录） | `latest.json`（release 附件） |
+| 产物 | `.lattice`（zip，解压即用） | `.exe` / `.msi`（跑安装器） |
+| 签名 | ed25519（`scripts/sign-widget.mjs`） | minisign（`tauri signer`） |
+| 私钥位置 | 作者自己的机器 | `.keys/updater.key`（不进仓库）+ CI Secrets |
+| 装法 | 解到 `%APPDATA%` | 覆盖安装 + 重启 |
+
+共用的是"静态文件 + 签名 + 没有服务端"这套思路，代码路径一行都不重叠。把 `planInstall` 那套拿过来复用到平台更新上是不行的：安装包不是解压，是跑一个安装器。
+
 ## 长期要盯的风险
 
 | 风险              | 说明                                                |
@@ -501,4 +562,4 @@
 | **安全**          | 第三方组件是任意代码。沙箱 + 权限清单只是第一层，还要 CSP 锁定、网络白名单、签名校验    |
 | **性能**          | 组件数量上去后，WebView 数量是内存杀手。需要考虑同一 WebView 内多组件，或空闲卸载 |
 | **WorkerW 兼容性** | 挂桌面依赖未公开行为，Windows 大版本更新可能变。要有降级路径                |
-| **组件生态冷启动**     | 平台价值取决于组件数量，早期需要官方做足够多高质量组件                       |
+| **组件生态冷启动**     | 平台价值取决于组件数量，早期需要官方做足够多高质量组件 —— 但更缺的是"目录能被填上"这件事，见 v0.6 |

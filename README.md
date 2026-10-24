@@ -232,7 +232,18 @@ Requirements: Node ≥ 20, a Rust toolchain, WebView2 (bundled with Windows 11).
 
 > To just look at the demo, use `npm run dev` — no Rust needed. The desktop build currently needs `windres` (mingw binutils) or an MSVC toolchain; see the environment notes in the ROADMAP.
 
-If you are taking over this repository (or you are a different model / person), read [AGENTS.md](./AGENTS.md) first: a one-page map, fifteen invariants, recipes for common changes, and the "do not half-fix" known gaps. It is written in Chinese, as are the design docs.
+## Installing and updating
+
+Releases ship as an NSIS installer. Two things are worth knowing before you run one:
+
+- **Windows will warn you.** The installer is not code-signed yet, so SmartScreen shows "unknown publisher" the first time. That is a missing certificate, not a broken build.
+- **Lattice updates itself.** Settings → **Check for updates** asks the release page for `latest.json`, verifies the minisign signature against the public key baked into the binary, downloads, installs, and restarts. There is no background polling — it only checks when you ask.
+
+Widgets update through a completely separate path (catalogue JSON + signed `.lattice` packages); see the catalogue section above. The two share the "static files + signatures + no server" idea and nothing else.
+
+To cut a release: bump the version in `package.json` **and** `src-tauri/tauri.conf.json` (they must match the tag), push a `v*` tag, and CI produces a **draft** release on `windows-latest`. Publishing that draft is the moment every installed copy can see it — `/releases/latest` only points at published releases.
+
+If you are taking over this repository (or you are a different model / person), read [AGENTS.md](./AGENTS.md) first: a one-page map, sixteen invariants, recipes for common changes, and the "do not half-fix" known gaps. It is written in Chinese, as are the design docs.
 
 ## Layout
 
