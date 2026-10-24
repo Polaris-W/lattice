@@ -1,0 +1,141 @@
+/*
+ * 专注计时器
+ *
+ * 颜色走 --lattice-* 令牌；html/body 保持透明（底板和磨砂是平台画的）。
+ *
+ * 不要用原生按钮样式：沙箱文档的 color-scheme 被强制成 normal，原生控件会按
+ * 浅色主题画，在深色卡片上几乎看不见。所以下面全部 appearance: none 自绘。
+ */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--fg, #1c1c1e);
+  font-family: var(--font, system-ui, sans-serif);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+.focus {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 12px 14px 10px;
+  user-select: none;
+}
+
+/* 右上角那排窗饰浮在内容之上、而且真的能点，标题行必须给它让位 */
+.focus-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-right: 104px;
+}
+
+.focus-phase {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+/* 第几轮 / 共几轮。休息阶段显示的是"这一轮里还差几次" */
+.focus-rounds {
+  font-size: 9.5px;
+  color: var(--muted, #6b6b70);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.focus-time {
+  margin: 10px 0 0;
+  font-size: 50px;
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  /*
+   * 等宽数字。不等宽的话秒数每跳一下，整个时间串就左右抖一次 ——
+   * 46px 的字号下那个抖动非常明显。
+   */
+  font-variant-numeric: tabular-nums;
+}
+
+/* 休息阶段把数字调暗一档：一眼能看出"现在不是在专注" */
+.focus[data-phase="short"] .focus-time,
+.focus[data-phase="long"] .focus-time {
+  opacity: 0.62;
+}
+
+.focus-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+  padding-bottom: 2px;
+}
+
+.focus-btn {
+  appearance: none;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border, rgb(0 0 0 / 0.14));
+  background: transparent;
+  color: var(--fg, #1c1c1e);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    opacity 120ms ease;
+}
+
+.focus-btn:hover {
+  background: rgb(127 127 127 / 0.12);
+}
+
+.focus-btn:active {
+  background: rgb(127 127 127 / 0.2);
+}
+
+.focus-btn:focus-visible {
+  outline: 2px solid var(--accent, #3b7ddd);
+  outline-offset: 1px;
+}
+
+.focus-btn.is-primary {
+  border-color: transparent;
+  background: var(--accent, #3b7ddd);
+  color: #fff;
+}
+
+.focus-btn.is-primary:hover {
+  filter: brightness(1.06);
+}
+
+.focus-btn.is-primary:active {
+  filter: brightness(0.94);
+}
+
+/*
+ * 只有"到点了但没自动开始"和"存储读不出来"两种情况会出现这一行。
+ * 平时 display:none，不占位置。
+ */
+.focus-hint {
+  margin: 6px 0 0;
+  font-size: 9.5px;
+  line-height: 1.35;
+  color: var(--accent, #3b7ddd);
+  display: none;
+}
+
+.focus-hint.is-visible {
+  display: block;
+}

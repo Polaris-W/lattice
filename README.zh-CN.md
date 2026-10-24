@@ -256,7 +256,7 @@ src/
 public/widgets/      官方组件包（未安装前只是"可安装"）
 public/store/        断网兜底的目录（构建期生成：registry.json + 签名过的包）
 examples/counter/    第三方组件样本（拖进窗口即安装）
-tests/               自检页：22 页、513 条断言，全在浏览器里跑（另有 1 个夹具页）
+tests/               自检页：24 页、665 条断言，全在浏览器里跑（另有 1 个夹具页）
 scripts/             构建辅助（组件索引、商店索引、签名、补工具链 PATH、注入上报脚本）
 src-tauri/
   src/widgets.rs     组件包扫描 / 安装 / 卸载

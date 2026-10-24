@@ -273,6 +273,8 @@ if (data.type === "config-changed") {
 
 **不支持通配符。** `*.example.com` 的边界问题（`evil.example.com.attacker.net` 这类）靠人一遍遍想不划算，多列一行的成本几乎为零。
 
+画布上的预览**也能联网**：那里的实例不是一个独立窗口，宿主页会把清单里的主机名单随请求一起交给 Rust，所以同一个组件在设计器和桌面上行为一致。你不需要为"预览态"写任何分支。
+
 其余几条硬限制：
 
 - 只允许 `http` / `https`。`file:` / `ftp:` / `javascript:` 一律拒。

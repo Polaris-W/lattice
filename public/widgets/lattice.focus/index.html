@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Focus</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="focus" id="root" data-phase="work" data-running="false">
+      <header class="focus-head">
+        <h1 class="focus-phase" id="phase">Focus</h1>
+        <span class="focus-rounds" id="rounds"></span>
+      </header>
+
+      <p class="focus-time" id="time">25:00</p>
+
+      <div class="focus-actions">
+        <button type="button" class="focus-btn is-primary" id="toggle">Start</button>
+        <button type="button" class="focus-btn" id="reset">Reset</button>
+      </div>
+
+      <p class="focus-hint" id="hint"></p>
+    </main>
+    <script src="widget.js"></script>
+  </body>
+</html>

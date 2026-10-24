@@ -94,7 +94,7 @@ src-tauri/src/
   csp.rs                  组件文档的 CSP：一处生成策略，protocol.rs 只负责挂头
   egress.rs               出网闸门：WebView2 层拦帧导航，组件出不去
   network.rs              出网代理（WinHTTP）：权限 → 白名单 → 形状，三道闸
-  network_policy.rs       上面那道的纯逻辑：URL 解析 + 主机白名单匹配（9 条单测）
+  network_policy.rs       上面那道的纯逻辑：URL 解析 + 主机白名单匹配 + 白名单来源（12 条单测）
   crash.rs                ICoreWebView2::add_ProcessFailed 胶水：认崩溃类型、记账、重载
   crash_policy.rs         上面那道的纯逻辑：何时重载 / 何时放弃（9 条单测）
   diagnostics.rs          组件坏了给人看的东西：兜底页 + 注入的错误上报脚本
@@ -166,6 +166,7 @@ docs/                     架构、组件规范、路线图与踩坑
     - **端口算身份的一部分**。`127.0.0.1:8787` 不等于 `127.0.0.1`；不写端口就是默认的 80 / 443。少了这条，"允许本机调试端口"等于"允许本机全部端口"。
     - **重定向必须关掉**（`WINHTTP_OPTION_REDIRECT_POLICY_NEVER`）。跟随 302 等于白名单失效：放行 `a.com`，`a.com` 把组件 302 到 `evil.com`，数据就出去了。现在的行为是把 302 原样当响应交回组件，由组件自己决定要不要再发一次（那时又要过一遍白名单）。
     - **走 IPC，不搭本地 HTTP 代理**。开一个 `127.0.0.1:xxxx` 的代理端口就等于给组件留了一条绕过桥的路（它 `fetch` 那个端口没人拦），而 IPC 通道只有宿主页能说话。
+    - **画布上的实例也要能出网**（`network_policy::egress_for`）。白名单在桌面窗口那条路上存在 Rust 的注册表里（建窗口时写进去的），而画布上的实例**不是窗口** —— 它跑在主窗口的 iframe 里，注册表里没有条目。第一版没做这条兜底，结果是同一个组件"桌面上能联网、设计器里不能"，而设计器恰好是用户第一次配置它的地方，症状是刚加进来就报"连不上服务"。现在未注册的窗口退回宿主页随请求带来的 `network.hosts`（`bridge.ts` 的 `egress`）。**在册的窗口一律用自己那份**：窗口已经注册了还去信请求里那份，等于让一个前端 bug 悄悄扩大出网范围。
     这条是**加了一扇门，不是拆了别的门**：CSP（不变量 12）和 `egress.rs` 的导航拦截照旧生效，组件仍然不能自我导航把数据拼进 URL 送走。
 
 15. **分发的信任锚点是包，不是目录**。装一个包要过三道，顺序不能换：`sha256(字节)` 等于目录里写的 → ed25519 签名能被 `publisher.key` 验过 → 这把钥匙等于**这个组件第一次安装时钉在本地的那把**（`store.trustedKeys`）。前两道挡传输损坏和伪造，第三道才挡得住"另起一把钥匙、连目录一起换掉"。五条别踩回去：
@@ -477,7 +478,7 @@ public/widgets/<id>/
 ## 11. 验证
 
 - `npm run typecheck` —— 必跑，当前是干净的
-- **`npm run test:browser`** —— 跑一遍 `tests/*.html` 里的全部断言（22 页 / 513 条）。先 `npm run dev` 起 dev server（默认 1420），另一个终端跑它；`--filter catalogue` 只跑匹配的页。它用 headless Chrome 的 `--dump-dom` 读 `<pre id="out">`，所以**页面的断言必须写成 `PASS …` / `FAIL …` 两行式**，别的格式它数不到。CI 里这条是 `browser` job，红在哪一页会直接打出来。
+- **`npm run test:browser`** —— 跑一遍 `tests/*.html` 里的全部断言（24 页 / 665 条）。先 `npm run dev` 起 dev server（默认 1420），另一个终端跑它；`--filter catalogue` 只跑匹配的页。它用 headless Chrome 的 `--dump-dom` 读 `<pre id="out">`，所以**页面的断言必须写成 `PASS …` / `FAIL …` 两行式**，别的格式它数不到。CI 里这条是 `browser` job，红在哪一页会直接打出来。
 - 改了组件 UI：`npm run dev` 后在浏览器里看；要截固定尺寸的图，用 Edge headless：
   ```bash
   msedge --headless=new --disable-gpu --force-device-scale-factor=2 \
@@ -521,7 +522,7 @@ public/widgets/<id>/
   #[path = "../src-tauri/src/network_policy.rs"] mod network_policy;
   ```
   `rustc --test 壳子.rs -o 壳子.exe && ./壳子.exe`。**这就是"纯逻辑要单独拆成一个文件"的原因 —— 拆出来才测得到**。断言只有一份（`#[cfg(test)] mod tests` 在模块内部），壳子别复制。
-  能这么跑的现在是 77 条：`diagnostics.rs`（14）、`package_policy.rs`（11）、`catalogue_policy.rs`（9，要 `--extern serde_json=<rlib>`）、`network_policy.rs`（9）、`crash_policy.rs`（9）、`signature_policy.rs`（8）、`watch_policy.rs`（5）、`autostart_policy.rs`（5）、`signature.rs`（4）、`csp.rs`（3，要桩一个 `protocol::SCHEME` 常量）。剩下 21 条（`protocol.rs` 6、`widget_store.rs` 5、`backup.rs` 4、`egress.rs` 3、`media.rs` 2、`store.rs` 1）在带依赖的模块里，只有 `cargo test` 能跑，本机跑不了 —— 改动它们时靠 review 和真机验证。
+  能这么跑的现在是 80 条：`diagnostics.rs`（14）、`package_policy.rs`（11）、`network_policy.rs`（12）、`catalogue_policy.rs`（9，要 `--extern serde_json=<rlib>`）、`crash_policy.rs`（9）、`signature_policy.rs`（8）、`watch_policy.rs`（5）、`autostart_policy.rs`（5）、`signature.rs`（4）、`csp.rs`（3，要桩一个 `protocol::SCHEME` 常量）。剩下 22 条（`protocol.rs` 6、`widget_store.rs` 5、`backup.rs` 4、`egress.rs` 3、`media.rs` 2、`store.rs` 1、`package.rs` 1）在带依赖的模块里，只有 `cargo test` 能跑，本机跑不了 —— 改动它们时靠 review 和真机验证。
   `package.rs` 要用到 `flate2` / `serde_json`，`signature.rs` 要用到 `ed25519_dalek` / `sha2`，壳子得额外指路：`rustc --edition 2024 --test 壳子.rs -L src-tauri/target/debug/deps --extern flate2=<rlib> --extern serde_json=<rlib> -o 壳子.exe`（rlib 从 `target/debug/deps/` 里按 `libflate2-*.rlib` 找）。只给 `--extern` 不给 `-L` 会报 `can't find crate`。`csp.rs` 那个桩的值要抄对（`"lattice-widget"`，不是 `"lattice"`），抄错了单测会红 —— 这次正好被它抓了一下。
   **别把纯逻辑塞回带依赖的模块里**：`watch.rs` / `autostart.rs` 的解析和拼串本来就是搬出去的，搬回去等于这 10 条断言从此没人跑。
 - **CDP 选 target 必须认"完全相等"，不能只认"包含"**：主窗口是 `http://127.0.0.1:1420/`，宿主页是 `http://127.0.0.1:1420/widget-host.html` —— 后者**包含**前者的前缀，`url.includes(selector)` 会把主窗口的探针静默跑到宿主页上，返回空值也不报错（真踩过：以为桥坏了，其实是在一个已经卸载的页面上 `evaluate`）。所以先 `t.url === selector`，找不到再退到 `includes`。
