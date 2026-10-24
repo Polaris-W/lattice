@@ -1,7 +1,12 @@
 name: ci
 
-# 只验前端：tsc + vite build。Rust 侧要 MSVC/mingw 工具链和 WebView2，
-# 在这台机器上编得过不代表 runner 上编得过，暂时不放进 CI（见 ROADMAP v0.4）。
+# 三件事分开跑，谁红看谁：
+#   frontend —— 类型 + 构建 + 两个 node:test（注入规则、SDK 副本一致性）
+#   browser  —— tests/*.html 里的 499 条断言（以前靠人肉开 22 个标签页）
+#   rust     —— cargo test。本机跑不了（安全策略拦 target/debug/deps 下的 exe），
+#               所以那 21 条断言从来没有在任何人的机器上跑过，runner 是唯一的机会
+#
+# 都跑在 push/PR 上，`workflow_dispatch` 留着手动触发。
 on:
   push:
     branches: [main]
@@ -21,3 +26,71 @@ jobs:
       - run: npm run typecheck
       # build 会先跑 widgets:index 生成 public/widgets/index.json（该文件不入库）
       - run: npm run build
+      # 两个都是 node:test，不需要 dev server，跑一遍不到一秒
+      - run: npm run test:injection
+      - run: npm run test:sdk
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # 测试页 import 的是 .ts/.tsx，必须有 dev server 转译。
+      # `npm run dev` 顺带生成 widgets:index / store:index，测试页用得上。
+      - name: Start the dev server
+        run: |
+          npm run dev -- --port 1420 > /tmp/vite.log 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -sf http://localhost:1420/tests/semver.html > /dev/null; then
+              echo "dev server is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the dev server never came up"
+          cat /tmp/vite.log
+          exit 1
+
+      # runner 上自带 Chrome；没有就报清楚，别让脚本报一句"找不到 Chrome"
+      - name: Find Chrome
+        run: |
+          CHROME_BIN=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)
+          if [ -z "$CHROME_BIN" ]; then
+            echo "::error::no Chrome on this runner"
+            exit 1
+          fi
+          echo "CHROME=$CHROME_BIN" >> "$GITHUB_ENV"
+          echo "chrome: $CHROME_BIN"
+
+      - name: Run every self-check page
+        run: npm run test:browser -- --base http://localhost:1420
+
+      # 失败时把 dev server 的日志一起打出来 —— 页面渲染不出来最常见的原因在那边
+      - name: Dump the dev server log
+        if: failure()
+        run: tail -50 /tmp/vite.log || true
+
+  rust:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+      # tauri-build 要读 frontendDist（`../dist`），先把它建出来
+      - run: npm run build
+
+      - run: cargo test --lib
+        working-directory: src-tauri

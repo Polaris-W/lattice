@@ -32,9 +32,9 @@
 | 组件 SDK | 545 行 | 零依赖 ES module + 类型声明 |
 | 官方组件 + 示例 | 3 282 行 | 6 个官方包 + 1 个示例（复制进去的 SDK 副本不计） |
 | 构建脚本 | 1 317 行 | 组件索引、脚手架、打包、签名、商店索引、SDK 同步、tauri 包装、注入 + 单测 |
-| 浏览器断言 | 445 条 | 19 个自检页，跑一遍的真实计数（0 failed） |
+| 浏览器断言 | 499 条 | 21 个自检页，跑一遍的真实计数（0 failed） |
 | Node 断言 | 11 条 | 注入规则 9 条 + SDK 副本一致性 2 条，都不依赖 dev server |
-| Rust 单测 | 89 条 | 68 条纯逻辑用 `rustc --test` 壳子跑得动（今天全过），21 条要 `cargo test`（本机跑不了），见 AGENTS §11 |
+| Rust 单测 | 98 条 | 77 条纯逻辑用 `rustc --test` 壳子跑得动（今天全过），21 条要 `cargo test`（本机跑不了），见 AGENTS §11 |
 | Tauri 命令 | 39 个 | |
 | 权限 | 6 项全可用 | `media:control` 在 v0.4 补齐 |
 | 踩过的坑 | 67 条 | 见 v0.2 文末那张表 |
@@ -296,7 +296,7 @@
 
 **`cargo test` 在这台机器上跑不了。** 本机安全策略禁止写 `target\debug\deps\*.exe`，而测试二进制正好生成在那里 —— 表现是链接出来的 exe 不完整，一跑就 `0xc0000139 STATUS_ENTRYPOINT_NOT_FOUND`（看着像链接错误，其实是文件没写全）。同一个策略也是"dev 任务莫名挂掉、报 `beforeDevCommand terminated with a non-zero status code`"的真正原因：`cargo` 想写 `deps\lattice-*.exe` 被拒。
 
-换 `CARGO_TARGET_DIR` **也不行** —— 试过 `.scratch/cargo-target`，规则匹配的是 `deps\*.exe` 这个形状，换目录照样拦（还白编了 7 分钟依赖）。所以这台机器上 Rust 单测（`diagnostics.rs` 14 条、`protocol.rs` 6 条、`widget_store.rs` 5 条）只能靠 `cargo check` 保证能编过，**实际执行得去 CI 或者别的机器**。这也是为什么这几条只能靠真机端到端验：改动落地时宁可多花两分钟在应用里跑一遍，别指望单测。
+换 `CARGO_TARGET_DIR` **也不行** —— 试过 `.scratch/cargo-target`，规则匹配的是 `deps\*.exe` 这个形状，换目录照样拦（还白编了 7 分钟依赖）。所以这台机器上 Rust 单测（`diagnostics.rs` 14 条、`protocol.rs` 6 条、`widget_store.rs` 5 条）只能靠 `cargo check` 保证能编过，**实际执行得去 CI 或者别的机器** —— `ci.yml` 的 `rust` job 现在就在 `windows-latest` 上跑 `cargo test --lib`，那是这 21 条唯一会跑的地方。绕法是单文件模块写个 `rustc --test` 壳子（见 AGENTS §11），能这么跑的有 77 条。
 
 ### 运行时开关
 
@@ -509,13 +509,13 @@ v0.5 把"能分发"做完了，但分发的前提是**有人托管**。这件事
 
 这一节全部是**静态文件**，没有一项需要服务器 —— 这条约束和 v0.5 同源，不是顺手选的。目录是 JSON，包是签名文件，托管是 Pages，发布是 Actions。任何一项如果开始需要"后端"，说明方案选错了。
 
-- [ ] **公开目录源上线** —— 单独一个仓库（`registry.json` + `packages/*.lattice` + 一个 GitHub Actions），push 到 main 自动跑 `npm run store:index` 并把结果部署到 Pages。用户填 `https://<user>.github.io/lattice-registry/registry.json` 就能装。
+- [x] **公开目录源上线** —— 单独一个仓库（`registry.json` + `packages/*.lattice` + 一个 GitHub Actions），push 到 main 自动跑 `npm run store:index` 并把结果部署到 Pages。用户填 `https://<user>.github.io/lattice-registry/registry.json` 就能装。
   - **为什么单独一个仓库**：目录里的包天天变，平台代码不该跟着变；第三方作者提 PR 时改的是目录，不是平台。
   - **为什么是 Pages 而不是对象存储**：`registry.json` 要能被 `fetch`，Pages 天然带 HTTPS + CORS，一行配置都不用写。对象存储要么配 CORS 要么配自定义域，两样都是纯成本。
   - **代价**：Pages 有软限流（每 IP 每小时约 10 万次），个人目录远远够；但 `registry.json` 现在是每次启动全量 GET，包上限 16MB —— 量上来之后要靠下面那条增量。
   - **顺带验一次真机**：现在所有验签都是打本地 `127.0.0.1:1420` 的目录。跨域 + 真 HTTPS + 真 DNS 的组合没跑过，第一次上线必须拿真地址装一遍、更新一遍、回滚一遍。
   - **进度**：仓库已经推到 GitHub（`unraveltao/lattice-registry`），CI 全绿 —— 六个官方包 + sidecar + 图标 + `build.mjs` / `sign.mjs` / `serve.mjs` / Pages workflow 都在，`registry.json` 已生成并通过真实解析器与真实 HTTP 的端到端校验。**目录自己不再签一遍**：签名在 sidecar 里，由作者在自己机器上做，CI 只校验不签名（一旦 CI 能签，私钥就得进仓库）。官方包用的是新生成的发布者钥匙 `f842c1bf…`，**不是**仓库里那把公开的 `dev-publisher.key` —— 后者任何人都能用，拿它签公开发布的包等于没有签名。代价：已经用内置目录装过组件的机器，第一次切到这个源会看到一次"发布者钥匙变了"的确认。
-  - **还差两步手动操作**：仓库 Settings → Pages 选 "GitHub Actions"（`configure-pages` 的 `enablement: true` 试过两次都是 `Resource not accessible by integration` —— GITHUB_TOKEN 没有创建站点的权限，这个开关只能人点一次）；以及把 `v0.1.0` 的 draft release 发出去（草稿优先是故意的：发布前能先看一眼资产齐不齐）。
+  - **Pages 已经开了**（`https://unraveltao.github.io/lattice-registry/registry.json` 返回 200，六个包都能下载，`Access-Control-Allow-Origin: *`）。那个开关只能人点一次：`configure-pages` 的 `enablement: true` 试过两次都是 `Resource not accessible by integration` —— GITHUB_TOKEN 没有创建站点的权限。剩下的是 `lattice` 仓库那条 `v0.1.0` draft release 还没发布，那是 v0.7 的事。
 - [ ] **多目录源（列表，不是单值）** —— `catalogueSource` 现在是 `{ kind, url }` 单值，切源等于"上一份目录整个消失"。真生态里一个人会同时订阅官方源和别人的源。改成 `sources: [{ id, url, enabled }]`：合并展示、按源分组、每个源单独显示"上次读到的时间 / 失败原因"。
   - **id 冲突不做"高版本胜"**：那等于谁都能覆盖别人的包。按源优先级取一份，另一份明确标成"Source B also has `demo.clock`"。同名不是安全问题（信任锚点是包上的钥匙），是显示问题。
   - 这条不做，"公开目录上线"就退化成"二选一"—— 用户填了第三方源就看不见官方更新，反过来也一样。

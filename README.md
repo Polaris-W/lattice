@@ -256,7 +256,7 @@ src/
 public/widgets/      Official widget packages (only "available" until installed)
 public/store/        Offline-fallback catalogue (generated at build time: registry.json + signed packages)
 examples/counter/    Third-party sample (drag it in to install)
-tests/               Self-check pages: 20 pages, 465 assertions, all in the browser
+tests/               Self-check pages: 21 pages, 499 assertions, all in the browser (+1 fixture page)
 scripts/             Build helpers (widget index, store index, signing, toolchain PATH, diagnostics injection)
 src-tauri/
   src/widgets.rs     Widget scanning / install / uninstall
