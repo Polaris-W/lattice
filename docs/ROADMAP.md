@@ -32,7 +32,7 @@
 | 组件 SDK | 545 行 | 零依赖 ES module + 类型声明 |
 | 官方组件 + 示例 | 3 282 行 | 6 个官方包 + 1 个示例（复制进去的 SDK 副本不计） |
 | 构建脚本 | 1 317 行 | 组件索引、脚手架、打包、签名、商店索引、SDK 同步、tauri 包装、注入 + 单测 |
-| 浏览器断言 | 499 条 | 21 个自检页，跑一遍的真实计数（0 failed） |
+| 浏览器断言 | 513 条 | 22 个自检页，跑一遍的真实计数（0 failed） |
 | Node 断言 | 11 条 | 注入规则 9 条 + SDK 副本一致性 2 条，都不依赖 dev server |
 | Rust 单测 | 98 条 | 77 条纯逻辑用 `rustc --test` 壳子跑得动（今天全过），21 条要 `cargo test`（本机跑不了），见 AGENTS §11 |
 | Tauri 命令 | 39 个 | |
@@ -515,7 +515,7 @@ v0.5 把"能分发"做完了，但分发的前提是**有人托管**。这件事
   - **代价**：Pages 有软限流（每 IP 每小时约 10 万次），个人目录远远够；但 `registry.json` 现在是每次启动全量 GET，包上限 16MB —— 量上来之后要靠下面那条增量。
   - **顺带验一次真机**：现在所有验签都是打本地 `127.0.0.1:1420` 的目录。跨域 + 真 HTTPS + 真 DNS 的组合没跑过，第一次上线必须拿真地址装一遍、更新一遍、回滚一遍。
   - **进度**：仓库已经推到 GitHub（`unraveltao/lattice-registry`），CI 全绿 —— 六个官方包 + sidecar + 图标 + `build.mjs` / `sign.mjs` / `serve.mjs` / Pages workflow 都在，`registry.json` 已生成并通过真实解析器与真实 HTTP 的端到端校验。**目录自己不再签一遍**：签名在 sidecar 里，由作者在自己机器上做，CI 只校验不签名（一旦 CI 能签，私钥就得进仓库）。官方包用的是新生成的发布者钥匙 `f842c1bf…`，**不是**仓库里那把公开的 `dev-publisher.key` —— 后者任何人都能用，拿它签公开发布的包等于没有签名。代价：已经用内置目录装过组件的机器，第一次切到这个源会看到一次"发布者钥匙变了"的确认。
-  - **Pages 已经开了**（`https://unraveltao.github.io/lattice-registry/registry.json` 返回 200，六个包都能下载，`Access-Control-Allow-Origin: *`）。那个开关只能人点一次：`configure-pages` 的 `enablement: true` 试过两次都是 `Resource not accessible by integration` —— GITHUB_TOKEN 没有创建站点的权限。剩下的是 `lattice` 仓库那条 `v0.1.0` draft release 还没发布，那是 v0.7 的事。
+  - **Pages 已经开了**（`https://unraveltao.github.io/lattice-registry/registry.json` 返回 200，六个包都能下载，`Access-Control-Allow-Origin: *`）。那个开关只能人点一次：`configure-pages` 的 `enablement: true` 试过两次都是 `Resource not accessible by integration` —— GITHUB_TOKEN 没有创建站点的权限。
 - [ ] **多目录源（列表，不是单值）** —— `catalogueSource` 现在是 `{ kind, url }` 单值，切源等于"上一份目录整个消失"。真生态里一个人会同时订阅官方源和别人的源。改成 `sources: [{ id, url, enabled }]`：合并展示、按源分组、每个源单独显示"上次读到的时间 / 失败原因"。
   - **id 冲突不做"高版本胜"**：那等于谁都能覆盖别人的包。按源优先级取一份，另一份明确标成"Source B also has `demo.clock`"。同名不是安全问题（信任锚点是包上的钥匙），是显示问题。
   - 这条不做，"公开目录上线"就退化成"二选一"—— 用户填了第三方源就看不见官方更新，反过来也一样。
@@ -537,7 +537,10 @@ v0.5 让**组件**能分发，v0.6 让**目录**存在，但**平台自己**一�
 - [x] **NSIS 安装包** —— `npm run tauri:build` 出 `src-tauri/target/release/bundle/nsis/Lattice_<version>_x64-setup.exe`（本机实测 2.7 MB）+ 同名 `.sig`。和 `dev` 的区别不只是"能双击"：dev 的 exe 路径每次编译都变（所以自启的 `reconcile()` 只在 release 里修，见 v0.3 那条），dev 也不注入 CSP 头。
 - [x] **平台自动更新** —— `tauri-plugin-updater` + GitHub Releases 的 `latest.json` + minisign 验签，设置菜单里多一行 **Check for updates**。密钥：`.keys/updater.key`（私钥，不进仓库）/ `tauri.conf.json` 的 `plugins.updater.pubkey`（公钥）。
 - [ ] **代码签名证书** —— 没有证书，用户第一次运行会被 SmartScreen 拦成"未知发布者"，点"仍要运行"才装得上。这个不是代码问题，是要花钱买 OV/EV 证书（或走 winget / Store 分发）。
-- [ ] **发布流程跑通一次** —— 打 tag → Actions 出草稿 release → 人工发布 → 旧版本点 Check for updates 能升上来。本地已经把"构建 → 签名 → 出安装包"跑通了，缺的是 CI 那一侧（要在仓库 Secrets 里放 `TAURI_SIGNING_PRIVATE_KEY`）。
+- [ ] **发布流程跑通一次** —— 打 tag → Actions 出草稿 release → 人工发布 → 旧版本点 Check for updates 能升上来。本地已经把"构建 → 签名 → 出安装包"跑通了，CI 那一侧也跑通了（`v0.1.0` 就是 Actions 出来的，2.67 MB 的 NSIS 安装包 + `.sig` + `latest.json`）。
+  - **踩到一个坑，记在这里**：`v0.1.0` 发布时勾了 **"Set as a pre-release"**，而 `/releases/latest` 跳过的不只是草稿，还有预发布。于是 release 页面正常、产物都在、`releases/download/v0.1.0/latest.json` 也 200，**唯独更新器唯一会去敲的那个地址**（`releases/latest/download/latest.json`）是 404。
+  - **症状比原因难查**：插件对任何非 2xx 都只记日志、最后统一抛 `Error::ReleaseNotFound`（"Could not fetch a valid release JSON from the remote"）—— 跟真断网**是同一句话**。前端原来把它当网络错误，界面上显示"检查你的网络"，而网络完全正常。现在 `describeUpdateError` 先认这一条再认网络（`tests/updater.html` 14 条断言钉着，含"别把 `TargetNotFound` 也归进来"）。
+  - 修法：在 release 页面取消那个勾（或直接发下个版本时别勾）。代码侧没有更稳的办法 —— `latest` 这个别名就是这么定义的。
 
 ### 三条边界，别改
 

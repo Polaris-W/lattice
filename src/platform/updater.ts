@@ -48,9 +48,34 @@ type PendingUpdate = {
 
 let pending: PendingUpdate | null = null;
 
-function friendly(error: unknown): string {
+/**
+ * 把插件的错误翻成人话。
+ *
+ * 导出是为了能测 —— 这段的分支全是字符串匹配，写错了没人会发现，而它恰好是
+ * "更新坏了" 时用户唯一能看到的线索。
+ *
+ * # 为什么 `could not fetch` 不能算网络问题
+ *
+ * 插件对 **任何非 2xx** 都只是 `log::error` 然后继续，最后统一抛
+ * `Error::ReleaseNotFound`（"Could not fetch a valid release JSON from the
+ * remote"）。所以 `latest.json` 404 和真断网**拿到的是同一句话**。
+ *
+ * 这两件事的处置完全相反：断网等会儿再试；404 说明这个地址上压根没有可读的
+ * 发布 —— 要么一版都没发，要么最新那版被标成了 **pre-release / draft**，
+ * 而 `/releases/latest/` 只认非草稿、非预发布。第一版就踩过：release 页面
+ * 明明在，点 Check for updates 却报"检查你的网络"。
+ *
+ * 所以先认 404，再认网络，顺序不能反。
+ */
+export function describeUpdateError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (/could not fetch|failed to fetch|network|dns|connect/i.test(message)) {
+  // 只认 "整份 release JSON 没拿到"。别把 `TargetNotFound`（"the platform
+  // `windows-x86_64` was not found in the response"）也算进来 —— 那是 feed 在、
+  // 但没给这个架构出包，说成"还没发布"会把人引到错的地方
+  if (/valid release JSON|release not found|404/i.test(message)) {
+    return "No update feed at this address — nothing has been published yet.";
+  }
+  if (/could not fetch|failed to fetch|network|dns|connect|timed? ?out/i.test(message)) {
     return "Could not reach the update server — check your connection.";
   }
   if (/signature/i.test(message)) {
@@ -77,7 +102,7 @@ export async function checkForUpdate(): Promise<UpdateState> {
       notes: (update.body ?? "").trim(),
     };
   } catch (error) {
-    return { status: "error", message: friendly(error) };
+    return { status: "error", message: describeUpdateError(error) };
   }
 }
 
