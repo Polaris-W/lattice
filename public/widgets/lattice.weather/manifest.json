@@ -45,5 +45,57 @@
       "help": "Open-Meteo updates its current conditions every 15 minutes; asking more often returns the same numbers."
     }
   ],
+  "help": {
+    "sections": [
+      {
+        "title": "Setting the city",
+        "items": [
+          "Type a city into City in the inspector. The first match from Open-Meteo's geocoder wins, so be specific.",
+          "The widget never asks for your location — you type the place, and only that place is looked up.",
+          "No API key is involved: the service is free and open, which is the only reason this widget can be published."
+        ]
+      },
+      {
+        "title": "Units and refresh",
+        "items": [
+          "Units switches between Celsius with km/h and Fahrenheit with mph. The request asks for them, nothing is converted here.",
+          "Refresh every defaults to 30 minutes, because Open-Meteo itself only updates current conditions every 15.",
+          "Asking more often than that returns the same numbers, so a shorter interval buys nothing."
+        ]
+      },
+      {
+        "title": "When the network is gone",
+        "items": [
+          "The last reading stays on the card, with a line saying how long ago it was taken, instead of an empty box.",
+          "Readings are cached per city and per unit, so two cities never overwrite each other's numbers.",
+          "The age line refreshes every minute even when no new reading is due."
+        ]
+      },
+      {
+        "title": "What it can reach",
+        "items": [
+          "Only two hosts are allowed: the geocoder and the forecast service. Nothing else is reachable from this widget.",
+          "If a host were missing from that list the card says so outright — that is an authoring mistake, not a flaky network."
+        ]
+      },
+      {
+        "title": "If it says no permission",
+        "items": [
+          "The card needs the network and storage permissions: one to fetch, one to keep the last reading.",
+          "Grant them again and the next refresh picks up without a restart."
+        ]
+      }
+    ]
+  },
+  "changelog": [
+    {
+      "version": "0.1.0",
+      "changes": [
+        "First release: current conditions from Open-Meteo, with no API key.",
+        "The last reading is cached per city and unit, so a dropped network leaves readable numbers.",
+        "Celsius or Fahrenheit, refreshed between 15 and 180 minutes."
+      ]
+    }
+  ],
   "sdk": "^0.1"
 }

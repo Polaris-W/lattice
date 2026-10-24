@@ -9,5 +9,49 @@
   "size": { "w": 260, "h": 200, "minW": 180, "minH": 120 },
   "layer": "desktop",
   "permissions": ["storage"],
+  "help": {
+    "sections": [
+      {
+        "title": "Just start typing",
+        "items": [
+          "Click into the card and type. There is no save button — the text is written 400 ms after you stop.",
+          "Clicking away, or the card being hidden, saves at once instead of waiting for that pause.",
+          "It also types inside a desktop window, where the window itself never takes focus."
+        ]
+      },
+      {
+        "title": "The status line",
+        "items": [
+          "Unsaved means there are keystrokes not on disk yet. Saving… is a write in flight. Saved means it is down.",
+          "If a write fails the line says so and your text stays in the card; the next keystroke retries.",
+          "A missing storage permission is named outright — the note keeps working until the card reloads."
+        ]
+      },
+      {
+        "title": "The character count",
+        "items": [
+          "It counts characters, not words, so you can see how much room is left before the line wraps.",
+          "Hover the status line when it is truncated to read the full message."
+        ]
+      },
+      {
+        "title": "One note, several cards",
+        "items": [
+          "Every Note widget shows the same text — they are views of one note, not separate notes.",
+          "If you want a second note, install a copy under a different id."
+        ]
+      }
+    ]
+  },
+  "changelog": [
+    {
+      "version": "0.1.0",
+      "changes": [
+        "First release: type and it saves, with a status line and a character count.",
+        "Editing works inside a desktop window that never takes focus.",
+        "The text area keeps clear of the window buttons, so no line hides underneath them."
+      ]
+    }
+  ],
   "sdk": "^0.1"
 }

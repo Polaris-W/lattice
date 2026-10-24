@@ -60,5 +60,60 @@
       "help": "Off means the timer stops at each boundary and waits for you."
     }
   ],
+  "help": {
+    "sections": [
+      {
+        "title": "Starting and pausing",
+        "items": [
+          "The button reads Start before the phase begins, Resume when you stopped halfway, Pause while it runs.",
+          "Reset puts the current phase back to its full length and stops it.",
+          "The colour and the label change with the phase: Focus, Break, Long break."
+        ]
+      },
+      {
+        "title": "Lengths and rounds",
+        "items": [
+          "Focus length, Break length and Long break length are the three durations, all set in the inspector.",
+          "Long break after counts finished rounds: 4 means three short breaks and then a long one.",
+          "Set it to 0 to turn long breaks off — then every break is a short one.",
+          "The small counter reads which round of the cycle you are in, e.g. 2 / 4."
+        ]
+      },
+      {
+        "title": "Automatic or manual",
+        "items": [
+          "Start the next phase automatically off means the timer stops at every boundary and waits for you.",
+          "That is the default on purpose: a break that starts itself is a break you did not decide to take.",
+          "On, it rolls straight from focus into break and back until you pause."
+        ]
+      },
+      {
+        "title": "It survives the lid closing",
+        "items": [
+          "The timer stores the moment it will end, not the time left — sleeping, closing the lid or restarting loses no minutes.",
+          "A phase that ended while the machine was asleep is finished the moment it comes back, not restarted.",
+          "Only a paused phase stores a remaining time, which is why Resume continues where you left off."
+        ]
+      },
+      {
+        "title": "Two Focus widgets",
+        "items": [
+          "They are two views of one timer: start on one and the other follows.",
+          "Both reaching the end in the same millisecond is handled — the round is recorded once, not twice.",
+          "The history of finished rounds is capped at the last 20, so the file cannot grow without limit."
+        ]
+      }
+    ]
+  },
+  "changelog": [
+    {
+      "version": "0.1.0",
+      "changes": [
+        "First release: focus, short break and long break, with a per-cycle counter.",
+        "Keeps time by storing the end moment, so sleeping or closing the lid does not lose minutes.",
+        "Two widgets stay in step; a round is recorded once even when both finish together."
+      ]
+    }
+  ],
   "sdk": "^0.1"
 }

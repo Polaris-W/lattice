@@ -27,5 +27,56 @@
       "help": "Replaces the line above the number."
     }
   ],
+  "help": {
+    "sections": [
+      {
+        "title": "What it counts to",
+        "items": [
+          "Set Target date in the inspector. The countdown runs to midnight on that day, in your local time.",
+          "Leave it empty and it counts to the next January 1 — a year still in progress is a target too."
+        ]
+      },
+      {
+        "title": "The caption",
+        "items": [
+          "The line above the number reads Until Jan 1, 2027 by default.",
+          "Fill in Caption to replace that line with your own: Christmas, Launch day, whatever you are waiting for.",
+          "Up to 40 characters — the inspector stops there, so the line always fits the card."
+        ]
+      },
+      {
+        "title": "After the day arrives",
+        "items": [
+          "It does not stop at zero. The number becomes days since, and the caption flips to Arrived · …",
+          "The card is marked done, so a glance is enough to see the wait is over."
+        ]
+      },
+      {
+        "title": "If it shows --",
+        "items": [
+          "The platform did not allow reading the time. A countdown needs the clock permission to know what day it is.",
+          "An empty or unreadable target date falls back to the next January 1 rather than sitting at --."
+        ]
+      }
+    ]
+  },
+  "changelog": [
+    {
+      "version": "0.2.0",
+      "date": "2026-10-24",
+      "changes": [
+        "Target date and Caption moved into the inspector, so two countdowns can point at different days.",
+        "Ticks on the platform scheduler; a hidden card costs nothing.",
+        "An empty or invalid date now falls back to the next January 1 instead of showing --."
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "changes": [
+        "First release: days, hours, minutes and seconds to a chosen date.",
+        "Date and caption were edited on the card itself."
+      ]
+    }
+  ],
   "sdk": "^0.1"
 }

@@ -9,5 +9,48 @@
   "size": { "w": 240, "h": 200, "minW": 200, "minH": 168 },
   "layer": "top",
   "permissions": ["system:monitor"],
+  "help": {
+    "sections": [
+      {
+        "title": "What it reads",
+        "items": [
+          "CPU usage, memory as used-of-total, the system disk, and network down / up per second.",
+          "The platform samples once a second; the card only draws what it is handed.",
+          "Network numbers are what moved during the last second, not a running average."
+        ]
+      },
+      {
+        "title": "Why the numbers look low",
+        "items": [
+          "CPU is the total across all cores — one busy core on a 16-core machine reads about 6%.",
+          "Memory is physical RAM in use, so a machine with a lot of cache can sit high and still be fine.",
+          "Disk is the system volume only; other drives are not counted."
+        ]
+      },
+      {
+        "title": "It stops when you cannot see it",
+        "items": [
+          "Hiding the card or minimising the window stops the sampling — a monitor nobody is looking at should not cost anything.",
+          "It picks up again on the first tick after it becomes visible, so the first reading after that is already current."
+        ]
+      },
+      {
+        "title": "If it shows dashes",
+        "items": [
+          "The platform refused to read system metrics. The widget needs the system monitor permission.",
+          "Grant it again and the card recovers on its next tick — no restart needed."
+        ]
+      }
+    ]
+  },
+  "changelog": [
+    {
+      "version": "0.1.0",
+      "changes": [
+        "First release: CPU, memory, disk and network, sampled once a second by the platform.",
+        "Starts on the top layer so it stays readable over other windows; the inspector can pin it to the desktop instead."
+      ]
+    }
+  ],
   "sdk": "^0.1"
 }

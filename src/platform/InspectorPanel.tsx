@@ -26,6 +26,9 @@ import {
   type NumberField,
 } from "../runtime/config";
 import { isTauri, type WidgetRecord } from "../runtime/registry";
+import { hasHelp } from "../runtime/help";
+import { HelpContent } from "./HelpContent";
+import { LibSection } from "./LibSection";
 import { PanelGlyph, WidgetIconMark } from "./icons";
 import { useLattice } from "./store";
 
@@ -427,6 +430,17 @@ export function InspectorPanel({ records, open, onToggle }: InspectorPanelProps)
 
       <div className="lattice-panel-body">
         <p className="lattice-card-desc">{manifest.description || "No description"}</p>
+
+        {/*
+          "怎么用"放在最上面、默认收起：它是选中共一个组件时最先想知道的事，
+          但不该把下面的层级 / 穿透 / 权限挤下去 —— 那些才是要动手的。
+          说明来自清单（`runtime/help.ts`），没写就不画这一段。
+        */}
+        {hasHelp(manifest.help) && (
+          <LibSection title="How to use" count={manifest.help.sections.length}>
+            <HelpContent help={manifest.help} changelog={manifest.changelog} />
+          </LibSection>
+        )}
 
         <section className="lattice-field">
           <span className="lattice-label">Layer</span>

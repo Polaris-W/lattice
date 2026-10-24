@@ -214,6 +214,52 @@ if (data.type === "config-changed") {
 
 **`date` 类型是给日期的**（`YYYY-MM-DD`，`""` 表示没设）。用它的理由不是省事：原生 `<input type="date">` 在深色卡片里会变成一块黑药丸，组件得自己按底板亮度猜 `color-scheme`（倒计时原来就写了这么一段）。属性面板在平台窗口里，`color-scheme` 跟着主题走，这件事天然是对的。
 
+### 2.4 `help` / `changelog`：怎么用，改了什么
+
+组件总有"特殊功能"，而属性面板只能放一行 `help` 说明（那是**配置项**的说明）。整份"怎么用"写在清单里：
+
+```json
+"help": {
+  "sections": [
+    {
+      "title": "Priority dots",
+      "items": [
+        "Click the dot to cycle: High → Medium → Low → no priority.",
+        "An empty circle means no priority yet."
+      ]
+    }
+  ]
+},
+"changelog": [
+  {
+    "version": "0.2.0",
+    "date": "2026-10-24",
+    "changes": ["Drag a row to reorder.", "Press Esc mid-drag to drop it back."]
+  },
+  { "version": "0.1.0", "changes": ["First release."] }
+]
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `help.sections[]` | 一节 = 一个小标题 + 若干条。**最多 6 节**，每节**最多 6 条** |
+| `sections[].title` | 小标题，≤40 字符。没标题的整节会被丢掉 |
+| `sections[].items` | 一条一句，≤160 字符。空字符串会被丢掉 |
+| `changelog[]` | 面向用户的变更记录，**最多 12 条**，每条**最多 8 项** |
+| `changelog[].version` | 必须是合法版本号，否则整条丢掉 |
+| `changelog[].date` | 可选，`YYYY-MM-DD` |
+| `changelog[].changes` | 一项一句，≤160 字符 |
+
+**为什么在清单里，而不是包里的 `README.md`**：组件是纯静态目录，平台没有 Markdown 渲染器、也不允许运行时依赖。写在清单里就跟着包走 —— 同一个目录、同一次提交、同一个签名，离线能看、第三方组件也能用、还能被单测对账（`tests/help.html` 会真的把每个清单读出来查覆盖率）。
+
+**它出现在两个地方，内容只有一份**：属性面板里一段可折叠的 `How to use · N`；组件库卡片右上角一颗 `?`（没写说明的组件不画这颗按钮）。变更记录收在 `What changed` 折叠层里 —— 它是"我想知道这版改了什么"才点开的东西，不该顶在最前面。
+
+**写坏了逐条丢，不连累整包。** 和 `config` / `icon` 一样：一节没标题、一条是空串、版本号不合法 —— 丢那一节 / 那一条，组件照常加载。说明是锦上添花，不该有"让组件打不开"的权力。
+
+**上限是故意的。** 6 × 6 × 160 字是"一张 320px 面板里读得完"的量。想写长篇，那是文档的事，不是卡片的事。
+
+**`changelog` 是给用户的，`ROADMAP` / commit 是给开发者的。** 所以写"拖动排序"、"不再丢时间"，不写"重构 advance() 为纯函数"。改了组件行为就同时补一条 —— 用户更新完打开说明，第一眼就该看到"这一版多了什么"。
+
 
 ## 3. 权限
 
@@ -465,6 +511,27 @@ const session = await lattice.media.get();
 `public/widgets/` 下的内置组件一个都没用它 —— 它们是"不装 SDK 也能写"的证明。什么时候值得装：组件有存储、有心跳、要处理权限失败。只有一个 `clock.now` 的纯展示组件就不必。
 
 细节见 `packages/sdk/README.md`。
+
+### 4.6 启动顺序：先画，再问
+
+`config.get` 和 `storage.get` 都是**往返**，宿主忙的时候要几十毫秒，宿主不在（比如你直接双击打开组件页调样式）要等到超时——`config.get` 3 秒、`storage.get` 3 秒，加起来 6 秒。如果第一帧画在它们后面，卡片就是一块空白，而且空多久由宿主决定。
+
+所以顺序固定成这样：
+
+```js
+// 1. 先按默认值画一帧。要画的通常只是 00:00.00 或者 m → ft
+render(blank);
+
+// 2. 再去问
+const saved = await call("storage.get", { key: "units" }).catch(() => null);
+
+// 3. 回来再改 —— 但只在用户还没动过手的时候
+if (!touched && saved) apply(saved);
+```
+
+`touched` 那个闸门不能省。桥回来之前用户完全可能已经点过分类、打过数字了，这时候把存档盖上去等于把他刚做的选择撤销掉。宁可这次不恢复，也不能吃掉用户的操作。
+
+也别用"加载中"占位：空白卡片和骨架屏是同一个等待，只是后者多画了点东西。默认值本来就是合法的界面。
 
 ## 5. 沙箱限制
 

@@ -11,13 +11,20 @@
  * 搜索只是**过滤视图**，不改变上面那个分界：查的时候"已安装 / 可安装"两段照旧分开，
  * 只是各自只留命中的卡片。所以搜出来的是"这些东西里有几个是已装的"，
  * 而不是把两种东西混成一列。
+ *
+ * 三段都能折叠（见 `LibSection`）：默认只摊开"已安装"，另外两段收着，
+ * 标题行上写着数量、也能一次装完。装过十几个包之后，面板一打开看到的
+ * 应该是自己摆好的东西，而不是一屏"还没装"。
  */
 
 import { useMemo, useState } from "react";
 import type { WidgetLoadError, WidgetRecord } from "../runtime/registry";
 import { matchesWidget, tokenize } from "../runtime/library-search";
 import { PERMISSION_LABELS, isPermissionReady } from "../runtime/manifest";
+import { hasHelp } from "../runtime/help";
 import { CatalogueSection, type StoreBinding } from "./CatalogueSection";
+import { HelpDialog } from "./HelpContent";
+import { LibSection } from "./LibSection";
 import type { BackupInfo } from "./catalogue";
 import { Glyph, ICON, PanelGlyph, WidgetIconMark } from "./icons";
 import type { Rating } from "./store";
@@ -76,6 +83,8 @@ export function LibraryPanel({
   onToggle,
 }: LibraryPanelProps) {
   const [query, setQuery] = useState("");
+  /** 正在看"怎么用"的那个组件。null = 没开 */
+  const [helpTarget, setHelpTarget] = useState<WidgetRecord | null>(null);
   // 按空格切成多个词，每个词都得命中（"clock 24" 这种组合才有意义）
   const tokens = useMemo(() => tokenize(query), [query]);
   const filtering = tokens.length > 0;
@@ -213,6 +222,25 @@ export function LibraryPanel({
         )}
 
         <div className="lattice-card-actions">
+          {/*
+            "怎么用"放在这一行的最左边：右边的 Install / Uninstall / Report
+            是"对这份包动手"，`?` 是"先看看它是怎么用的"，两类不同。
+            没写说明的组件不画这颗按钮 —— 点开一个空框比没有按钮更差。
+          */}
+          {hasHelp(record.manifest.help) && (
+            <button
+              type="button"
+              className="lattice-icon-btn is-tiny lattice-card-help"
+              onClick={(event) => {
+                event.stopPropagation();
+                setHelpTarget(record);
+              }}
+              title="How to use this widget"
+              aria-label={`How to use ${record.manifest.name}`}
+            >
+              <Glyph d={ICON.info} size={12} />
+            </button>
+          )}
           {isInstalled ? (
             <>
               <button
@@ -392,30 +420,50 @@ export function LibraryPanel({
         )}
 
         {shownInstalled.length > 0 && (
-          <section className="lattice-lib-section">
-            <h3 className="lattice-lib-section-title">
-              Installed
-              <span>
-                {filtering ? `${shownInstalled.length}/${installed.length}` : installed.length}
-              </span>
-            </h3>
+          <LibSection
+            title="Installed"
+            count={filtering ? `${shownInstalled.length}/${installed.length}` : installed.length}
+            defaultOpen
+            forceOpen={filtering}
+          >
             {shownInstalled.map(renderCard)}
-          </section>
+          </LibSection>
         )}
 
         {shownAvailable.length > 0 && (
-          <section className="lattice-lib-section">
-            <h3 className="lattice-lib-section-title">
-              Available
-              <span>
-                {filtering ? `${shownAvailable.length}/${available.length}` : available.length}
-              </span>
-            </h3>
+          <LibSection
+            title="Available"
+            count={filtering ? `${shownAvailable.length}/${available.length}` : available.length}
+            /*
+             * 这一段默认收起来。装完之后它只会越来越长，而已经装好的东西
+             * 才是日常要用的 —— 每次打开面板先看见一堆"还没装"，会让人
+             * 以为没装完。收起来不等于藏起来：标题行上就写着数量，
+             * 想装一次点开就有。
+             */
+            forceOpen={filtering}
+            action={
+              officialPack.length > 1 ? (
+                <button
+                  type="button"
+                  className="lattice-btn is-small"
+                  onClick={() => onInstallPack(officialPack)}
+                  title={`Install all ${officialPack.length} bundled widgets at once`}
+                >
+                  Install all
+                </button>
+              ) : null
+            }
+          >
             {shownAvailable.map(renderCard)}
-          </section>
+          </LibSection>
         )}
 
-        <CatalogueSection store={store} tokens={tokens} installedIds={installedIds} />
+        <CatalogueSection
+          store={store}
+          tokens={tokens}
+          installedIds={installedIds}
+          forceOpen={filtering}
+        />
 
         {errors.length > 0 && (
           <div className="lattice-errors">
@@ -433,6 +481,16 @@ export function LibraryPanel({
           Drop a widget folder or a .lattice package anywhere in this window to install it.
         </p>
       </div>
+
+      {helpTarget && (
+        <HelpDialog
+          name={helpTarget.manifest.name}
+          version={helpTarget.manifest.version}
+          help={helpTarget.manifest.help}
+          changelog={helpTarget.manifest.changelog}
+          onClose={() => setHelpTarget(null)}
+        />
+      )}
     </aside>
   );
 }

@@ -631,26 +631,136 @@ button {
   border-top: 1px solid var(--lattice-border);
 }
 
-.lattice-lib-section-title {
+/*
+ * 标题行 = 可点的一整条（左）+ 动作（右）。
+ *
+ * 点标题只负责开合，动作单独一颗：安装全部、刷新目录这些放进去，
+ * 误触的代价太大。整条做成按钮是为了命中区大 —— 只有那个 12px 的
+ * 小箭头可点的话，收起来之后很难再展开。
+ */
+.lattice-lib-section-head {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-height: 18px;
+}
+
+.lattice-lib-section-title {
+  flex: 1;
+  min-width: 0;
   margin: 0;
-  padding: 0 2px;
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.06em;
   color: var(--lattice-text-faint);
 }
 
-.lattice-lib-section-title span {
+.lattice-lib-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 2px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lattice-lib-section-toggle:hover {
+  color: var(--lattice-text-muted);
+}
+
+.lattice-lib-section-toggle:focus-visible {
+  outline: 2px solid var(--lattice-accent);
+  outline-offset: 1px;
+}
+
+/* 箭头指右 = 收着，指下 = 展开。转的是箭头本身，不是文字 */
+.lattice-lib-chevron {
+  display: flex;
+  flex: none;
+  color: var(--lattice-text-faint);
+  transition: transform 120ms ease;
+}
+
+.lattice-lib-chevron.is-open {
+  transform: rotate(90deg);
+}
+
+.lattice-lib-section-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lattice-lib-count {
+  flex: none;
   padding: 0 5px;
   border-radius: 999px;
   background: var(--lattice-surface-2);
   font-family: var(--lattice-mono);
   font-size: 10px;
   line-height: 15px;
+  letter-spacing: 0;
   color: var(--lattice-text-muted);
+}
+
+.lattice-lib-section-action {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.lattice-lib-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 目录段里再套一层"Nothing to install"：和上面的卡片留一道浅分隔 */
+.lattice-lib-section.is-nested {
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--lattice-border);
+}
+
+/*
+ * 目录里"能装的一堆"那一行。
+ *
+ * 比段标题低一档：它不折叠，只是个分组说明 + 一颗批量按钮。
+ */
+.lattice-lib-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px;
+}
+
+.lattice-lib-group-name {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--lattice-text-muted);
+}
+
+/*
+ * 被去重掉的那些已装条目：一行字，不是一组卡。
+ *
+ * 别把它做成可展开的列表 —— 那等于换个形式把重复摆回来。要看细节就去
+ * 上面 "Installed" 里看，那里有版本、权限、评分和卸载。
+ */
+.lattice-store-quiet {
+  margin: 0;
+  padding: 0 2px;
+  color: var(--lattice-text-faint);
 }
 
 .lattice-lib-note {
@@ -765,6 +875,37 @@ button {
 
 .lattice-canvas:not(.has-grid) {
   background-image: none;
+}
+
+/*
+ * 拖拽对齐参考线。
+ *
+ * 只在拖的时候存在（React 里那两条 map 由 guides 状态驱动），所以这里不用管
+ * "什么时候藏"。三条约束：
+ *   - `pointer-events: none`：线画在卡片上方，不能挡住拖拽的指针事件；
+ *   - z-index 高过卡片（卡片最高 30 左右，见 `.lattice-widget.is-selected`）；
+ *   - 用 accent 色 + 一点点光晕：一条 1px 的灰线在点阵背景上根本看不见。
+ */
+.lattice-guide {
+  position: absolute;
+  z-index: 60;
+  pointer-events: none;
+  background: var(--lattice-accent);
+  box-shadow: 0 0 0 0.5px var(--lattice-accent), 0 0 6px var(--lattice-accent);
+  opacity: 0.9;
+}
+
+/* 长度默认 100%，实际由内联的 scrollHeight / scrollWidth 覆盖（见 Canvas） */
+.lattice-guide.is-v {
+  top: 0;
+  width: 1px;
+  height: 100%;
+}
+
+.lattice-guide.is-h {
+  left: 0;
+  height: 1px;
+  width: 100%;
 }
 
 .lattice-empty {
@@ -2513,13 +2654,13 @@ button.lattice-chip[aria-pressed="true"] {
 /* ---------- 组件目录（商店） ---------- */
 
 /*
- * 目录段和"已安装 / 可安装"两段并排存在，所以标题上加一颗刷新按钮 ——
+ * 目录段和"已安装 / 可安装"两段并排存在，所以标题行右侧常驻一颗刷新按钮 ——
  * 目录是外部文件，什么时候变过只有用户自己知道。
+ *
+ * 那颗按钮现在挂在 `LibSection` 的 action 位上，标题本身不再自己排版。
  */
-.lattice-store .lattice-lib-section-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.lattice-store .lattice-lib-section-action {
+  margin-left: auto;
 }
 
 .lattice-icon-btn.is-tiny {
@@ -2833,4 +2974,107 @@ button.lattice-chip[aria-pressed="true"] {
 
 .lattice-segmented.is-full .lattice-segment {
   flex: 1;
+}
+
+/* ---------- 组件的"怎么用" ---------- */
+
+/*
+ * 说明文字比正文小一号、比提示大一档。
+ *
+ * 这里刻意不用 `.lattice-hint`（那是 11px 的灰）：说明是**要照着做**的内容，
+ * 和"这里有个开关"这种提示不是一个量级。小标题用正文色，条目用 muted，
+ * 扫的时候先看到分了几块，再决定读哪块。
+ */
+.lattice-help {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.lattice-help-section {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.lattice-help-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--lattice-text);
+}
+
+.lattice-help-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding-left: 15px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--lattice-text-muted);
+}
+
+.lattice-help-list li::marker {
+  color: var(--lattice-text-faint);
+}
+
+/* 变更记录：默认收着。想知道"这版改了什么"才会点开 */
+.lattice-help-history {
+  padding-top: 9px;
+  border-top: 1px solid var(--lattice-border);
+}
+
+.lattice-help-history summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--lattice-text-faint);
+  cursor: pointer;
+  list-style: none;
+}
+
+.lattice-help-history summary::-webkit-details-marker {
+  display: none;
+}
+
+.lattice-help-history summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform 120ms ease;
+}
+
+.lattice-help-history[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.lattice-help-release {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.lattice-help-version {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  font-family: var(--lattice-mono);
+  font-size: 10px;
+  color: var(--lattice-text-faint);
+}
+
+/* 卡片左下角的 `?`：和右边的 Install / Report 拉开，因为它们是两类动作 */
+.lattice-card-help {
+  margin-right: auto;
+}
+
+/* 说明框比举报框宽一点：那里面是几节列表，420px 会频繁折行 */
+.lattice-modal.is-help {
+  width: min(460px, 100%);
 }

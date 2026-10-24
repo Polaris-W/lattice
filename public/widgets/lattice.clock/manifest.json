@@ -25,5 +25,57 @@
       "default": false
     }
   ],
+  "help": {
+    "sections": [
+      {
+        "title": "Reading it",
+        "items": [
+          "The big line is the time; the line under it is the date as month, day and weekday.",
+          "Seconds are off by default — a clock that changes every second keeps pulling your eye back to it.",
+          "It only ticks while the card is visible. A hidden card costs nothing, and the time is right again the moment you look."
+        ]
+      },
+      {
+        "title": "12-hour, 24-hour, seconds",
+        "items": [
+          "Click the clock on the desktop, then use the inspector on the right.",
+          "12-hour clock off means 24-hour, e.g. 21:40. On gives 9:40 PM.",
+          "Show seconds adds them and widens the digits so the card does not jitter."
+        ]
+      },
+      {
+        "title": "Each copy keeps its own settings",
+        "items": [
+          "Two clocks on one desktop can show different formats — settings belong to the copy, not to the widget.",
+          "Changes apply immediately; the card is redrawn, not reloaded."
+        ]
+      },
+      {
+        "title": "If it shows --:--",
+        "items": [
+          "The platform did not allow reading the time. The widget asks for it, so it needs the clock permission.",
+          "Grant it again and the card recovers on its next tick — no restart needed."
+        ]
+      }
+    ]
+  },
+  "changelog": [
+    {
+      "version": "0.2.0",
+      "date": "2026-10-24",
+      "changes": [
+        "12-hour clock and Show seconds moved into the inspector, so each copy can differ.",
+        "Ticks on the platform scheduler: a hidden clock stops working instead of burning power.",
+        "No longer needs the storage permission — settings live with the platform, not inside the widget."
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "changes": [
+        "First release: large time, date and weekday line.",
+        "12/24-hour switch on the card itself."
+      ]
+    }
+  ],
   "sdk": "^0.1"
 }

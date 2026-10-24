@@ -180,6 +180,15 @@ async function render(notice: CatalogueSnapshot["notice"]): Promise<void> {
     );
   });
   await sleep(40);
+  /*
+   * 目录段默认收着。这一页验的是"旧目录的条目照常渲染"，
+   * 所以渲染完像用户那样点开一下 —— 折叠本身在 `store-ui` 里钉着。
+   */
+  const toggle = document.querySelector<HTMLButtonElement>(".lattice-lib-section-toggle");
+  if (toggle?.getAttribute("aria-expanded") === "false") {
+    act(() => toggle.click());
+    await sleep(30);
+  }
 }
 
 const text = (selector: string) =>

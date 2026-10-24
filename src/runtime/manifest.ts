@@ -8,6 +8,7 @@
 
 import { normalizeAppearance, type Appearance } from "./appearance";
 import { normalizeConfig, type ConfigField } from "./config";
+import { normalizeChangelog, normalizeHelp, type ChangelogEntry, type WidgetHelp } from "./help";
 
 /** 组件在桌面上的层级 */
 export type WidgetLayer = "desktop" | "top";
@@ -100,6 +101,22 @@ export interface WidgetManifest {
    * 不会让整包加载失败 —— 规则见 runtime/config.ts。
    */
   config: ConfigField[];
+  /**
+   * 怎么用：几节短句，显示在属性面板和组件卡片上。
+   *
+   * 放在清单里而不是单独一份 README，是为了让它**跟着包走**：同一目录、
+   * 同一次提交、同一个签名，想和代码脱节都难。写坏的条目单独丢弃，
+   * 不影响组件加载 —— 规则见 runtime/help.ts。
+   */
+  help: WidgetHelp;
+  /**
+   * 改了什么：按版本记，新的在前。
+   *
+   * 这份是**给用户看的**（"更新之后多了什么"），开发决策留在 ROADMAP 和
+   * commit 里。和目录里的 `notes` 分工：`changelog` 跟着包走、离线可读，
+   * `notes` 是目录侧摘要、只在联网更新时看得到。
+   */
+  changelog: ChangelogEntry[];
 }
 
 export const DEFAULT_SIZE: WidgetSize = { w: 240, h: 140, minW: 120, minH: 80 };
@@ -169,6 +186,8 @@ export function normalizeManifest(raw: unknown, dirName: string): WidgetManifest
     sdk: optionalString(input.sdk) || SUPPORTED_SDK,
     appearance: normalizeAppearance(input.appearance),
     config: normalizeConfig(input.config),
+    help: normalizeHelp(input.help),
+    changelog: normalizeChangelog(input.changelog),
   };
 }
 

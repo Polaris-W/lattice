@@ -9,5 +9,67 @@
   "size": { "w": 280, "h": 240, "minW": 200, "minH": 140 },
   "layer": "top",
   "permissions": ["storage"],
+  "help": {
+    "sections": [
+      {
+        "title": "Adding and finishing",
+        "items": [
+          "Type in the box at the bottom and press Enter.",
+          "Click anywhere on a row to tick it off — the whole row is the target, not just the small box.",
+          "Click it again to put it back on the list.",
+          "The counter in the title bar says how many are left, or All done."
+        ]
+      },
+      {
+        "title": "Priority dots",
+        "items": [
+          "Click the dot to cycle: High → Medium → Low → no priority.",
+          "The first click gives High, because \"this one matters\" is the usual reason to mark something.",
+          "An empty circle means no priority yet — it is drawn rather than hidden so you can find it."
+        ]
+      },
+      {
+        "title": "Reordering",
+        "items": [
+          "Drag a row up or down. It only starts moving after a few pixels, so a click still ticks it off.",
+          "Drag to the top or bottom edge and the list scrolls with you.",
+          "Press Esc in the middle of a drag to drop it back where it was."
+        ]
+      },
+      {
+        "title": "One list, several windows",
+        "items": [
+          "Every Todo widget you place shows the same list — it is stored per widget, not per copy.",
+          "Two Todos side by side are two views of one list, not two separate lists.",
+          "If you want a second list, install a copy under a different id."
+        ]
+      },
+      {
+        "title": "If it cannot save",
+        "items": [
+          "The counter switches to Not saved when a write fails — usually a missing storage permission.",
+          "Hover it to see the reason. The list keeps working in memory until it can write again."
+        ]
+      }
+    ]
+  },
+  "changelog": [
+    {
+      "version": "0.2.0",
+      "date": "2026-10-24",
+      "changes": [
+        "Drag a row to reorder; the list scrolls when you drag to an edge.",
+        "Press Esc mid-drag to drop the row back where it was.",
+        "A list that changes under your hand no longer yanks the row out of the drag."
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "changes": [
+        "First release: add with Enter, tick off by clicking a row, delete with ×.",
+        "Red / amber / green priority dots, one click to cycle."
+      ]
+    }
+  ],
   "sdk": "^0.1"
 }

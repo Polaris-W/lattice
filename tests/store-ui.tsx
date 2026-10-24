@@ -36,7 +36,14 @@ const OTHER_KEY = "44".repeat(32);
 const SIG = "22".repeat(64);
 const SHA = "33".repeat(32);
 
-function record(id: string, name: string, version: string, permissions: string[] = []): WidgetRecord {
+function record(
+  id: string,
+  name: string,
+  version: string,
+  permissions: string[] = [],
+  help: { title: string; items: string[] }[] = [],
+  changelog: { version: string; date?: string; changes: string[] }[] = [],
+): WidgetRecord {
   return {
     manifest: {
       id,
@@ -51,6 +58,13 @@ function record(id: string, name: string, version: string, permissions: string[]
       interactive: true,
       permissions: permissions as never,
       config: [],
+      /*
+       * 真实记录都过了一遍 `normalizeManifest`，所以 `help` / `changelog`
+       * 一定存在（哪怕内容是空的）。手搓的 fixture 也得照这个形状来，
+       * 否则组件里 `hasHelp(undefined)` 会当场炸 —— 而这正是它该炸的地方。
+       */
+      help: { sections: help },
+      changelog,
       appearance: undefined,
       network: undefined,
       sdk: undefined,
@@ -113,7 +127,15 @@ const catalogue: Catalogue = {
 
 const widgets = [
   record("lattice.clock", "Clock", "1.0.0", ["clock"]),
-  record("lattice.todo", "Todo", "0.2.0", ["storage"]),
+  // 只有待办带说明：用来验"没写说明的组件不画那颗 ?"
+  record(
+    "lattice.todo",
+    "Todo",
+    "0.2.0",
+    ["storage"],
+    [{ title: "Typing", items: ["Text saves as you type"] }],
+    [{ version: "0.2.0", date: "2026-10-24", changes: ["Drag to reorder"] }],
+  ),
   record("lattice.sysmon", "System", "0.1.0", ["system:monitor"]),
   record("lattice.note", "Note", "0.1.0", ["storage"]),
 ];
@@ -153,10 +175,47 @@ const store: StoreBinding = {
 
 const root = createRoot(document.getElementById("stage")!);
 
-function render(overrides: Partial<Parameters<typeof LibraryPanel>[0]> = {}) {
+/**
+ * 目录段默认是收着的（真实界面就这样），卡片要等用户点开才铺出来。
+ * 断言前得像用户那样点一下 —— 顺便也就把"点得开"这件事本身验了。
+ *
+ * "Cannot be installed" 是套在目录段里的第二层，也要单独点开：
+ * 没签名的那几条收在那一层里。
+ */
+function expandSections() {
+  for (const label of ["Test catalogue", "Cannot be installed"]) {
+    const toggle = [...document.querySelectorAll<HTMLButtonElement>(".lattice-lib-section-toggle")].find(
+      (node) => node.querySelector(".lattice-lib-section-name")?.textContent === label,
+    );
+    if (toggle && toggle.getAttribute("aria-expanded") === "false") {
+      act(() => toggle.click());
+    }
+  }
+}
+
+/** 把两段重新收起来（验"搜索强制展开"时要用） */
+function collapseSections() {
+  for (const label of ["Test catalogue", "Cannot be installed"]) {
+    const toggle = [...document.querySelectorAll<HTMLButtonElement>(".lattice-lib-section-toggle")].find(
+      (node) => node.querySelector(".lattice-lib-section-name")?.textContent === label,
+    );
+    if (toggle && toggle.getAttribute("aria-expanded") === "true") {
+      act(() => toggle.click());
+    }
+  }
+}
+
+function render(
+  overrides: Partial<Parameters<typeof LibraryPanel>[0]> = {},
+  { expand = true }: { expand?: boolean } = {},
+) {
   const props = {
     widgets,
-    installedIds: new Set(["lattice.clock", "lattice.todo", "lattice.sysmon"]),
+    /*
+     * sysmon **故意不装**：它和目录里的钥匙不一致，装了就只会进统计行
+     * （已装 + 没有新版本 = 不出卡片），那张"信任新钥匙"的卡就测不到了。
+     */
+    installedIds: new Set(["lattice.clock", "lattice.todo"]),
     errors: [],
     loading: false,
     notice: null,
@@ -179,6 +238,7 @@ function render(overrides: Partial<Parameters<typeof LibraryPanel>[0]> = {}) {
   act(() => {
     root.render(<LibraryPanel {...props} />);
   });
+  if (expand) expandSections();
 }
 
 const text = (selector: string) =>
@@ -189,12 +249,89 @@ const buttons = (label: string) =>
   ) as HTMLButtonElement[];
 
 async function main() {
-  render();
+  /*
+   * 折叠是这一版新加的默认状态：面板一打开只摊开"已安装"，
+   * 目录和可安装两段收着。先验这条，再像用户那样点开继续往下测。
+   */
+  render({}, { expand: false });
   await sleep(60);
+
+  eq(
+    document.querySelector(".lattice-store .lattice-lib-section-toggle")?.getAttribute("aria-expanded"),
+    "false",
+    "目录段默认收起（aria-expanded 也要跟着说）",
+  );
+  eq(document.querySelectorAll(".lattice-card.is-store").length, 0, "收起时不铺卡片");
+  log(
+    document.querySelector(".lattice-store .lattice-lib-count")?.textContent === "5",
+    "收起时标题上仍然写着这一段有几条",
+  );
+
+  expandSections();
+  await sleep(40);
+  log(document.querySelectorAll(".lattice-card.is-store").length > 0, "点开之后卡片才出现");
 
   // ---- 1. 目录段 ----
   eq(text(".lattice-store .lattice-lib-section-title")[0], "Test catalogue5", "目录段用的是目录自己的名字");
   log(text(".lattice-store-warnings summary")[0]?.includes("1 entries were skipped") ?? false, "丢弃的条目折叠显示");
+
+  /*
+   * 分堆规则：已安装且没有新版本的条目**一张卡都不出**（它在 Installed 里
+   * 已经有一张了），只留一行统计。剩下的按"要不要动手"分两堆。
+   */
+  eq(
+    text(".lattice-lib-group-name")[0]?.replace(/\d+$/, ""),
+    "Needs a decision",
+    "有换钥匙的条目时，这一堆不叫 Can be installed（那会是假话）",
+  );
+  eq(
+    [...document.querySelectorAll(".lattice-card.is-store")].length,
+    4,
+    "5 条里 1 条已装且最新 -> 只出 4 张卡（去重）",
+  );
+  eq(
+    text(".lattice-lib-section-name").includes("Cannot be installed"),
+    true,
+    "没签名的条目单独收一层（它装不了，但得说清为什么）",
+  );
+  eq(
+    text(".lattice-lib-section-name").includes("Nothing to install"),
+    false,
+    "那一层不再叫 Nothing to install（已安装的重复卡片已经从这里拿掉了）",
+  );
+  eq(
+    buttons("Install all").length,
+    0,
+    "只有 1 条能装时不给批量按钮（批量是给一堆新包的）",
+  );
+
+  /*
+   * 去重：已安装且没有新版本的条目只能出现一次。
+   *
+   * 唯一允许的重复是"已安装 + 目录里真有新版" —— 目录段那张是**更新卡**，
+   * 上面写着 `Update to 1.1.0`，不是把同一张卡再摆一遍。所以这里不只数次数，
+   * 还要求重复的那张确实是更新卡：否则"去重"会退化成"什么都不显示"。
+   */
+  const panelIds = [...document.querySelectorAll(".lattice-card-id")].map((node) => node.textContent);
+  const duplicated = [...new Set(panelIds.filter((id, index) => panelIds.indexOf(id) !== index))];
+  eq(duplicated, ["lattice.clock"], "只有“已装且真有新版”的时钟允许再出现一次");
+  log(
+    [...document.querySelectorAll<HTMLElement>(".lattice-card.is-store")]
+      .filter((node) => node.textContent?.includes("lattice.clock"))
+      .every((node) => node.textContent?.includes("Update to") ?? false),
+    "允许重复的那张必须是更新卡（不然就是同一张卡摆了两遍）",
+  );
+
+  // 已装 + 最新：不出卡片，只在统计行里交代一句
+  const quiet = document.querySelector(".lattice-store-quiet")?.textContent?.replace(/\s+/g, " ") ?? "";
+  log(
+    ![...document.querySelectorAll<HTMLElement>(".lattice-card.is-store")].some((node) =>
+      node.textContent?.includes("lattice.todo"),
+    ),
+    "已装且最新的条目不重复出卡",
+  );
+  log(quiet.includes("1 up to date"), "统计行里说清有几条已经是最新的");
+  log(quiet.includes("under Installed"), "统计行指明去上面那段看");
 
   const clockCard = [...document.querySelectorAll<HTMLElement>(".lattice-card.is-store")].find((node) =>
     node.textContent?.includes("lattice.clock"),
@@ -211,11 +348,6 @@ async function main() {
     node.textContent?.includes("lattice.note"),
   );
   log(noteCard?.textContent?.includes("Install") ?? false, "没装过 -> Install");
-
-  const todoCard = [...document.querySelectorAll<HTMLElement>(".lattice-card.is-store")].find((node) =>
-    node.textContent?.includes("lattice.todo"),
-  );
-  log(todoCard?.textContent?.includes("Up to date") ?? false, "同版本 -> Up to date");
 
   const mediaCard = [...document.querySelectorAll<HTMLElement>(".lattice-card.is-store")].find((node) =>
     node.textContent?.includes("lattice.media"),
@@ -330,6 +462,12 @@ async function main() {
       blockedKeys: [BLOCKED_KEY],
       installedVersions: new Map([...store.installedVersions, ["lattice.legacy", "2.0.0"]]),
     },
+    /*
+     * legacy 要真的"已安装"，否则这个状态在现实里不存在 ——
+     * `older`（目录比本地旧）本来就只可能发生在装过的组件上。
+     * 装了之后它进的是统计行，不再出卡片。
+     */
+    installedIds: new Set(["lattice.clock", "lattice.todo", "lattice.legacy"]),
   });
   await sleep(60);
 
@@ -358,12 +496,14 @@ async function main() {
   await sleep(20);
   eq(calls, [`unblock:${BLOCKED_KEY}`], "解黑带着完整钥匙（界面只显示指纹，回调要拿全的）");
 
-  const legacyCard = cardOf("lattice.legacy");
-  log(
-    legacyCard?.textContent?.includes("The catalogue only has 1.0.0 — you have 2.0.0") ?? false,
-    "目录比本地旧：说清两边各是多少",
-  );
-  log(!(legacyCard?.textContent?.includes("Up to date") ?? false), "目录比本地旧：不再谎称 Up to date");
+  /*
+   * 目录比本地旧：这条现在只在统计行里出现（已装的条目不再单独出卡）。
+   * 关键在于**不能说成"最新"** —— "我有 2.0.0、目录只到 1.0.0"和
+   * "我和目录一样新"是两件事。
+   */
+  const legacyQuiet = document.querySelector(".lattice-store-quiet")?.textContent ?? "";
+  log(!cardOf("lattice.legacy"), "已装且目录落后的条目也不重复出卡");
+  log(legacyQuiet.includes("1 older than your copy"), "目录比本地旧：统计行里点名，不谎称 up to date");
 
   // 旧钥匙已经被拉黑时，就别再给一次"拉黑旧钥匙"的按钮
   render({
@@ -380,9 +520,47 @@ async function main() {
     "旧钥匙已拉黑：按钮消失",
   );
 
-  // ---- 6. 搜索同时过滤目录段 ----
+  // ---- 6. 卡片上的 `?` 只在写了说明的组件上出现 ----
   render();
   await sleep(60);
+
+  /*
+   * 按 `.lattice-card-id` 认卡片，不按整段文字：便签卡片的说明文字里就写着
+   * "lattice.note"，`textContent.includes(id)` 会认错人 —— 这种坑只在
+   * 真的把界面挂起来的时候才会露出来。
+   */
+  const idOf = (node: HTMLElement) => node.querySelector(".lattice-card-id")?.textContent?.trim() ?? "";
+  const cardById = (id: string) =>
+    [...document.querySelectorAll<HTMLElement>(".lattice-card")].find((node) => idOf(node) === id);
+
+  eq(document.querySelectorAll(".lattice-card-help").length, 1, "只有写了说明的组件才有 ?");
+  log(Boolean(cardById("lattice.todo")?.querySelector(".lattice-card-help")), "? 长在写了说明的那张卡上");
+  log(
+    !cardById("lattice.clock")?.querySelector(".lattice-card-help"),
+    "没写说明的组件不画 ?（按钮不该是个空入口）",
+  );
+
+  cardById("lattice.todo")?.querySelector<HTMLButtonElement>(".lattice-card-help")?.click();
+  await sleep(40);
+  const helpDialog = document.querySelector(".lattice-modal.is-help");
+  log(Boolean(helpDialog), "点 ? 打开说明框");
+  log(helpDialog?.textContent?.includes("Typing") ?? false, "说明框里是清单里的那一节");
+  log(
+    helpDialog?.textContent?.includes("Text saves as you type") ?? false,
+    "条目也照原样带过来",
+  );
+  log(helpDialog?.textContent?.includes("What changed") ?? false, "变更记录收在 What changed 里");
+  helpDialog?.querySelector<HTMLButtonElement>(".lattice-icon-btn")?.click();
+  await sleep(40);
+  eq(document.querySelector(".lattice-modal.is-help"), null, "关掉之后框就没了");
+
+  // ---- 7. 搜索同时过滤目录段，而且无视折叠 ----
+  render();
+  await sleep(60);
+  collapseSections();
+  await sleep(40);
+  eq(document.querySelectorAll(".lattice-card.is-store").length, 0, "搜索前先把目录段收起来");
+
   const search = document.querySelector<HTMLInputElement>(".lattice-lib-search-input");
   if (search) {
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
@@ -391,6 +569,11 @@ async function main() {
       search.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await sleep(80);
+    eq(
+      document.querySelector(".lattice-store .lattice-lib-section-toggle")?.getAttribute("aria-expanded"),
+      "true",
+      "搜索强制展开：收着的时候也能看见命中项（搜到了看不见比搜不到更像坏了）",
+    );
     eq(text(".lattice-card-id"), ["lattice.media"], "搜索后只剩命中的目录条目");
   } else {
     log(false, "找不到搜索框");

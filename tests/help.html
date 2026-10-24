@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>help test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      /*
+       * 组件说明（help）与变更记录（changelog）：解析 + 内置组件对账。
+       *
+       * 前一半是纯函数，钉三件事：
+       *   1. 写坏的条目**单独丢**，不连累整包（说明是锦上添花）
+       *   2. 上限是真的（节数 / 条目数 / 字符数），超了就截断
+       *   3. 顺序按作者写的来 —— 变更记录不做排序，他说新的在前就是新的在前
+       *
+       * 后一半是"文档别烂掉"的对账：把 `public/widgets` 下每个清单真的读出来，
+       * 检查它有没有说明、说明有没有覆盖配置项。这一半才是这个页面存在的理由 ——
+       * 纯函数测试全绿而所有组件一个说明都没有，也是白搭。
+       */
+      import { normalizeManifest } from "/src/runtime/manifest.ts";
+      import {
+        MAX_CHANGELOG_ENTRIES,
+        MAX_HELP_ITEMS,
+        MAX_HELP_SECTIONS,
+        hasHelp,
+        normalizeChangelog,
+        normalizeHelp,
+      } from "/src/runtime/help.ts";
+
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const eq = (actual, expected, text) =>
+        log(JSON.stringify(actual) === JSON.stringify(expected), `${text}（得到 ${JSON.stringify(actual)}）`);
+
+      // ---- 1. normalizeHelp ----
+
+      eq(normalizeHelp(null), { sections: [] }, "没有 help 字段 -> 空说明");
+      eq(normalizeHelp({ sections: "nope" }), { sections: [] }, "sections 不是数组 -> 空说明");
+
+      const two = normalizeHelp({
+        sections: [
+          { title: "Adding", items: ["Press Enter", "Click a row"] },
+          { title: "Sorting", items: ["Drag it"] },
+        ],
+      });
+      eq(
+        two.sections.map((s) => s.title),
+        ["Adding", "Sorting"],
+        "正常的几节按原顺序保留",
+      );
+      eq(two.sections[0].items.length, 2, "每节的条目都在");
+
+      eq(
+        normalizeHelp({ sections: [{ items: ["orphan"] }] }).sections.length,
+        0,
+        "没标题的一节被丢掉",
+      );
+      eq(
+        normalizeHelp({ sections: [{ title: "Empty", items: [] }] }).sections.length,
+        0,
+        "只有标题没有内容的一节被丢掉（点开什么都没有比没有更差）",
+      );
+      eq(
+        normalizeHelp({ sections: [{ title: "T", items: ["ok", 42, null, "", "  "] }] }).sections[0].items,
+        ["ok"],
+        "非字符串和空白条目被丢掉",
+      );
+      eq(
+        normalizeHelp({ sections: [{ title: "T", items: ["  two   spaces  "] }] }).sections[0].items,
+        ["two spaces"],
+        "连续空白归一成一个空格",
+      );
+
+      const long = "x".repeat(400);
+      const clipped = normalizeHelp({ sections: [{ title: "T", items: [long] }] }).sections[0].items[0];
+      log(clipped.length <= 160 && clipped.endsWith("…"), "超长条目截断到 160 并补省略号");
+
+      const manySections = normalizeHelp({
+        sections: Array.from({ length: 20 }, (_, i) => ({ title: `S${i}`, items: ["x"] })),
+      });
+      eq(manySections.sections.length, MAX_HELP_SECTIONS, `节数上限 ${MAX_HELP_SECTIONS}`);
+
+      const manyItems = normalizeHelp({
+        sections: [{ title: "T", items: Array.from({ length: 20 }, (_, i) => `i${i}`) }],
+      });
+      eq(manyItems.sections[0].items.length, MAX_HELP_ITEMS, `每节条目上限 ${MAX_HELP_ITEMS}`);
+
+      // ---- 2. normalizeChangelog ----
+
+      eq(normalizeChangelog("nope"), [], "changelog 不是数组 -> 空");
+      eq(
+        normalizeChangelog([{ version: "not-a-version", changes: ["x"] }]).length,
+        0,
+        "版本号解析不了的一条被丢掉（对不上版本就没法对照）",
+      );
+      eq(
+        normalizeChangelog([{ version: "1.0.0", changes: [] }]).length,
+        0,
+        "没有内容的一条被丢掉",
+      );
+
+      const releases = normalizeChangelog([
+        { version: "0.2.0", date: "2026-10-24", changes: ["Drag to reorder"] },
+        { version: "0.1.0", changes: ["First release"] },
+      ]);
+      eq(releases.map((r) => r.version), ["0.2.0", "0.1.0"], "顺序按作者写的来，不重排");
+      eq(releases[1].date, "", "没写日期就是空串，不编一个出来");
+
+      eq(
+        normalizeChangelog(
+          Array.from({ length: 20 }, (_, i) => ({ version: `1.0.${i}`, changes: ["x"] })),
+        ).length,
+        MAX_CHANGELOG_ENTRIES,
+        `变更记录上限 ${MAX_CHANGELOG_ENTRIES} 条`,
+      );
+
+      // ---- 3. hasHelp ----
+
+      eq(hasHelp({ sections: [] }), false, "空说明 = 没有说明");
+      eq(hasHelp(two), true, "有节就是有说明");
+
+      // ---- 4. 内置组件对账 ----
+
+      /*
+       * 待补名单：还没写说明的内置组件。
+       *
+       * 这条断言的作用是**只减不增**：新加的组件必须一开始就带说明，
+       * 老的一个个补，补完就从这里删掉。名单里留着但已经写了的也会红，
+       * 免得它悄悄过期。
+       *
+       * 2026-10-24：八个内置组件全部补齐，名单清空 —— 从这以后它是
+       * "新组件不许裸奔"的闸门，而不是待办清单。
+       */
+      const PENDING_HELP = [];
+
+      const ids = await (await fetch("/widgets/index.json")).json();
+      const manifests = [];
+      for (const id of ids) {
+        const raw = await (await fetch(`/widgets/${id}/manifest.json`)).json();
+        manifests.push(normalizeManifest(raw, id));
+      }
+
+      eq(manifests.length, ids.length, "每个内置组件都读出了清单");
+
+      const missing = manifests.filter((m) => !hasHelp(m.help)).map((m) => m.id);
+      eq(
+        missing,
+        PENDING_HELP,
+        "没写说明的组件必须正好等于待补名单（新组件不许裸奔）",
+      );
+
+      const stale = manifests.filter((m) => hasHelp(m.help) && PENDING_HELP.includes(m.id));
+      eq(stale.map((m) => m.id), [], "名单里留着但已经写了说明的，要从名单里删掉");
+
+      /*
+       * 变更记录必须能对上当前版本：用户更新完打开说明，第一眼就该看到
+       * "这一版多了什么"。对不上说明作者改了版本号却没记一笔。
+       */
+      const noCurrent = manifests
+        .filter((m) => hasHelp(m.help))
+        .filter((m) => !m.changelog.some((entry) => entry.version === m.version))
+        .map((m) => m.id);
+      eq(noCurrent, [], "写了说明的组件，changelog 里必须有当前版本那一条");
+
+      /*
+       * 配置项的说明不能两头漏：`config` 里有这一项，说明里就必须提到它
+       * （或者 config 自带 `help`）。否则用户看到一个开关，不知道它干什么。
+       */
+      const uncovered = [];
+      for (const manifest of manifests) {
+        if (!hasHelp(manifest.help)) continue;
+        const haystack = manifest.help.sections
+          .flatMap((section) => [section.title, ...section.items])
+          .join(" ")
+          .toLowerCase();
+        for (const field of manifest.config) {
+          if (field.help) continue;
+          const needle = field.label.toLowerCase();
+          if (!haystack.includes(needle)) uncovered.push(`${manifest.id}:${field.key}`);
+        }
+      }
+      eq(uncovered, [], "每个没有自带 help 的配置项，都要在说明里被提到");
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>
