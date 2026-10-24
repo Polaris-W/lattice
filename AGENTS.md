@@ -2,7 +2,7 @@
 
 写给任何要在这个仓库里改代码的人或模型。目标：读完这一页，不用通读源码就能动手，且不会踩已经踩过的坑。
 
-> 约定：这份文件只写**稳定事实**和**判断依据**。具体的坑与解法在 [docs/ROADMAP.md](./docs/ROADMAP.md)，组件协议在 [docs/WIDGET_SPEC.md](./docs/WIDGET_SPEC.md)，取舍论证在 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)。三者与本文冲突时，以代码为准，并顺手修文档。
+> 约定：这份文件只写**稳定事实**和**判断依据**。具体的坑与解法在 [docs/ROADMAP.md](./docs/ROADMAP.md)，组件协议在 [docs/WIDGET_SPEC.md](./docs/WIDGET_SPEC.md)，取舍论证在 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)，代码签名的取舍在 [docs/CODE_SIGNING.md](./docs/CODE_SIGNING.md)。它们与本文冲突时，以代码为准，并顺手修文档。
 
 ---
 
@@ -131,7 +131,7 @@ src-tauri/capabilities/
   default.json            主窗口权限
   widget.json             组件窗口权限（widget-* 标签）
 tests/                    纯逻辑与布局的浏览器断言（tests/*.html，跑在 dev server 上）
-docs/                     架构、组件规范、路线图与踩坑
+docs/                     架构、组件规范、路线图与踩坑、代码签名取舍
 ```
 
 ---

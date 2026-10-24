@@ -247,7 +247,7 @@ npm run tauri:build   # 出安装包：src-tauri/target/release/bundle/nsis
 
 发布出去的是 NSIS 安装包。装之前有两件事值得知道：
 
-- **Windows 会拦一下。** 安装包还没有代码签名证书，第一次运行 SmartScreen 会显示"未知发布者"，要手动点"仍要运行"。这是缺一张证书，不是打包坏了。
+- **Windows 会拦一下。** 安装包还没有代码签名证书，第一次运行 SmartScreen 会显示"未知发布者"，要手动点"仍要运行"。这是缺一张证书，不是打包坏了——为什么这个项目不买那张证书、改走哪条路，写在 [docs/CODE_SIGNING.md](./docs/CODE_SIGNING.md) 里。在那之前，每个 release 都附安装包的 SHA-256，你可以自己核对下到的东西是不是 CI 产出的那一份。
 - **Lattice 会自己更新。** 设置菜单里的 **Check for updates** 去 release 页取 `latest.json`，用编译进二进制的公钥验 minisign 签名，下载、安装、重启。**没有后台轮询**——你不点，它就不查。
 
 组件的更新走的是完全另一条路（目录 JSON + 签名过的 `.lattice` 包），见上面组件商店那一节。两者共用的只有"静态文件 + 签名 + 没有服务端"这个思路，代码路径一行都不重叠。

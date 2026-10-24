@@ -593,7 +593,11 @@ v0.5 让**组件**能分发，v0.6 让**目录**存在，但**平台自己**一�
 
 - [x] **NSIS 安装包** —— `npm run tauri:build` 出 `src-tauri/target/release/bundle/nsis/Lattice_<version>_x64-setup.exe`（本机实测 2.7 MB）+ 同名 `.sig`。和 `dev` 的区别不只是"能双击"：dev 的 exe 路径每次编译都变（所以自启的 `reconcile()` 只在 release 里修，见 v0.3 那条），dev 也不注入 CSP 头。
 - [x] **平台自动更新** —— `tauri-plugin-updater` + GitHub Releases 的 `latest.json` + minisign 验签，设置菜单里多一行 **Check for updates**。密钥：`.keys/updater.key`（私钥，不进仓库）/ `tauri.conf.json` 的 `plugins.updater.pubkey`（公钥）。
-- [ ] **代码签名证书** —— 没有证书，用户第一次运行会被 SmartScreen 拦成"未知发布者"，点"仍要运行"才装得上。这个不是代码问题，是要花钱买 OV/EV 证书（或走 winget / Store 分发）。
+- [ ] **代码签名** —— 没有证书，用户第一次运行会被 SmartScreen 拦成"未知发布者"，点"仍要运行"才装得上。**2026 年重新算过账：不买证书。** 完整论证在 [CODE_SIGNING.md](./CODE_SIGNING.md)，一句话版：EV 从 2024 起不再跳过 SmartScreen、Azure Artifact Signing 的个人开发者只限美/加、OV 一年一续且私钥必须进硬件 —— 付费唯一买到的是"发布者名字从'未知'变成你的"，而 SignPath Foundation 免费给同样的东西。原先这条写的是"要花钱买 OV/EV 证书"，那句话是错的。
+  - [ ] **提 SignPath 申请** —— 免费 OV 级证书。它要求的四条我们全都有了：MIT（`LICENSE`）、公开仓库、`release.yml` 从 `v0.1.0` 起就在 `windows-latest` 上全自动构建、有已发布的 release。审核 1–3 个工作日。批准后 `release.yml` 加一步签名，**必须用 `vars.SIGNPATH_ORGANIZATION_ID != ''` gate 住** —— 没配就照常发未签名的包，别让一次审核卡住整个发布。
+  - [ ] **验一次信任链** —— 有个中文博客说它链到私有根 `SignPath Root CA G2`、不在 Windows 默认信任库里，这和微软"OV-level certificate signing"的措辞对不上（另有第三方指南说是 DigiCert 签发）。三种说法都记在 CODE_SIGNING.md，**没证实，别当事实传**。签出第一个包后按文档里的 `Get-AuthenticodeSignature` + 一台干净 Windows 验一遍再定论。
+  - [ ] **winget manifest** —— 不管签名成不成都要做。winget 下载的包不带 Mark-of-the-Web，用户根本不走"浏览器下载 → SmartScreen 拦"这条路，是免费方案里最接近"真的不弹警告"的一条。代价：每发一版都要改版本号 + 安装包直链 + SHA-256，重新提 PR。Scoop 可以顺带做，成本几乎为零。
+  - [x] **release 附 SHA-256** —— 签名回答"谁做的"，哈希回答"有没有被换过"，未签名期间后者是唯一能给的。写在 `release.yml` 末尾，带 `continue-on-error`（编译完再判红太亏）。**下一次打 tag 才第一次真跑**，在那之前它只是写好了。
 - [ ] **发布流程跑通一次** —— 打 tag → Actions 出草稿 release → 人工发布 → 旧版本点 Check for updates 能升上来。本地已经把"构建 → 签名 → 出安装包"跑通了，CI 那一侧也跑通了（`v0.1.0` 就是 Actions 出来的，2.67 MB 的 NSIS 安装包 + `.sig` + `latest.json`）。
   - **踩到一个坑，记在这里**：`v0.1.0` 发布时勾了 **"Set as a pre-release"**，而 `/releases/latest` 跳过的不只是草稿，还有预发布。于是 release 页面正常、产物都在、`releases/download/v0.1.0/latest.json` 也 200，**唯独更新器唯一会去敲的那个地址**（`releases/latest/download/latest.json`）是 404。
   - **症状比原因难查**：插件对任何非 2xx 都只记日志、最后统一抛 `Error::ReleaseNotFound`（"Could not fetch a valid release JSON from the remote"）—— 跟真断网**是同一句话**。前端原来把它当网络错误，界面上显示"检查你的网络"，而网络完全正常。现在 `describeUpdateError` 先认这一条再认网络（`tests/updater.html` 14 条断言钉着，含"别把 `TargetNotFound` 也归进来"）。

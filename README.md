@@ -238,7 +238,7 @@ Requirements: Node ≥ 20, a Rust toolchain, WebView2 (bundled with Windows 11).
 
 Releases ship as an NSIS installer. Two things are worth knowing before you run one:
 
-- **Windows will warn you.** The installer is not code-signed yet, so SmartScreen shows "unknown publisher" the first time. That is a missing certificate, not a broken build.
+- **Windows will warn you.** The installer is not code-signed yet, so SmartScreen shows "unknown publisher" the first time. That is a missing certificate, not a broken build — [docs/CODE_SIGNING.md](./docs/CODE_SIGNING.md) (Chinese) explains why this project does not buy one and what it does instead. Until then every release carries a SHA-256 of the installer, so you can check that what you downloaded is what CI built.
 - **Lattice updates itself.** Settings → **Check for updates** asks the release page for `latest.json`, verifies the minisign signature against the public key baked into the binary, downloads, installs, and restarts. There is no background polling — it only checks when you ask.
 
 Widgets update through a completely separate path (catalogue JSON + signed `.lattice` packages); see the catalogue section above. The two share the "static files + signatures + no server" idea and nothing else.
