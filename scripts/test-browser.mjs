@@ -21,7 +21,8 @@
  * 给少了截到的是 `running…` —— 那会让"没跑完"看起来像"没有断言"。
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -89,37 +90,55 @@ if (pages.length === 0) {
 
 /** 一页的输出：条数、失败条数、失败明细 */
 function runPage(name) {
-  const result = spawnSync(
-    chrome,
-    [
-      "--headless=new",
-      "--disable-gpu",
-      "--no-sandbox",
-      "--disable-dev-shm-usage",
-      `--virtual-time-budget=${budget}`,
-      "--dump-dom",
-      `${base}/tests/${name}.html`,
-    ],
-    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 60_000 },
-  );
+  /*
+   * 每一页一个**全新的 profile 目录**。
+   *
+   * 不给 `--user-data-dir` 时 Chrome 会用默认 profile，而连续拉起二十几次
+   * 共用同一个 profile 会撞锁：在 CI 上表现是随机的几页 `ETIMEDOUT`，
+   * 本地因为快、又常常复用同一个实例，看不出来。每页一个临时目录最省事。
+   */
+  const profile = mkdtempSync(join(tmpdir(), "lattice-chrome-"));
 
-  if (result.error) return { name, error: String(result.error), total: 0, failed: 0, lines: [] };
+  try {
+    const result = spawnSync(
+      chrome,
+      [
+        "--headless=new",
+        "--disable-gpu",
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-extensions",
+        "--disable-background-networking",
+        `--user-data-dir=${profile}`,
+        `--virtual-time-budget=${budget}`,
+        "--dump-dom",
+        `${base}/tests/${name}.html`,
+      ],
+      { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 120_000 },
+    );
 
-  const html = result.stdout ?? "";
-  const block = html.match(/<pre id="out"[^>]*>([\s\S]*?)<\/pre>/);
-  if (!block) {
-    // 页面根本没渲染出来：多半是 dev server 没起，或者这一页 import 时就抛了
-    return { name, error: "no #out block — is the dev server running?", total: 0, failed: 0, lines: [] };
+    if (result.error) return { name, error: String(result.error), total: 0, failed: 0, lines: [] };
+
+    const html = result.stdout ?? "";
+    const block = html.match(/<pre id="out"[^>]*>([\s\S]*?)<\/pre>/);
+    if (!block) {
+      // 页面根本没渲染出来：多半是 dev server 没起，或者这一页 import 时就抛了
+      return { name, error: "no #out block — is the dev server running?", total: 0, failed: 0, lines: [] };
+    }
+
+    const lines = block[1]
+      .replace(/<[^>]+>/g, "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("PASS ") || line.startsWith("FAIL "));
+
+    const failed = lines.filter((line) => line.startsWith("FAIL "));
+    return { name, error: null, total: lines.length, failed: failed.length, lines: failed };
+  } finally {
+    rmSync(profile, { recursive: true, force: true });
   }
-
-  const lines = block[1]
-    .replace(/<[^>]+>/g, "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("PASS ") || line.startsWith("FAIL "));
-
-  const failed = lines.filter((line) => line.startsWith("FAIL "));
-  return { name, error: null, total: lines.length, failed: failed.length, lines: failed };
 }
 
 console.log(`\n  ${base}   chrome: ${chrome}\n`);
