@@ -10,7 +10,7 @@
 
 **棂 / Lattice** —— 可扩展的 Windows 桌面小组件平台。第三方用纯 HTML/CSS/JS 写组件，平台负责把它们安全地放到桌面上。
 
-当前状态：**v0.5 收尾**（v0.1–v0.5 全部落地）。组件能装（拖文件夹 / 拖 `.lattice` 包 / 从商店装）、能变成真的桌面窗口、能拖能缩能锁，布局与组件数据重启不丢；商店是一份签名过的静态 JSON，带更新、回滚、举报、新权限复核。没有服务端 —— 这是设计，不是还没做，见 [ROADMAP 的 v0.5 四个取舍](./docs/ROADMAP.md#v05-的四个取舍)。
+当前状态：**v0.6 / v0.7 进行中**（v0.1–v0.5 全部落地）。组件能装（拖文件夹 / 拖 `.lattice` 包 / 从商店装）、能变成真的桌面窗口、能拖能缩能锁，布局与组件数据重启不丢；商店是一份签名过的静态 JSON，带更新、回滚、举报、新权限复核；目录已经挂在公网上（GitHub Pages），默认读线上那份，带磁盘缓存和断网兜底；平台自己有 NSIS 安装包和自动更新。没有服务端 —— 这是设计，不是还没做，见 [ROADMAP 的 v0.5 四个取舍](./docs/ROADMAP.md#v05-的四个取舍)。
 
 想先知道"为什么现在是这样"，读 [ROADMAP 的「被推翻的八个决定」](./docs/ROADMAP.md#被推翻的八个决定)——每个决定都写着当初怎么选、被什么撞翻、现在怎么补。
 
@@ -334,7 +334,8 @@ public/widgets/<id>/
 
 - **签名只有一份实现**：`scripts/sign-widget.mjs` 用 Node 的 `crypto.sign(null, bytes, key)`，Rust 侧 `signature.rs` 用 `ed25519-dalek` —— 同一套算法。要换其中一边，先跑 `npm run sign:widget -- --selftest`，它里面有一条两边都认的向量。
 - **`publisher` 写在目录根上**（一处写、所有条目共用），条目级也可以覆盖。`parseCatalogue` 是"条目级优先、没有就继承根级" —— 改格式时两处一起改，只改一边的症状是"每个条目都说没有 publisher key"。
-- **换目录地址**走设置菜单的 `Widget catalogue`（`store.catalogueSource`：`bundled` 或 `{ kind: "remote", url }`）。远端地址只允许 http/https，取目录走 `store_fetch_text`（2MB 上限），取包走 `store_download`（16MB，缓存到 `store-cache/<sha256>.lattice`）。**别在渲染进程里直接 `fetch` 远端目录**：那样 CSP 和出网白名单都得为平台自己开一个口子。
+- **换目录地址**走设置菜单的 `Widget catalogue`（`store.catalogueSource`：`bundled` 或 `{ kind: "url", url }`，默认是官方远端那一份）。远端地址只允许 http/https，取目录走 `store_load_catalogue`（2MB 上限 + 磁盘缓存 + ETag），取包走 `store_download`（16MB，缓存到 `store-cache/<sha256>.lattice`）。**别在渲染进程里直接 `fetch` 远端目录**：那样 CSP 和出网白名单都得为平台自己开一个口子。
+- **目录缓存有四种结局，别只测一种**：200（正常）、304（`If-None-Match` 命中，用缓存文本）、网络失败但有缓存（`stale: true` + 原因，界面上多一行 "Showing an older copy"）、网络失败且没缓存（`Err`，退回内置那份并标 "Offline"）。缓存文件在 `%APPDATA%\com.iron-tom.lattice\catalogue-cache\<sha256(url)[..16]>.json`，删掉它就能回到"第一次装"的状态。纯逻辑在 `catalogue_policy.rs`（有单测），网络那半只能在真机验。
 - 本地钉住的钥匙在 `store.trustedKeys`（`widgetId → key`），跟着 `state.json` 走。要重来一遍"第一次安装"，删掉那个组件再装。
 
 ### 改窗口行为
@@ -491,6 +492,7 @@ public/widgets/<id>/
 - 改了 **`.lattice` 打包 / 安装**：`npm run pack:widget -- examples/counter`，产物在 `dist-packs/`（已 gitignore）。打包要验**确定性**：连打两次，`sha256` 必须一样。解包侧用壳子跑 `package_policy.rs` + `package.rs` 的 15 条（含篡改 CRC、路径穿越、绝对路径），装完看 `%APPDATA%\com.iron-tom.lattice\widgets\<id>\` 里是不是原样。交叉验一下更稳：Node 打的包用 Python 的 `zipfile.ZipFile(...).testzip()` 读一遍。
 - 改了**商店 / 签名 / 更新**：
   - 纯逻辑：`tests/semver.html`（44 条）+ `tests/catalogue.html`（43 条）+ `tests/store-ui.html`（17 条，挂的是真的 `LibraryPanel`）。前两个是纯函数，第三个验的是"接上 React 之后还对不对"（按钮接没接上回调、文案用的是不是过滤后的数据）。
+  - 目录缓存 / 断网兜底 / 默认源：`tests/catalogue-cache.html`（20 条，含 `persist` 的 v0 → v1 迁移和那条 "Showing an older copy" 的横幅）。改默认目录源、改 `CatalogueSnapshot` 的字段、抬 `STATE_VERSION`，都先跑它 —— 迁移写错的表现是"老用户看不到官方目录"，没有任何报错。
   - 签名两侧：`npm run sign:widget -- --selftest`（一条 Node 自己签、自己验的向量）；Rust 侧那条向量是**用 Node 生成后贴进去的**，别凭印象写。
   - 端到端只有真机：`npm run store:index` 之后起 `tauri:dev`，在设置里把目录切成 Bundled，装一个 → 改版本再装一次（看 `widget-backups/` 出现）→ 回滚（看两个版本互换）→ 举报（看 `%APPDATA%\com.iron-tom.lattice\reports\<id>-<时间戳>.json`）。**验签失败的三条要各自单独造**：改目录里的 `sha256`（摘要不符）、改包里的一个字节（同上）、把 `publisher.key` 换成另一把（签名不符）。三条报的错必须**不一样**，否则等于没验。
   - 界面上"该不该装"的判断全在 `planInstall` 里，别在 JSX 里再写一份 —— 两份判断的后果是"卡片说能装、点了报错"。

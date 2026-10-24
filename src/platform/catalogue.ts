@@ -6,12 +6,14 @@
  *
  * # 两条路
  *
- * - **内置目录**：`<应用源>/store/registry.json`，包也在同一个目录下。
- *   走浏览器 `fetch`（同源，没有 CORS 问题），拿到字节后 base64 送进 Rust。
- * - **远端目录**：用户自己填的地址。**必须走 Rust**：主窗口 `fetch` 一个
- *   第三方域名会被 CORS 挡掉，而目录作者没理由为了 Lattice 去配响应头。
- *   `store_fetch_text` / `store_download` 用 WinHTTP 取，顺带把"只 http(s)、
- *   只 GET、有大小上限、不跟重定向"这套形状约束落在平台侧。
+ * - **远端目录**（默认）：`store_load_catalogue` 走 Rust 的 WinHTTP，带磁盘缓存
+ *   和 ETag。**必须走 Rust**：主窗口 `fetch` 一个第三方域名会被 CORS 挡掉，
+ *   而目录作者没理由为了 Lattice 去配响应头。
+ * - **内置目录**：`<应用源>/store/registry.json`，包也在同一个目录下，是随应用
+ *   一起发的演示目录。走浏览器 `fetch`（同源），拿到字节后 base64 送进 Rust。
+ *
+ * 远端读不到时**退回内置那份**，但界面上必须写明"这是随应用带的那份" ——
+ * 悄悄换一份内容给用户看，比空白更糟。
  *
  * 两条路最后都汇到 `store_install`：**校验只在 Rust 里做一次**。
  * 前端不做验签 —— 前端跑的是不可信代码的宿主页，让它"顺便校验一下"
@@ -28,14 +30,39 @@ import {
 import { appBaseUrl, isTauri } from "../runtime/registry";
 import type { CatalogueSource } from "./store";
 
+/**
+ * 这一份目录是"怎么读到的"。
+ *
+ * `stale` 和 `fallback` 都会让界面多一行说明。两者的区别是**内容来自谁**：
+ * 前者还是那个远端目录（只是旧了），后者已经换成内置那份了 —— 里面的包
+ * 是另一把钥匙签的，装的时候会多一次确认。
+ */
+export interface CatalogueNotice {
+  kind: "stale" | "fallback";
+  message: string;
+}
+
 export interface CatalogueSnapshot {
   catalogue: Catalogue | null;
   /** 丢弃了哪些条目、为什么 —— 界面折叠显示，不刷屏 */
   warnings: string[];
+  /** 一个字都没有可显示的时候才有值 */
   error: string | null;
   /** 目录地址，界面上显示"从哪儿读的" */
   origin: string;
   at: number;
+  /** 读到了，但不是最新那份 —— 界面要说出来 */
+  notice: CatalogueNotice | null;
+}
+
+/** Rust 那边 `store_load_catalogue` 的返回 */
+interface CatalogueText {
+  text: string;
+  /** unix 秒 */
+  at: number;
+  stale: boolean;
+  error: string | null;
+  notModified: boolean;
 }
 
 export interface StoreInstallResult {
@@ -66,70 +93,103 @@ function dirOf(url: string): string {
   return cut >= 0 ? url.slice(0, cut + 1) : url;
 }
 
-/** 目录里每个条目当前该做什么，界面直接照这个画 */
-export type EntryState =
-  | { kind: "install"; pkg: CataloguePackage }
-  | { kind: "update"; pkg: CataloguePackage; from: string }
-  | { kind: "current"; pkg: CataloguePackage }
-  | { kind: "unsigned"; pkg: CataloguePackage }
-  | { kind: "untrusted"; pkg: CataloguePackage; pinned: string; offered: string };
+/**
+ * "3 小时前" 这种人话。
+ *
+ * 不引日期库：这里只有四档，而且**故意不精确** —— 用户要判断的是"这份东西
+ * 是不是我刚才看的"，不需要知道是 3 小时 12 分还是 3 小时 47 分。
+ */
+export function describeAge(atSeconds: number, now = Date.now()): string {
+  const seconds = Math.max(0, Math.round(now / 1000 - atSeconds));
+  if (seconds < 90) return "just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${minutes} minutes ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 36) return `${hours} hours ago`;
+  const days = Math.round(hours / 24);
+  return `${days} days ago`;
+}
 
-export async function loadCatalogue(source: CatalogueSource): Promise<CatalogueSnapshot> {
-  const at = Date.now();
-  const bundled = source.kind === "bundled" || !source.url.trim();
-  const url = bundled ? `${appBaseUrl()}store/registry.json` : source.url.trim();
+function empty(error: string, origin: string, at: number): CatalogueSnapshot {
+  return { catalogue: null, warnings: [], error, origin, at, notice: null };
+}
 
-  let text: string;
-  try {
-    if (bundled) {
-      const response = await fetch(url, { cache: "no-store" });
-      if (!response.ok) {
-        return {
-          catalogue: null,
-          warnings: [],
-          error: `the bundled catalogue is missing (HTTP ${response.status}) — run npm run store:index`,
-          origin: url,
-          at,
-        };
-      }
-      text = await response.text();
-    } else {
-      if (!isTauri()) {
-        return {
-          catalogue: null,
-          warnings: [],
-          error: "a remote catalogue needs the desktop app — run npm run tauri:dev",
-          origin: url,
-          at,
-        };
-      }
-      text = await invoke<string>("store_fetch_text", { url });
-    }
-  } catch (error) {
-    return { catalogue: null, warnings: [], error: String(error), origin: url, at };
-  }
-
+/** 把取回来的文本变成快照。解析失败时 `error` 有值、`catalogue` 是 null */
+function read(text: string, origin: string, at: number, notice: CatalogueNotice | null): CatalogueSnapshot {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
   } catch (error) {
-    return {
-      catalogue: null,
-      warnings: [],
-      error: `the catalogue is not valid JSON: ${String(error)}`,
-      origin: url,
-      at,
-    };
+    return empty(`the catalogue is not valid JSON: ${String(error)}`, origin, at);
   }
 
-  const parsed = parseCatalogue(raw, dirOf(url));
+  const parsed = parseCatalogue(raw, dirOf(origin));
+  if (!parsed.catalogue) {
+    return empty(parsed.warnings[0] ?? "the catalogue could not be read", origin, at);
+  }
   return {
     catalogue: parsed.catalogue,
     warnings: parsed.warnings,
-    error: parsed.catalogue ? null : parsed.warnings[0] ?? "the catalogue could not be read",
-    origin: url,
+    error: null,
+    origin,
     at,
+    notice,
   };
+}
+
+/** 取随应用一起发的那份目录。同源，不走 Rust，也没有缓存可言 */
+async function readBundled(url: string): Promise<{ text: string } | { error: string }> {
+  try {
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) {
+      return { error: `the bundled catalogue is missing (HTTP ${response.status}) — run npm run store:index` };
+    }
+    return { text: await response.text() };
+  } catch (error) {
+    return { error: String(error) };
+  }
+}
+
+export async function loadCatalogue(source: CatalogueSource): Promise<CatalogueSnapshot> {
+  const at = Date.now();
+  const bundledUrl = `${appBaseUrl()}store/registry.json`;
+  const useBundled = source.kind === "bundled" || !source.url.trim();
+
+  if (useBundled) {
+    const bundled = await readBundled(bundledUrl);
+    return "error" in bundled ? empty(bundled.error, bundledUrl, at) : read(bundled.text, bundledUrl, at, null);
+  }
+
+  const url = source.url.trim();
+  if (!isTauri()) {
+    return empty("a remote catalogue needs the desktop app — run npm run tauri:dev", url, at);
+  }
+
+  let fetched: CatalogueText;
+  try {
+    fetched = await invoke<CatalogueText>("store_load_catalogue", { url });
+  } catch (error) {
+    /*
+     * 远端彻底读不到：Rust 那边连缓存都没有（第一次装、或者缓存被清过）。
+     * 这时候退回内置那份，**但要说出来** —— 那份里的包是另一把钥匙签的，
+     * 用户待会儿看到"发布者钥匙变了"的确认，得有前因后果。
+     */
+    const fallback = await readBundled(bundledUrl);
+    if ("error" in fallback) return empty(String(error), url, at);
+    return read(fallback.text, bundledUrl, at, {
+      kind: "fallback",
+      message: `${url} could not be reached (${String(error)}). This is the catalogue that ships with the app.`,
+    });
+  }
+
+  const notice: CatalogueNotice | null = fetched.stale
+    ? {
+        kind: "stale",
+        message: `${url} could not be reached (${fetched.error ?? "no reason given"}). Showing the copy from ${describeAge(fetched.at)}.`,
+      }
+    : null;
+
+  return read(fetched.text, url, at, notice);
 }
 
 function toBase64(bytes: Uint8Array): string {

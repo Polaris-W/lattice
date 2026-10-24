@@ -110,13 +110,32 @@ export type ThemeMode = "light" | "dark" | "system";
 /**
  * 目录从哪儿来。
  *
- * `bundled` 是跟着应用一起发的 `public/store/registry.json` —— 开箱就有东西可看，
- * 不需要任何服务端。`url` 是用户自己填的地址（自己搭的静态托管、别人的目录）。
+ * `bundled` 是跟着应用一起发的 `public/store/registry.json` —— 断网时的兜底，
+ * 用的是仓库里那把公开的演示钥匙。`url` 是真正的目录：默认指向官方那一份，
+ * 用户也可以填自己搭的静态托管。
+ *
  * 空 url 一律退回 `bundled`，不要出现"地址是空的但模式是 url"这种状态。
  */
 export interface CatalogueSource {
   kind: "bundled" | "url";
   url: string;
+}
+
+/**
+ * 官方目录的地址。
+ *
+ * 它就是一个静态文件（GitHub Pages），没有服务端。**默认读这一份**：
+ * 内置那份是演示目录、用公开的 `dev-publisher.key` 签，和线上这份的发布者
+ * 钥匙不是同一把 —— 让用户一上手就读线上，就不会在切源时连着吃几个
+ * "发布者钥匙变了"的确认。
+ */
+export const OFFICIAL_CATALOGUE_URL = "https://unraveltao.github.io/lattice-registry/registry.json";
+
+export const OFFICIAL_CATALOGUE_SOURCE: CatalogueSource = { kind: "url", url: OFFICIAL_CATALOGUE_URL };
+
+/** 这个地址是不是官方目录（设置里要显示成 "Official" 而不是一长串 URL） */
+export function isOfficialCatalogue(url: string): boolean {
+  return url.trim().replace(/\/+$/, "") === OFFICIAL_CATALOGUE_URL;
 }
 
 /** 用户给一个组件打的星。本地记录，随举报一起导出（平台没有服务端） */
@@ -334,6 +353,29 @@ export function snap(value: number, enabled: boolean): number {
   return enabled ? Math.round(value / GRID) * GRID : Math.round(value);
 }
 
+/**
+ * 状态版本。改默认值、改字段含义时抬它，并在 `migrateState` 里补一条迁移。
+ *
+ * 1：目录的默认源从"内置演示目录"改成"官方远端目录"。
+ *    不迁的话，这个改动只对新装的机器生效 —— 已经用过的人会一直停在演示目录上。
+ */
+const STATE_VERSION = 1;
+
+export function migrateState(persisted: unknown, version: number): Record<string, unknown> {
+  const state = (persisted ?? {}) as Record<string, unknown>;
+
+  if (version < 1) {
+    const source = state.catalogueSource as CatalogueSource | undefined;
+    // 旧默认就是"内置 + 空地址"，它和"用户主动选了 Bundled"在盘上长得一样，
+    // 分不开，所以一起迁到官方目录。真想留在内置那份的，设置里还能选回去
+    if (!source || (source.kind === "bundled" && !String(source.url ?? "").trim())) {
+      return { ...state, catalogueSource: { ...OFFICIAL_CATALOGUE_SOURCE } };
+    }
+  }
+
+  return state;
+}
+
 export const useLattice = create<LatticeState>()(
   persist(
     (set) => ({
@@ -352,7 +394,7 @@ export const useLattice = create<LatticeState>()(
       inspectorOpen: true,
       lastClosed: null,
       paused: false,
-      catalogueSource: { kind: "bundled", url: "" },
+      catalogueSource: { ...OFFICIAL_CATALOGUE_SOURCE },
       trustedKeys: {},
       blockedKeys: [],
       ratings: {},
@@ -597,6 +639,8 @@ export const useLattice = create<LatticeState>()(
     {
       name: STATE_FILE,
       storage: createJSONStorage(() => platformStorage),
+      version: STATE_VERSION,
+      migrate: migrateState,
       onRehydrateStorage: () => (_state, error) => {
         if (error) console.error("Failed to hydrate platform state", error);
         hydrated = true;

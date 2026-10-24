@@ -26,6 +26,14 @@
 //! `store_download` 按内容 hash 命名存进 `store-cache/`，`store_install`
 //! 直接读那个文件 —— 顺带得到一个"同一个包只下载一次"的缓存。
 //! 缓存**不信任**：安装时仍然重新算一遍摘要，缓存里的文件被改过一样拦得住。
+//!
+//! # 目录也有缓存，理由不一样
+//!
+//! 包缓存是为了省流量，目录缓存是为了**别在断网时变成一片空白**：
+//! 每次成功取到 `registry.json` 都留一份到 `catalogue-cache/`，取不到时拿它
+//! 顶上，并把"这是 X 时间之前那份"和失败原因一起交给界面。顺手用 ETag 做
+//! 条件请求，内容没变时服务器只回 304。纯逻辑（编解码、ETag 挑拣、失败文案）
+//! 在 `catalogue_policy.rs`，那边能跑单测。
 
 use std::fs;
 use std::path::PathBuf;
@@ -33,6 +41,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
+use crate::catalogue_policy::{self, CachedCatalogue};
 use crate::network_policy::parse_url;
 use crate::signature_policy::{base64_decode, safe_id};
 
@@ -42,6 +51,8 @@ pub(crate) const MAX_CATALOGUE_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const MAX_PACKAGE_BYTES: usize = 16 * 1024 * 1024;
 /// 举报里正文的上限。这不是论坛，一句话说清问题就够了
 const MAX_REPORT_NOTE: usize = 4000;
+/// 目录缓存放哪个子目录
+const CATALOGUE_CACHE_DIR: &str = "catalogue-cache";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,6 +72,20 @@ pub struct StoreInstall {
     pub previous_version: Option<String>,
     /// 有没有留下可回滚的备份
     pub backed_up: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogueText {
+    pub text: String,
+    /// 这份文本是什么时候取到的（unix 秒）。`stale` 时是缓存写下的时间
+    pub at: u64,
+    /// true = 网络没通，这是上次成功取到的那份
+    pub stale: bool,
+    /// 没通的原因（`stale` 时才填）。界面直接显示，不做二次解释
+    pub error: Option<String>,
+    /// 304 命中：内容没变，这次一个字节的正文都没传
+    pub not_modified: bool,
 }
 
 fn cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -83,29 +108,150 @@ fn reports_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// 取一段文本（目录 JSON）。只 GET、只 http/https、上限 2MB。
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn catalogue_cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let base = app.path().app_data_dir().map_err(|error| error.to_string())?;
+    let dir = base.join(CATALOGUE_CACHE_DIR);
+    if !dir.exists() {
+        fs::create_dir_all(&dir)
+            .map_err(|error| format!("could not create the catalogue cache: {error}"))?;
+    }
+    Ok(dir)
+}
+
+fn read_catalogue_cache(app: &AppHandle, url: &str) -> Option<CachedCatalogue> {
+    let path = catalogue_cache_dir(app)
+        .ok()?
+        .join(catalogue_policy::cache_file_name(url));
+    let raw = fs::read_to_string(path).ok()?;
+    catalogue_policy::decode(&raw, url)
+}
+
+fn write_catalogue_cache(app: &AppHandle, cache: &CachedCatalogue) {
+    let written = (|| -> Result<(), String> {
+        let path = catalogue_cache_dir(app)?.join(catalogue_policy::cache_file_name(&cache.url));
+
+        // 内容没变就不重写。每次启动都写一遍等于天天磨损一次磁盘，也会让文件的
+        // 修改时间失去意义 —— 将来排查"这份缓存到底是什么时候的"要靠它
+        if let Ok(raw) = fs::read_to_string(&path) {
+            if let Some(previous) = catalogue_policy::decode(&raw, &cache.url) {
+                if previous.text == cache.text && previous.etag == cache.etag {
+                    return Ok(());
+                }
+            }
+        }
+
+        let body = catalogue_policy::encode(cache)
+            .ok_or_else(|| "the catalogue is too large to cache".to_string())?;
+        // 先写临时文件再改名：缓存要么是完整的一份，要么不存在
+        let temp = path.with_extension("json.tmp");
+        fs::write(&temp, body).map_err(|error| format!("could not write the catalogue cache: {error}"))?;
+        fs::rename(&temp, &path)
+            .map_err(|error| format!("could not finish the catalogue cache: {error}"))?;
+        Ok(())
+    })();
+
+    // 缓存是保险，不是前提：写不进去只记一笔，这次读目录照常返回
+    if let Err(error) = written {
+        eprintln!("[lattice] {error}");
+    }
+}
+
+/// 读目录。带磁盘缓存和条件请求。
+///
+/// 四种结局，界面要能分开说：
+///
+/// | 结局 | 返回 | 界面 |
+/// | --- | --- | --- |
+/// | 200 | 新文本，`stale: false` | 正常 |
+/// | 304 | 缓存文本，`not_modified: true` | 正常（内容没变） |
+/// | 网络失败 + 有缓存 | 缓存文本，`stale: true` + 原因 | "这是 X 之前那份" |
+/// | 网络失败 + 没缓存 | `Err` | "读不到 + 重试" |
+///
+/// 304 那条能省下的其实不多（目录才几 KB），但它同时是"内容真的没变"的
+/// 证据 —— 没有它，每次启动都要重新解析一份没变的 JSON。
 #[tauri::command]
-pub async fn store_fetch_text(url: String) -> Result<String, String> {
+pub async fn store_load_catalogue(app: AppHandle, url: String) -> Result<CatalogueText, String> {
     let target = parse_url(&url)?;
+    let cached = read_catalogue_cache(&app, &url);
+
+    // 有 ETag 就做条件请求。没有就普通 GET —— 服务器不回 ETag 的目录
+    // （自己搭的静态托管常见）也照常工作，只是每次都全量
+    let request_headers: Vec<(String, String)> = match cached.as_ref().and_then(|item| item.etag.clone()) {
+        Some(etag) => vec![("If-None-Match".to_string(), etag)],
+        None => Vec::new(),
+    };
+
     let fetched = tauri::async_runtime::spawn_blocking(move || {
-        crate::network::send(&target, "GET", &[], None, MAX_CATALOGUE_BYTES)
+        crate::network::send(&target, "GET", &request_headers, None, MAX_CATALOGUE_BYTES)
     })
     .await
-    .map_err(|error| format!("the catalogue request failed: {error}"))??;
+    .map_err(|error| format!("the catalogue request failed: {error}"))?;
 
-    if !fetched.ok {
-        return Err(format!(
-            "the catalogue server answered {} — check the address",
-            fetched.status
-        ));
-    }
-    if fetched.truncated {
-        return Err(format!(
+    let now = now_secs();
+
+    let failure = match fetched {
+        Err(error) => Some(error),
+        Ok(response) if response.status == 304 => match cached.as_ref() {
+            Some(cache) => {
+                return Ok(CatalogueText {
+                    text: cache.text.clone(),
+                    at: now,
+                    stale: false,
+                    error: None,
+                    not_modified: true,
+                })
+            }
+            // 没带 If-None-Match 就不会有 304。真出现了说明缓存刚被删掉，
+            // 当成一次失败重来，别返回一段空文本
+            None => Some("the server said \"not modified\" but nothing was cached".to_string()),
+        },
+        Ok(response) if !response.ok => Some(catalogue_policy::failure_message(response.status)),
+        Ok(response) if response.truncated => Some(format!(
             "the catalogue is larger than {} KB",
             MAX_CATALOGUE_BYTES / 1024
-        ));
+        )),
+        Ok(response) => {
+            let text = String::from_utf8_lossy(&response.body).to_string();
+            let etag = catalogue_policy::etag_from(&response.headers);
+            write_catalogue_cache(
+                &app,
+                &CachedCatalogue {
+                    url: url.clone(),
+                    at: now,
+                    etag,
+                    text: text.clone(),
+                },
+            );
+            return Ok(CatalogueText {
+                text,
+                at: now,
+                stale: false,
+                error: None,
+                not_modified: false,
+            });
+        }
+    };
+
+    let message = failure.unwrap_or_else(|| "the catalogue could not be read".to_string());
+    match cached {
+        // 有旧的就顶上，但把原因一起带出去 —— 界面必须说"这是旧的"，
+        // 装作一切正常比空白更糟
+        Some(cache) => Ok(CatalogueText {
+            text: cache.text,
+            at: cache.at,
+            stale: true,
+            error: Some(message),
+            not_modified: false,
+        }),
+        None => Err(message),
     }
-    Ok(String::from_utf8_lossy(&fetched.body).to_string())
 }
 
 /// 下载一个包到缓存，返回路径与摘要。

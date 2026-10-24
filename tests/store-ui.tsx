@@ -127,6 +127,7 @@ const store: StoreBinding = {
     error: null,
     origin: "http://x/store/registry.json",
     at: Date.now(),
+    notice: null,
   },
   busy: false,
   busyId: null,

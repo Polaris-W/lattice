@@ -12,6 +12,7 @@
 pub mod autostart;
 pub mod autostart_policy;
 pub mod backup;
+pub mod catalogue_policy;
 pub mod crash;
 pub mod crash_policy;
 pub mod csp;
@@ -127,7 +128,7 @@ pub fn run() {
             autostart::autostart_get,
             autostart::autostart_set,
             network::network_fetch,
-            store::store_fetch_text,
+            store::store_load_catalogue,
             store::store_download,
             store::store_install,
             store::store_report,

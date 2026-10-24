@@ -36,7 +36,7 @@ v0.4 is about the people writing widgets rather than the people using them:
 
 v0.5 is about **distribution**. There is no server, so the answer is not "build a store backend" but "the catalogue is a static JSON file and the packages are signed":
 
-- **A widget catalogue** — one `registry.json` plus a set of `.lattice` packages, bundled with the app; drop the whole folder on any static host and point the app at it from settings
+- **A widget catalogue** — one `registry.json` plus a set of `.lattice` packages. The app reads the official catalogue by default (a static file on GitHub Pages) and the source is switchable in settings; the copy bundled with the app is only an **offline fallback**, and the UI says so when it is used
 - **Three checks, in order** — the package digest matches the catalogue → its ed25519 signature verifies against `publisher.key` → that key equals **the one pinned locally the first time this widget was installed**. The first two catch corruption and forgery; only the third catches "start a new key and swap the catalogue too". A key change needs the user's explicit nod, with both fingerprints on screen
 - **Update and roll back** — the old version is copied to a single backup slot before an overwrite, and the card grows a `Back to x.y.z`. Rolling back **swaps** the two directories rather than copying, so the button works in both directions
 - **Ratings and reports** — five stars, plus a report written to a local file. With no server there is no "submitted": the dialog tells you where the file is and you send it to the author yourself
@@ -254,9 +254,9 @@ src/
   platform/          Platform shell: canvas, library, store, inspector, settings, autostart, state
   runtime/           Widget runtime: manifest, registry, RPC bridge, scheduler, screen fit, semver, catalogue
 public/widgets/      Official widget packages (only "available" until installed)
-public/store/        Bundled catalogue (generated at build time: registry.json + signed packages)
+public/store/        Offline-fallback catalogue (generated at build time: registry.json + signed packages)
 examples/counter/    Third-party sample (drag it in to install)
-tests/               Self-check pages: 19 pages, 445 assertions, all in the browser
+tests/               Self-check pages: 20 pages, 465 assertions, all in the browser
 scripts/             Build helpers (widget index, store index, signing, toolchain PATH, diagnostics injection)
 src-tauri/
   src/widgets.rs     Widget scanning / install / uninstall
@@ -265,7 +265,8 @@ src-tauri/
   src/network.rs     Egress proxy over WinHTTP: permission → host whitelist → shape
   src/signature.rs   ed25519 verification + sha256 (the first two checks when installing)
   src/backup.rs      Backup before an overwrite and rollback (a swap, one generation only)
-  src/store.rs       Store commands: fetch catalogue, download package, verify + install, write report
+  src/store.rs       Store commands: load catalogue (cached, ETag), download package, verify + install, write report
+  src/catalogue_policy.rs  Catalogue cache format: file name, encode/decode, ETag picking, failure text
   src/crash.rs       ProcessFailed handling: classify, count, reload, give up, tell the user
   src/watch.rs       Widget directory watching (ReadDirectoryChangesW, debounced)
   src/autostart.rs   HKCU Run entry: read, write, repair a stale path

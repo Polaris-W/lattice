@@ -18,10 +18,19 @@ import { invoke } from "@tauri-apps/api/core";
 import { isStaleTarget, readAutostart, writeAutostart, type AutostartState } from "./autostart";
 import { Glyph, ICON, ThemeGlyph } from "./icons";
 import { keyFingerprint } from "../runtime/catalogue";
-import { useLattice, type ThemeMode } from "./store";
+import { useLattice, isOfficialCatalogue, OFFICIAL_CATALOGUE_SOURCE, OFFICIAL_CATALOGUE_URL, type ThemeMode } from "./store";
 import { appVersion, checkForUpdate, installUpdate, type UpdateState } from "./updater";
 
 type View = "menu" | "signin" | "profile" | "catalogue";
+
+/**
+ * 设置里"目录从哪儿来"的三档。
+ *
+ * 和 `CatalogueSource` 不是一回事：那边只有"内置 / 一个地址"。官方目录本身
+ * 也是 `{ kind: "url" }`，但用户看到的应该是"官方"，而不是一长串 URL。
+ * 两边在保存时换算，界面上永远只出现这三档。
+ */
+type CatalogueDraftKind = "official" | "url" | "bundled";
 
 const THEME_OPTIONS: Array<{ value: ThemeMode; label: string }> = [
   { value: "light", label: "Light" },
@@ -86,7 +95,7 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
   const [autostartBusy, setAutostartBusy] = useState(false);
   const [autostartError, setAutostartError] = useState<string | null>(null);
   /** 目录来源的草稿。保存之前不动真状态 —— 边打字边生效会一直发请求 */
-  const [draftKind, setDraftKind] = useState<"bundled" | "url">("bundled");
+  const [draftKind, setDraftKind] = useState<CatalogueDraftKind>("official");
   const [draftUrl, setDraftUrl] = useState("");
   /**
    * 平台自身的更新状态。**不进 store**：它是一次性的、跟这台机器这一次
@@ -114,13 +123,20 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
   }, [profile]);
 
   const startCatalogue = useCallback(() => {
-    setDraftKind(catalogueSource.kind);
+    // 官方目录在 store 里也是 url，但这一页要显示成"官方"那一档
+    setDraftKind(isOfficialCatalogue(catalogueSource.url) ? "official" : catalogueSource.kind);
     setDraftUrl(catalogueSource.url);
     setView("catalogue");
   }, [catalogueSource]);
 
   const saveCatalogue = useCallback(() => {
-    setCatalogueSource({ kind: draftKind, url: draftKind === "url" ? draftUrl : "" });
+    setCatalogueSource(
+      draftKind === "bundled"
+        ? { kind: "bundled", url: "" }
+        : draftKind === "official"
+          ? { ...OFFICIAL_CATALOGUE_SOURCE }
+          : { kind: "url", url: draftUrl },
+    );
     setView("menu");
   }, [draftKind, draftUrl, setCatalogueSource]);
 
@@ -418,7 +434,11 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
                   <Glyph d={ICON.store} />
                   <span className="lattice-menu-label">Widget catalogue</span>
                   <span className="lattice-menu-note">
-                    {catalogueSource.kind === "bundled" ? "Bundled" : "Custom URL"}
+                    {isOfficialCatalogue(catalogueSource.url)
+                      ? "Official"
+                      : catalogueSource.kind === "bundled"
+                        ? "Bundled"
+                        : "Custom URL"}
                   </span>
                   <Glyph d={ICON.chevron} size={13} />
                 </button>
@@ -571,10 +591,10 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
                 <div className="lattice-segmented is-full">
                   <button
                     type="button"
-                    className={`lattice-segment${draftKind === "bundled" ? " is-active" : ""}`}
-                    onClick={() => setDraftKind("bundled")}
+                    className={`lattice-segment${draftKind === "official" ? " is-active" : ""}`}
+                    onClick={() => setDraftKind("official")}
                   >
-                    Bundled
+                    Official
                   </button>
                   <button
                     type="button"
@@ -583,23 +603,31 @@ export function SettingsMenu({ installedCount, placementCount, onQuit }: Setting
                   >
                     Custom URL
                   </button>
+                  <button
+                    type="button"
+                    className={`lattice-segment${draftKind === "bundled" ? " is-active" : ""}`}
+                    onClick={() => setDraftKind("bundled")}
+                  >
+                    Bundled
+                  </button>
                 </div>
 
                 <label className="lattice-textfield">
                   <span>Catalogue address</span>
                   <input
-                    value={draftUrl}
+                    value={draftKind === "official" ? OFFICIAL_CATALOGUE_URL : draftUrl}
                     onChange={(event) => setDraftUrl(event.target.value)}
                     placeholder="https://example.com/lattice/registry.json"
-                    disabled={draftKind === "bundled"}
+                    disabled={draftKind !== "url"}
                     spellCheck={false}
                     autoComplete="off"
                   />
                 </label>
 
                 <p className="lattice-account-hint">
-                  A plain JSON file — any static host works, no server needed. Packages are verified
-                  against the publisher key in that file before they are installed.
+                  {draftKind === "bundled"
+                    ? "The catalogue that ships with the app — a demo for when the network is down. Its packages are signed with a public key, so switching back to a real catalogue later will ask you to confirm a different publisher."
+                    : "A plain JSON file — any static host works, no server needed. Packages are verified against the publisher key in that file before they are installed."}
                 </p>
 
                 {/*

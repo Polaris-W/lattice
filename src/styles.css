@@ -672,6 +672,19 @@ button {
 }
 
 /*
+ * 目录是旧的 / 退回了内置那份。
+ *
+ * 用强调色而不是错误色：内容还能用，只是"不是最新"。做成红色会让人以为
+ * 商店坏了，而真正坏了的情况（一个字都读不到）走的是上面那个 error 分支。
+ * 实线边框和虚线区分开 —— 虚线在这套界面里一直表示"空的/占位"。
+ */
+.lattice-lib-note.is-stale {
+  border-style: solid;
+  border-color: var(--lattice-accent);
+  background: var(--lattice-accent-soft);
+}
+
+/*
  * 组件库头部：标题 + 计数贴左，右边的图标按钮成组靠右。
  * 以前是靠给计数加 margin-right:auto 把按钮顶过去，现在右侧是两个按钮
  * 一组（打开目录 + 收起），交给 .lattice-panel-actions 统一顶。

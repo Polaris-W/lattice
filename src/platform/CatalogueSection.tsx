@@ -119,6 +119,18 @@ export function CatalogueSection({ store, tokens, installedIds }: CatalogueSecti
         </button>
       </h3>
 
+      {snapshot.notice && (
+        <div className="lattice-lib-note is-stale">
+          <p className="lattice-lib-note-title">
+            {snapshot.notice.kind === "stale" ? "Showing an older copy" : "Offline"}
+          </p>
+          <p className="lattice-hint">{snapshot.notice.message}</p>
+          <button type="button" className="lattice-btn is-small" onClick={store.onRefresh}>
+            Try again
+          </button>
+        </div>
+      )}
+
       {snapshot.warnings.length > 0 && (
         <details className="lattice-store-warnings">
           <summary>{snapshot.warnings.length} entries were skipped</summary>

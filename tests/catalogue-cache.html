@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>catalogue cache test</title>
+    <style>
+      body {
+        margin: 0;
+        background: #0d0d10;
+        color: #e9e8e3;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 14px 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+      pre {
+        margin: 0;
+      }
+      /* 目录段自己是一列，给它一块固定的舞台，别和输出叠在一起 */
+      #stage {
+        position: fixed;
+        right: 16px;
+        top: 16px;
+        bottom: 16px;
+        width: 300px;
+        display: flex;
+        overflow: hidden;
+      }
+      #stage > section {
+        flex: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <div id="stage"></div>
+    <script type="module" src="/tests/catalogue-cache.tsx"></script>
+  </body>
+</html>
