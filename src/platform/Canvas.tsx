@@ -5,8 +5,10 @@
  * 拖拽、缩放、层级、穿透都在这里落到 Placement 上。
  */
 
+import { useCallback, useRef, useState } from "react";
 import { useLattice } from "./store";
 import { WidgetFrame } from "./WidgetFrame";
+import type { AlignResult } from "../runtime/align-guides";
 import type { WidgetRecord } from "../runtime/registry";
 
 interface CanvasProps {
@@ -22,8 +24,30 @@ export function Canvas({ records, installedIds, onDropWidget }: CanvasProps) {
   const select = useLattice((state) => state.select);
   const hasInstalled = installedIds.size > 0;
 
+  /*
+   * 对齐参考线只活在这一层。
+   *
+   * 不放 store 里有两个原因：它每帧都变（store 一变就整份 `state.json` 落盘，
+   * 拖一次组件等于写几百次盘），而且它不属于"用户摆好的布局" —— 松手就该没了。
+   */
+  const [guides, setGuides] = useState<AlignResult | null>(null);
+  const onGuides = useCallback((next: AlignResult | null) => setGuides(next), []);
+  const canvasRef = useRef<HTMLDivElement>(null);
+
+  /*
+   * 参考线的长度要覆盖**整块内容**，不是一屏。
+   *
+   * 画布是 `overflow: auto` 的，绝对定位的子元素以内容左上角为原点：写
+   * `bottom: 0` 只能画到视口底边，往下滚之后线就跑到上面去了。所以按
+   * `scrollHeight` 给长度。读 ref 是在渲染里做的一次性测量 —— 线的出现本来
+   * 就伴随着一次 setState，不会因此多渲染一轮。
+   */
+  const spanW = canvasRef.current?.scrollWidth ?? 0;
+  const spanH = canvasRef.current?.scrollHeight ?? 0;
+
   return (
     <div
+      ref={canvasRef}
       className={`lattice-canvas${snapToGrid ? " has-grid" : ""}`}
       onPointerDown={(event) => {
         if (event.target === event.currentTarget) select(null);
@@ -34,6 +58,22 @@ export function Canvas({ records, installedIds, onDropWidget }: CanvasProps) {
       }}
       onDrop={onDropWidget}
     >
+      {guides?.xs.map((x) => (
+        <div
+          key={`x${x}`}
+          className="lattice-guide is-v"
+          style={{ left: x, height: spanH || undefined }}
+          aria-hidden
+        />
+      ))}
+      {guides?.ys.map((y) => (
+        <div
+          key={`y${y}`}
+          className="lattice-guide is-h"
+          style={{ top: y, width: spanW || undefined }}
+          aria-hidden
+        />
+      ))}
       {placements.length === 0 && (
         <div className="lattice-empty">
           <div className="lattice-empty-art" aria-hidden />
@@ -79,7 +119,14 @@ export function Canvas({ records, installedIds, onDropWidget }: CanvasProps) {
             </div>
           );
         }
-        return <WidgetFrame key={placement.instanceId} record={record} placement={placement} />;
+        return (
+          <WidgetFrame
+            key={placement.instanceId}
+            record={record}
+            placement={placement}
+            onGuides={onGuides}
+          />
+        );
       })}
     </div>
   );

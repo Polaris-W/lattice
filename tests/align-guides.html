@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>align-guides test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      /*
+       * 拖拽对齐参考线：纯函数的边界。
+       *
+       * 这个页面的价值在于把"手感"变成可断言的数字：吸多少、什么时候不吸、
+       * 三条线同时对上时亮几条。手感本身测不了，但"差 7px 吸、差 9px 不吸"
+       * 测得了 —— 而这两条正是用户会立刻察觉的东西。
+       */
+      import { ALIGN_THRESHOLD_PX, computeAlign } from "/src/runtime/align-guides.ts";
+
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const eq = (actual, expected, text) =>
+        log(JSON.stringify(actual) === JSON.stringify(expected), `${text}（得到 ${JSON.stringify(actual)}）`);
+
+      const rect = (x, y, w = 100, h = 100) => ({ x, y, w, h });
+
+      // ---- 1. 没有任何参照物：不动、不亮线 ----
+      eq(computeAlign(137, 88, 100, 100, []), { x: 137, y: 88, xs: [], ys: [] }, "没有别的卡片就什么都不做");
+
+      // ---- 2. 左边缘对齐 ----
+      const left = computeAlign(103, 400, 100, 100, [rect(100, 0)]);
+      eq([left.x, left.y], [100, 400], "差 3px 吸到左边缘（纵向不受影响）");
+      eq(left.xs, [100], "亮出那条竖线");
+
+      // ---- 3. 阈值边界 ----
+      eq(computeAlign(108, 0, 100, 100, [rect(100, 0)]).x, 100, "差 8px 仍然吸（等于阈值）");
+      eq(computeAlign(109, 0, 100, 100, [rect(100, 0)]).x, 109, "差 9px 不吸 —— 阈值之外硬拽会像卡住");
+      eq(ALIGN_THRESHOLD_PX, 8, "阈值就是 8");
+
+      // ---- 4. 中线对齐 ----
+      // 我的中线 = 250 + 50 = 300，对方中线 = 250 + 100/2 = 300 → 已经在线上
+      const mid = computeAlign(250, 0, 100, 100, [rect(200, 0, 200, 100)]);
+      eq(mid.x, 250, "中线本来就对齐时不移动");
+      eq(mid.xs, [300], "但那条线还是要亮 —— 拖过去的人需要知道\"我对上了\"");
+      // 差 4px：我的中线 303 → 吸到 300
+      eq(computeAlign(253, 0, 100, 100, [rect(200, 0, 200, 100)]).x, 250, "中线差 3px 吸过去");
+
+      // ---- 5. 右边缘对齐 ----
+      // 我的右边 = 150 + 100 = 250，对方左边 = 250
+      const right = computeAlign(150, 0, 100, 100, [rect(250, 0)]);
+      eq(right.x, 150, "右边缘贴对方左边缘：本来就在线上");
+      eq(right.xs, [250], "两个不同的线撞在同一个坐标上，只画一条");
+      eq(computeAlign(147, 0, 100, 100, [rect(250, 0)]).x, 150, "差 3px 吸过去");
+
+      // ---- 6. 两个轴各算各的 ----
+      const both = computeAlign(103, 205, 100, 100, [rect(100, 200)]);
+      eq([both.x, both.y], [100, 200], "横竖都能对上的时候两个轴一起吸");
+      eq([both.xs.length, both.ys.length], [1, 1], "两个轴各亮一条");
+
+      /*
+       * 7. 最近的那条赢。
+       *
+       * 左边能对上 A（差 6px）也能对上 B（差 1px），应该吸 B —— 差得少的那个
+       * 才是用户心里想对齐的那个。
+       */
+      const nearest = computeAlign(106, 0, 100, 100, [rect(100, 0), rect(105, 0)]);
+      eq(nearest.x, 105, "两条都在阈值内时，吸最近的那条");
+
+      // ---- 8. 画布边界也参与 ----
+      const bounds = { w: 800, h: 600 };
+      // 右边贴画布右边：我的右边 = 690 + 100 = 790，画布 800 → 差 10，不吸
+      eq(computeAlign(690, 0, 100, 100, [], { bounds }).x, 690, "差 10px 到画布右边缘，不吸");
+      // 差 5px 就吸
+      eq(computeAlign(695, 0, 100, 100, [], { bounds }).x, 700, "差 5px 吸到画布右边缘");
+      // 画布中线：我的中线 = 345 + 50 = 395，画布中线 400 → 差 5，吸到 350
+      eq(computeAlign(345, 0, 100, 100, [], { bounds }).x, 350, "画布中线也能吸");
+      // 不给 bounds 时这些都不成立
+      eq(computeAlign(695, 0, 100, 100, []).x, 695, "没给画布尺寸就不吸边界");
+
+      // ---- 9. 关掉阈值 = 关掉对齐 ----
+      eq(computeAlign(103, 0, 100, 100, [rect(100, 0)], { threshold: 0 }).xs, [], "阈值 0 等于关掉");
+      eq(computeAlign(103, 0, 100, 100, [rect(100, 0)], { threshold: 20 }).x, 100, "阈值可放大");
+
+      // ---- 10. 三条线同时对上，只画一条 ----
+      /*
+       * 两个同尺寸的组件左对齐时，左/中/右三对线的偏差完全相同 —— 这是**最常见**
+       * 的一次对齐，也是最容易画错的地方：按"对上几条画几条"会画出三条横跨整块
+       * 画布的竖线，说的是同一件事，看起来却像界面卡了。
+       */
+      const stacked = computeAlign(103, 0, 240, 140, [rect(100, 0, 240, 140)]);
+      eq(stacked.x, 100, "同尺寸左对齐：位置吸过去");
+      eq(stacked.xs.length, 1, "但只亮一条线（三条线说的是同一件事）");
+
+      // ---- 11. 中线落在 .5 上时也只画一条 ----
+      eq(computeAlign(250, 0, 101, 100, [rect(200, 0, 101, 100)]).xs.length, 1, "中线落在 .5 上也只画一条");
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>

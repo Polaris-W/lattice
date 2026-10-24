@@ -29,6 +29,7 @@ import {
   type WidgetErrorReport,
 } from "../runtime/diagnostics";
 import { isTauri, type WidgetRecord } from "../runtime/registry";
+import { computeAlign, type AlignResult } from "../runtime/align-guides";
 import { isWidgetLog, trace } from "../runtime/debug";
 import { WidgetIconMark } from "./icons";
 import { snap, useLattice, type Placement } from "./store";
@@ -53,9 +54,11 @@ function withReloadStamp(url: string, stamp: number): string {
 interface WidgetFrameProps {
   record: WidgetRecord;
   placement: Placement;
+  /** 拖拽中的对齐参考线，交给画布去画（见 runtime/align-guides.ts） */
+  onGuides?: (guides: AlignResult | null) => void;
 }
 
-export function WidgetFrame({ record, placement }: WidgetFrameProps) {
+export function WidgetFrame({ record, placement, onGuides }: WidgetFrameProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const selected = useLattice((state) => state.selectedInstanceId === placement.instanceId);
   const grants = useLattice((state) => state.grants[record.manifest.id]);
@@ -303,35 +306,76 @@ export function WidgetFrame({ record, placement }: WidgetFrameProps) {
   }, [record.manifest.id]);
 
   // ---- 拖动 ----
-  const dragState = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(
-    null,
-  );
+  const dragState = useRef<{
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+    /** 画布尺寸：对齐时 0 / 中 / 满 三条线也要能吸 */
+    bounds: { w: number; h: number } | null;
+  } | null>(null);
 
   const onDragStart = (event: React.PointerEvent) => {
     event.preventDefault();
     select(placement.instanceId);
+    /*
+     * 画布尺寸用 `closest` 找，不写死"父节点的父节点"：拖拽把手在
+     * `.lattice-widget-bar` 里，它的父节点是卡片、不是画布 —— 拿父节点量出来
+     * 的是卡片自己那 240×140，"对齐画布中线"就永远吸不上（这个错误写第一版时
+     * 真的犯过，而探针页一跑就露馅）。
+     */
+    const canvas = (event.currentTarget as HTMLElement).closest(".lattice-canvas");
     dragState.current = {
       startX: event.clientX,
       startY: event.clientY,
       originX: placement.x,
       originY: placement.y,
+      bounds: canvas ? { w: canvas.clientWidth, h: canvas.clientHeight } : null,
     };
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    /*
+     * 合成事件没有真实指针，`setPointerCapture` 会抛 NotFoundError。
+     * 拿不到就算了 —— document 上的监听照样收得到（真机上是真指针，
+     * capture 保证指针移出窗口也不丢）。不吞这个异常的话，自检页里
+     * 一拖就断，而那正是"拖动逻辑改了要验一下"时最想跑的场景。
+     */
+    try {
+      (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    } catch {
+      /* 没有活动指针 */
+    }
   };
 
   const onDragMove = (event: React.PointerEvent) => {
     const state = dragState.current;
     if (!state) return;
-    const { snapToGrid } = useLattice.getState();
-    update(placement.instanceId, {
-      x: snap(Math.max(0, state.originX + (event.clientX - state.startX)), snapToGrid),
-      y: snap(Math.max(0, state.originY + (event.clientY - state.startY)), snapToGrid),
+    const { snapToGrid, placements } = useLattice.getState();
+    /*
+     * 先网格、后对齐。
+     *
+     * 网格把坐标量化到 8px（"看起来整齐"），对齐再把落点拉到别人的边上
+     * （"和旁边那个齐"）。顺序反过来会让网格把刚吸好的位置又推走 3px ——
+     * 而用户看到的是"明明对齐了，松手却差一点"。
+     */
+    const gridX = snap(Math.max(0, state.originX + (event.clientX - state.startX)), snapToGrid);
+    const gridY = snap(Math.max(0, state.originY + (event.clientY - state.startY)), snapToGrid);
+    const others = placements
+      .filter((item) => item.instanceId !== placement.instanceId)
+      .map((item) => ({ x: item.x, y: item.y, w: item.w, h: item.h }));
+    const aligned = computeAlign(gridX, gridY, placement.w, placement.h, others, {
+      bounds: state.bounds,
     });
+    update(placement.instanceId, { x: Math.max(0, aligned.x), y: Math.max(0, aligned.y) });
+    onGuides?.(aligned.xs.length || aligned.ys.length ? aligned : null);
   };
 
   const onDragEnd = (event: React.PointerEvent) => {
     dragState.current = null;
-    (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+    onGuides?.(null);
+    try {
+      (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+    } catch {
+      /* 没 capture 过就别 release（合成事件走不到这里，真指针会） */
+    }
   };
 
   // ---- 缩放 ----
