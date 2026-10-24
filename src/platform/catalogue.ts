@@ -205,14 +205,16 @@ function toBase64(bytes: Uint8Array): string {
 /**
  * 装一个来自目录的包。
  *
- * 内置目录要把字节自己取回来（同源 fetch），远端目录让 Rust 下到缓存再读 ——
- * 后者是为了不让几 MB 的字节在 IPC 上走两趟。
+ * **怎么取包由包的地址决定，不看目录来源**。目录退回内置那份之后，
+ * `source.kind` 仍然是 `"url"`，但条目里的地址已经指向应用自己的源了 ——
+ * 按来源判断的话，这条路会让 WinHTTP 去连 `http://tauri.localhost`，
+ * 而那个域名只活在 WebView2 里，必然失败。判据只有一条：**和应用同源就
+ * 在渲染进程里 `fetch`，否则交给 Rust**（跨域 + 大小上限 + 形状约束都在那边）。
  *
  * `entry.publisher.key` 必须存在：`planInstall` 已经把"没签名"挡在界面外了，
  * 这里是第二道 —— 万一哪天有人绕过界面直接调，也不该装进一个没签名的包。
  */
 export async function installCataloguePackage(
-  source: CatalogueSource,
   entry: CatalogueEntry,
   pkg: CataloguePackage,
 ): Promise<StoreInstallResult> {
@@ -227,7 +229,7 @@ export async function installCataloguePackage(
     publicKey: key,
   };
 
-  if (source.kind === "bundled") {
+  if (pkg.url.startsWith(appBaseUrl())) {
     const response = await fetch(pkg.url, { cache: "no-store" });
     if (!response.ok) throw new Error(`could not download ${pkg.url} (HTTP ${response.status})`);
     const bytes = new Uint8Array(await response.arrayBuffer());

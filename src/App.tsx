@@ -550,7 +550,7 @@ export default function App() {
       const before = records.get(entry.id)?.manifest.permissions ?? [];
       setCatalogueBusyId(entry.id);
       try {
-        const result = await installCataloguePackage(catalogueSource, entry, pkg);
+        const result = await installCataloguePackage(entry, pkg);
         trustKey(entry.id, key);
         // 内置包也要显式"安装"（不变量 1）；用户目录里的包本来就算已装，
         // 多记一次没有副作用
@@ -572,7 +572,6 @@ export default function App() {
     },
     [
       blockedKeys,
-      catalogueSource,
       flagPermissionReview,
       installWidget,
       records,
