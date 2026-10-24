@@ -548,6 +548,12 @@ const session = await lattice.media.get();
 
 ## 7. 最小示例
 
+先给三条路，从快到慢，按你手上有什么选：
+
+- **`npm run create:widget -- demo.mine`** —— 生成一个已经会跳秒的组件，属性面板里还带一个能改的标题（`config` 里那个 `caption`）。先跑起来再改，最省事；改清单记得重跑 `npm run widgets:index`
+- **`public/widgets/lattice.weather`、`lattice.focus`** —— 两个真实场景的完整例子。前者是联网组件的全套：两个 host、三档刷新、断网时留着上一次的数、权限被拒时说的话；后者是"同一份状态被两张卡片同时改"该怎么写（时间存绝对时刻、阶段推进写成纯函数）
+- **下面这份** —— 不装 SDK、只有六十行的裸桥版本。它的用处不是让你照抄，而是证明"组件就是个普通网页"：没有构建、没有依赖，`postMessage` 就是全部协议
+
 `manifest.json`：
 
 ```json

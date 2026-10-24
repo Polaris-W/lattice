@@ -2,8 +2,8 @@
  * 脚手架：`npm run create:widget -- <id> [--name "Pretty Name"] [--out <dir>]`
  *
  * 生成一个**能直接跑**的组件目录：清单、入口、样式、图标、以及一份 SDK。
- * 生成的组件不是"空壳 + TODO"，而是一个真的会跳秒的卡片 —— 拖进窗口、
- * 投放到桌面就能看见东西在动，作者改的时候有对照物。
+ * 生成的组件不是"空壳 + TODO"，而是一个真的会跳秒、属性面板里还有一个能改的
+ * 标题的卡片 —— 拖进窗口、投放到桌面就能看见东西在动，作者改的时候有对照物。
  *
  * # 为什么要有这个
  *
@@ -100,6 +100,19 @@ const manifest = {
   size: { w: 240, h: 140, minW: 160, minH: 96 },
   layer: args.layer,
   permissions: args.permissions,
+  // 带一个可配置项出厂：属性面板一打开就有东西可调，作者能顺着它加第二个。
+  // 空清单的话，"配置怎么接"要等到他自己写完才发现没接对。
+  config: [
+    {
+      key: "caption",
+      type: "text",
+      label: "Caption",
+      default: "",
+      placeholder: prettyName,
+      maxLength: 40,
+      help: "The small line above the number. Empty falls back to the widget name.",
+    },
+  ],
   sdk: "^0.1",
 };
 if (args.interactive) manifest.interactive = true;
@@ -113,7 +126,7 @@ const html = `<!doctype html>
   </head>
   <body>
     <main class="card">
-      <p class="card-label">${prettyName}</p>
+      <p class="card-label" id="label">${prettyName}</p>
       <p class="card-value" id="value">--:--:--</p>
     </main>
     <script type="module" src="widget.js"></script>
@@ -124,11 +137,13 @@ const html = `<!doctype html>
 const script = `/**
  * ${prettyName} —— 由 create-lattice-widget 生成
  *
- * 这个卡片现在做一件最简单的事：每秒跳一次秒数。它同时证明了三件事都通了 ——
- * SDK 连上了宿主、心跳挂在平台的调度器上、主题令牌应用到了 CSS 变量。
+ * 这个卡片现在做两件事：每秒跳一次秒数，以及读清单里的 config。
+ * 它同时证明了四条链路都通了 —— SDK 连上了宿主、心跳挂在平台的调度器上、
+ * 主题令牌应用到了 CSS 变量、属性面板改了值卡片当场跟着变。
  *
  * 接下来通常这么改：
- *   1. 想让你调的东西（开关、数字、日期）写进 manifest.json 的 "config"
+ *   1. 想让你调的东西（开关、数字、日期、下拉）写进 manifest.json 的 "config"，
+ *      这里已经有一个 "caption"；属性面板会按类型渲染表单，你不用写 UI
  *   2. 要存数据用 lattice.storage（记得在清单里申请 "storage"）
  *   3. 要联网走 lattice.network.fetch（要 "network"，而且得列 hosts）
  *
@@ -138,17 +153,26 @@ const script = `/**
 import { createLattice } from "./lattice.js";
 
 const lattice = createLattice();
+const labelEl = document.getElementById("label");
 const valueEl = document.getElementById("value");
+
+const pad = (value) => String(value).padStart(2, "0");
 
 function render() {
   const now = new Date();
-  const pad = (value) => String(value).padStart(2, "0");
-  valueEl.textContent = \`\${pad(now.getHours())}:\${pad(now.getMinutes())}:\${pad(now.getSeconds())}\`;
+  const caption = lattice.config.caption;
+  labelEl.textContent = caption ? String(caption) : ${JSON.stringify(prettyName)};
+  valueEl.textContent = pad(now.getHours()) + ":" + pad(now.getMinutes()) + ":" + pad(now.getSeconds());
 }
 
-// ready 之后主题和配置已经应用过一次，第一帧就是对的颜色
+// ready 之后主题和配置已经各应用过一次，所以第一帧的颜色和文案就是对的
 await lattice.ready;
 render();
+
+// 属性面板改了值：就地重画。别 reload —— 那会把组件里的状态（滚动位置、
+// 还没提交的输入）全清掉，用户只是改了一个字
+lattice.on("config", render);
+
 await lattice.schedule.every(1000, render);
 `;
 
@@ -244,9 +268,14 @@ npm run dev               # 浏览器里看：http://localhost:1420
 ## Notes
 
 - 改文件存盘，桌面上的卡片会自己重载 —— 不用重启
-- 想让你调的东西写进 \`manifest.json\` 的 \`config\`，属性面板会渲染表单
+- 想让你调的东西写进 \`manifest.json\` 的 \`config\`（\`text\` / \`number\` / \`toggle\` /
+  \`select\` / \`date\`），属性面板会按类型渲染表单，你不用自己写设置界面
+- 组件要接键盘输入（输入框、快捷键）才加 \`"interactive": true\`；
+  不加的话窗口不可激活，点了也拿不到焦点
 - 组件跑在 \`sandbox="allow-scripts"\` 的 iframe 里：没有 \`localStorage\`，
   也没有直接联网，能力一律走 SDK
+- 两个跑在真实场景里的范例：\`public/widgets/lattice.weather\`（联网 + 缓存 +
+  网络断了还能看）和 \`public/widgets/lattice.focus\`（多实例共享状态）
 - 规格全文见仓库的 \`docs/WIDGET_SPEC.md\`
 `;
 
