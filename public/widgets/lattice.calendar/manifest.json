@@ -1,0 +1,65 @@
+{
+  "id": "lattice.calendar",
+  "name": "Calendar",
+  "version": "0.1.0",
+  "description": "Month view with your own events — click a day, type a line",
+  "author": "Lattice",
+  "entry": "index.html",
+  "icon": "icon.svg",
+  "size": { "w": 300, "h": 340, "minW": 240, "minH": 280 },
+  "layer": "desktop",
+  "interactive": true,
+  "permissions": ["storage"],
+  "config": [
+    {
+      "key": "weekStart",
+      "type": "select",
+      "label": "Week starts on",
+      "default": "monday",
+      "options": [
+        { "value": "monday", "label": "Monday" },
+        { "value": "sunday", "label": "Sunday" }
+      ],
+      "help": "Which day sits in the first column. Monday for most of the world, Sunday for the US."
+    }
+  ],
+  "help": {
+    "sections": [
+      {
+        "title": "Adding an event",
+        "items": [
+          "Click a day, then type in the box at the bottom and press Enter. The day you clicked is the day it lands on.",
+          "Start the line with a time and it is kept: `9:30 Standup` is stored as 09:30 plus the title `Standup`. Without a time it is an all-day entry and sorts above the timed ones.",
+          "Click the ✕ on a row to delete it. There is no undo — but deleting is one click, and typing it again is one line."
+        ]
+      },
+      {
+        "title": "Reading the month",
+        "items": [
+          "A dot under a number means that day has something on it. The month always shows six weeks, so the grid does not jump in height as you page through.",
+          "Days from the neighbouring months are shown greyed — clicking one jumps to that month rather than making it look like the entry landed in the wrong place.",
+          "The ‹ and › buttons move one month. The title is clickable and takes you back to today."
+        ]
+      },
+      {
+        "title": "What it stores",
+        "items": [
+          "Only what you typed, per widget — the events are kept in this widget's own storage, so two calendars do not share a list.",
+          "Nothing is uploaded anywhere. There is no account, no sync, and no network permission in this version.",
+          "The selected day is remembered too, so reopening the card lands where you left off."
+        ]
+      }
+    ]
+  },
+  "changelog": [
+    {
+      "version": "0.1.0",
+      "changes": [
+        "First release: month view, click a day, type a line to add an event.",
+        "A leading time (`9:30 …`) is parsed and kept; the rest is the title.",
+        "Six-week grid so the card does not change height between months."
+      ]
+    }
+  ],
+  "sdk": "^0.1"
+}

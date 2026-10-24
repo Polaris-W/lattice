@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>calendar test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+      iframe {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <iframe id="w" src="/widgets/lattice.calendar/index.html" title="calendar"></iframe>
+    <script type="module">
+      /*
+       * 日历：网格数学 + 条目解析 + 界面接线。
+       *
+       * 日历的 bug 几乎都长在"边界"上：闰年 2 月、跨年、周首是周一还是周日、
+       * 一个月占 5 行还是 6 行。这些用眼睛看是看不出来的 —— 2027 年 2 月排错
+       * 一格，要到 2027 年 2 月才会被发现。所以这一段基本都在算日期。
+       */
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const eq = (actual, expected, text) =>
+        log(JSON.stringify(actual) === JSON.stringify(expected), `${text}（得到 ${JSON.stringify(actual)}）`);
+
+      const frame = document.getElementById("w");
+      await new Promise((resolve) => {
+        if (frame.contentWindow?.__latticeCalendar) resolve();
+        else frame.addEventListener("load", () => setTimeout(resolve, 60), { once: true });
+      });
+
+      const api = frame.contentWindow.__latticeCalendar;
+      log(Boolean(api), "组件把日期与条目函数挂出来了");
+      if (!api) {
+        document.getElementById("out").textContent = lines.join("\n");
+        window.__done = true;
+        throw new Error("no api");
+      }
+
+      const {
+        keyOf, parseKey, monthGrid, weekdayLabels, addMonths,
+        formatMonth, formatDay, parseEntry, sortEvents, eventsFor,
+        addEvent, removeEvent, normalizeEvents, MAX_PER_DAY,
+      } = api;
+
+      // ---- 1. 日期键 ----
+
+      eq(keyOf(new Date(2026, 9, 24)), "2026-10-24", "日期键补零到两位");
+      eq(keyOf(new Date(2026, 0, 1)), "2026-01-01", "一月一号");
+      eq(keyOf(new Date(2026, 11, 31)), "2026-12-31", "十二月三十一号");
+      eq(parseKey("2026-10-24"), { year: 2026, month: 9, day: 24 }, "解析回来的月份是 0 起的");
+      eq(parseKey("2026-13-01"), null, "13 月不认");
+      eq(parseKey("2026-10-32"), null, "32 号不认");
+      eq(parseKey("2026-1-1"), null, "不补零的键不认（自己写死的字符串不算日期）");
+      eq(parseKey(""), null, "空串不是日期");
+      eq(parseKey(null), null, "null 不是日期");
+
+      /*
+       * 本地时间 vs UTC：`new Date(2026, 9, 24)` 是本地 10 月 24 日零点，
+       * 用 toISOString 在 UTC+8 会变成 10 月 23 日 —— 日历整体错一天，
+       * 而且是"晚上才错"的那种，最难查。
+       */
+      const late = new Date(2026, 9, 24, 23, 30);
+      eq(keyOf(late), "2026-10-24", "晚上 11 点半仍然是当天（不走 UTC）");
+
+      // ---- 2. 月网格 ----
+
+      const oct = monthGrid(2026, 9, "monday");
+      eq(oct.length, 42, "永远是 42 格（6 周），卡片高度不会跳");
+      eq(oct.filter((c) => c.inMonth).length, 31, "10 月有 31 天在网格里");
+      eq(oct[0].key, "2026-09-28", "2026 年 10 月 1 日是周四，周一开头要从 9 月 28 日起");
+      eq(oct[41].key, "2026-11-08", "最后一格排到 11 月 8 日");
+      eq(oct[0].inMonth, false, "第一格属于上个月");
+      eq(oct.find((c) => c.key === "2026-10-01").inMonth, true, "10 月 1 日在当月");
+
+      const octSun = monthGrid(2026, 9, "sunday");
+      eq(octSun[0].key, "2026-09-27", "周首换成周日就往前挪一天");
+      eq(octSun.length, 42, "周首变了还是 42 格");
+
+      // 闰年：2028 年 2 月有 29 天，2027 年只有 28 天
+      eq(monthGrid(2028, 1, "monday").filter((c) => c.inMonth).length, 29, "2028 年 2 月是闰月");
+      eq(monthGrid(2027, 1, "monday").filter((c) => c.inMonth).length, 28, "2027 年 2 月不是");
+      eq(monthGrid(2100, 1, "monday").filter((c) => c.inMonth).length, 28, "2100 年不是闰年（百年不闰）");
+      eq(monthGrid(2000, 1, "monday").filter((c) => c.inMonth).length, 29, "2000 年是闰年（四百年再闰）");
+
+      // 每个月的第一天，必须落在它真实的星期几那一列
+      const weekdayOf = (key) => {
+        const at = parseKey(key);
+        return new Date(at.year, at.month, at.day).getDay();
+      };
+      const columnOf = (cells, key) => cells.findIndex((c) => c.key === key);
+      eq(
+        columnOf(monthGrid(2026, 9, "monday"), "2026-10-01"),
+        (weekdayOf("2026-10-01") + 6) % 7,
+        "10 月 1 日落在周四那一列（周一起算）",
+      );
+      eq(
+        columnOf(monthGrid(2026, 9, "sunday"), "2026-10-01"),
+        weekdayOf("2026-10-01"),
+        "周日起算时列号就是 getDay()",
+      );
+
+      // 所有月份都不能出现重复格、也不能断档
+      let gridProblems = [];
+      for (let year = 2025; year <= 2028; year += 1) {
+        for (let month = 0; month < 12; month += 1) {
+          const cells = monthGrid(year, month, "monday");
+          if (cells.length !== 42) gridProblems.push(`${year}-${month} 不是 42 格`);
+          for (let i = 1; i < cells.length; i += 1) {
+            const prev = parseKey(cells[i - 1].key);
+            const next = parseKey(cells[i].key);
+            const gap = (new Date(next.year, next.month, next.day) - new Date(prev.year, prev.month, prev.day)) / 86400000;
+            if (gap !== 1) gridProblems.push(`${year}-${month} 第 ${i} 格断了（差 ${gap} 天）`);
+          }
+        }
+      }
+      eq(gridProblems, [], "四年 × 十二个月的网格都连续、无重复");
+
+      // ---- 3. 翻月 ----
+
+      eq(addMonths(2026, 0, -1), { year: 2025, month: 11 }, "一月往前是上一年十二月");
+      eq(addMonths(2026, 11, 1), { year: 2027, month: 0 }, "十二月往后是下一年一月");
+      eq(addMonths(2026, 5, 0), { year: 2026, month: 5 }, "不动就还是自己");
+      eq(addMonths(2026, 5, 12), { year: 2027, month: 5 }, "一次翻一年也对");
+      eq(addMonths(2026, 5, -18), { year: 2024, month: 11 }, "往前翻一年半也对");
+
+      // ---- 4. 显示 ----
+
+      eq(formatMonth(2026, 9), "October 2026", "月份全名 + 年");
+      eq(weekdayLabels("monday")[0], "Mo", "周一起算第一列是 Mo");
+      eq(weekdayLabels("sunday")[0], "Su", "周日起算第一列是 Su");
+      eq(weekdayLabels("monday").length, 7, "七个列头");
+      eq(formatDay("2026-10-24", new Date(2026, 9, 1).getTime()), "Oct 24", "同年不写年份");
+      eq(formatDay("2025-10-24", new Date(2026, 9, 1).getTime()), "Oct 24, 2025", "跨年才写年份");
+
+      // ---- 5. 条目解析 ----
+
+      eq(parseEntry("9:30 Standup"), { time: "09:30", title: "Standup" }, "行首时间被认出来并补零");
+      eq(parseEntry("09:30 Standup"), { time: "09:30", title: "Standup" }, "已经补零的照旧");
+      eq(parseEntry("9：30 站会"), { time: "09:30", title: "站会" }, "全角冒号也认");
+      eq(parseEntry("23:59 last"), { time: "23:59", title: "last" }, "23:59 合法");
+      eq(parseEntry("24:00 midnight"), { time: "", title: "24:00 midnight" }, "24:00 不是合法时间，整行当标题");
+      eq(parseEntry("9:75 broken"), { time: "", title: "9:75 broken" }, "75 分钟不认，整行当标题");
+      eq(parseEntry("Standup"), { time: "", title: "Standup" }, "没时间就是全天");
+      eq(parseEntry("  Standup  "), { time: "", title: "Standup" }, "前后空格去掉");
+      eq(parseEntry("9:30"), { time: "09:30", title: "" }, "只有时间、没有标题也收（界面显示 Untitled）");
+      eq(parseEntry("   "), null, "全空白不收");
+      eq(parseEntry(""), null, "空串不收");
+
+      // ---- 6. 排序与增删 ----
+
+      const sorted = sortEvents([
+        { id: "c", time: "14:00", title: "c" },
+        { id: "a", time: "", title: "a" },
+        { id: "b", time: "09:05", title: "b" },
+      ]);
+      eq(sorted.map((x) => x.id), ["a", "b", "c"], "全天排最前，其余按时间");
+      eq(sortEvents([]), [], "空表排完还是空表");
+
+      let store = {};
+      store = addEvent(store, "2026-10-24", { time: "09:30", title: "Standup" }, "1");
+      eq(store["2026-10-24"].length, 1, "加进去了");
+      const before = store;
+      const after = addEvent(store, "2026-10-25", { time: "", title: "Trip" }, "2");
+      eq(before["2026-10-25"], undefined, "addEvent 不改入参（返回新表）");
+      eq(after["2026-10-25"].length, 1, "新表里有新的一天");
+      eq(after["2026-10-24"].length, 1, "旧的一天还在");
+
+      eq(removeEvent(after, "2026-10-25", "2")["2026-10-25"], undefined, "删空了就把这一天整条去掉");
+      eq(removeEvent(after, "2026-10-24", "999")["2026-10-24"].length, 1, "删不存在的 id 什么也不做");
+
+      let full = {};
+      for (let i = 0; i < MAX_PER_DAY; i += 1) {
+        full = addEvent(full, "2026-10-24", { time: "", title: "x" + i }, "id" + i);
+      }
+      eq(full["2026-10-24"].length, MAX_PER_DAY, "一天装满");
+      eq(addEvent(full, "2026-10-24", { time: "", title: "over" }, "over")["2026-10-24"].length, MAX_PER_DAY, "装满了就不再收");
+
+      // 读存档时坏格子只丢那一条
+      const dirty = normalizeEvents({
+        "2026-10-24": [
+          { id: "a", time: "09:30", title: "ok" },
+          { id: "b", time: "9:30", title: "时间格式不对" },
+          { id: "c", time: "", title: 42 },
+          "not an object",
+        ],
+        "2026-13-01": [{ id: "d", time: "", title: "坏日期" }],
+        "2026-10-25": "not an array",
+      });
+      eq(Object.keys(dirty), ["2026-10-24"], "坏日期和坏数组整格丢掉");
+      eq(dirty["2026-10-24"].length, 3, "坏条目单独丢，好的留下");
+      eq(dirty["2026-10-24"][1].time, "", "时间格式不对的降级成全天，而不是丢整条");
+      eq(dirty["2026-10-24"][2].title, "", "标题不是字符串就当空");
+      eq(normalizeEvents(null), {}, "没存档就是空表");
+      eq(normalizeEvents([]), {}, "数组不是表");
+
+      eq(eventsFor({ "2026-10-24": [{ id: "a", time: "10:00", title: "x" }] }, "2026-10-24").length, 1, "取某天的条目");
+      eq(eventsFor({}, "2026-10-24"), [], "没有就是空数组，不是 undefined");
+
+      // ---- 7. 界面接线 ----
+
+      const win = frame.contentWindow;
+      const doc = frame.contentDocument;
+      const grid = doc.getElementById("grid");
+      const titleEl = doc.getElementById("title");
+      const entryEl = doc.getElementById("entry");
+      const eventsEl = doc.getElementById("events");
+      const type = (text) => {
+        entryEl.value = text;
+        entryEl.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      };
+
+      const snap = () => api.snapshot();
+      const today = api.todayKey();
+
+      eq(grid.children.length, 42, "界面画了 42 格");
+      eq(snap().selected, today, "开局选中的是今天");
+      eq(titleEl.textContent, api.formatMonth(snap().view.year, snap().view.month), "标题就是当前月");
+      eq(doc.querySelectorAll(".cal-cell.is-selected").length, 1, "只有一格是选中态");
+      eq(doc.querySelector(".cal-cell.is-selected").dataset.key, today, "选中的就是今天");
+
+      // 点一格 → 选中它，下面跟着换
+      const target = grid.querySelector('.cal-cell[data-key="' + today + '"]');
+      target.click();
+      eq(snap().selected, today, "点今天还是今天");
+
+      type("9:30 Standup");
+      eq(snap().events[today].length, 1, "回车把条目加到了选中的那天");
+      eq(snap().events[today][0].time, "09:30", "时间被解析出来了");
+      eq(snap().events[today][0].title, "Standup", "标题也存下来了");
+      eq(entryEl.value, "", "加完把输入框清空（不然下一次会重复提交）");
+      eq(eventsEl.querySelectorAll(".cal-event").length, 1, "列表里出现一行");
+      eq(eventsEl.querySelector(".cal-event-time").textContent, "09:30", "行首是时间");
+      eq(doc.querySelectorAll(".cal-cell.is-selected .cal-dot").length, 1, "选中那格出现小圆点");
+
+      type("Trip");
+      eq(snap().events[today].length, 2, "再记一条全天的");
+      eq(eventsEl.querySelectorAll(".cal-event")[0].querySelector(".cal-event-time").textContent, "all day", "全天排在最前面");
+
+      type("   ");
+      eq(snap().events[today].length, 2, "空白行不记（不然一回车就多一条看不见的）");
+
+      eventsEl.querySelector(".cal-event-x").click();
+      eq(snap().events[today].length, 1, "点 ✕ 删掉一条");
+      eq(eventsEl.querySelectorAll(".cal-event").length, 1, "列表跟着少一行");
+
+      // 翻月
+      const startView = snap().view;
+      doc.getElementById("next").click();
+      const nextView = snap().view;
+      eq(nextView, api.addMonths(startView.year, startView.month, 1), "› 往后翻一个月");
+      eq(snap().selected, today, "翻月不改选中的那一天");
+      doc.getElementById("prev").click();
+      eq(snap().view, startView, "‹ 翻回来");
+
+      // 点邻月的日子 → 跳到那个月
+      const outCell = grid.querySelector(".cal-cell.is-out");
+      const outKey = outCell.dataset.key;
+      outCell.click();
+      eq(snap().selected, outKey, "点邻月的日子会选中它");
+      const at = api.parseKey(outKey);
+      eq(snap().view, { year: at.year, month: at.month }, "而且跟着跳到那个月（不然事件看着像记错了月）");
+
+      // 标题点回今天
+      titleEl.click();
+      eq(snap().selected, today, "点标题回到今天");
+      eq(snap().view, { year: api.parseKey(today).year, month: api.parseKey(today).month }, "月份也回到本月");
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>

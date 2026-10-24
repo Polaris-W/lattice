@@ -1,0 +1,288 @@
+:root {
+  --bg: transparent;
+  --fg: #ecebe6;
+  --muted: #97978f;
+  --surface: #1d1d21;
+  --accent: #5dcaa5;
+  --border: rgba(255, 255, 255, 0.12);
+  --radius: 10px;
+  --font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI",
+    "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  overflow: hidden;
+}
+
+.cal {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 8px;
+  gap: 4px;
+}
+
+/* ---------- 头部 ---------- */
+
+.cal-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.cal-nav {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cal-nav:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+}
+
+/* 标题能点（回今天），所以写成按钮 —— 不然键盘用户够不到它 */
+.cal-title {
+  flex: 1 1 auto;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+}
+
+.cal-title:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+/* ---------- 星期与格子 ---------- */
+
+.cal-week,
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  flex: 0 0 auto;
+}
+
+.cal-week {
+  gap: 0;
+}
+
+.cal-weekday {
+  text-align: center;
+  font-size: 9px;
+  color: var(--muted);
+  padding-bottom: 2px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.cal-grid {
+  gap: 1px;
+  /*
+   * 网格吃掉剩下的高度，行高由它自己分（`minmax(0, 1fr)`）。
+   * 一开始给格子写的是 `aspect-ratio: 1/1`，看着很对 —— 方格子嘛 ——
+   * 但 300 宽的卡片里 7 列就是 40px 一格，六行 240px，加上头部和下面
+   * 那一天，整张卡要 348px：下面那天的输入框直接被挤出卡片外面。
+   */
+  flex: 1 1 auto;
+  min-height: 0;
+  grid-auto-rows: minmax(0, 1fr);
+}
+
+.cal-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  /* 再挤也给 16px：低于这个高度数字会被裁掉一半，日期就读不出来了 */
+  min-height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.cal-cell:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+/* 邻月的日子压暗，但仍然是可点的（点了会跳月） */
+.cal-cell.is-out {
+  color: var(--muted);
+  opacity: 0.45;
+}
+
+.cal-cell.is-today {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.cal-cell.is-selected {
+  background: var(--accent);
+  color: var(--surface);
+  font-weight: 600;
+}
+
+.cal-cell.is-selected.is-out {
+  opacity: 0.7;
+}
+
+/* 有事件的小圆点。选中那一格上它要反过来，否则在强调色上完全看不见 */
+.cal-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.cal-cell.is-selected .cal-dot {
+  background: var(--surface);
+}
+
+/* ---------- 当天 ---------- */
+
+.cal-day {
+  display: flex;
+  flex-direction: column;
+  /* 按内容占高，不跟着网格抢；事件多了在列表里滚，不把输入框顶出去 */
+  flex: 0 0 auto;
+  max-height: 46%;
+  min-height: 0;
+  gap: 2px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.cal-day-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.cal-day-label {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.cal-day-count {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.cal-events {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  font-size: 11px;
+}
+
+.cal-empty {
+  color: var(--muted);
+  font-size: 10px;
+  padding: 2px 0;
+}
+
+.cal-event {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 2px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+.cal-event-time {
+  flex: 0 0 auto;
+  min-width: 38px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cal-event-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 标题一行就够：日历不是阅读器，多出来的字不该把一行撑成三行 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-event-x {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+
+/* ✕ 平时藏着，指到那一行才出现：一行一个叉号太吵 */
+.cal-event:hover .cal-event-x,
+.cal-event-x:focus-visible {
+  opacity: 1;
+}
+
+.cal-event-x:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+
+.cal-entry {
+  flex: 0 0 auto;
+  width: 100%;
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  outline: none;
+}
+
+.cal-entry:focus {
+  border-color: var(--accent);
+}
+
+.cal-entry::placeholder {
+  color: var(--muted);
+}

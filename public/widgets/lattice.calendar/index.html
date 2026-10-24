@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Calendar</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!--
+      月视图 + 当天事件。没有弹窗、没有二级页：卡片只有 300 宽，任何"点开
+      再看"的交互都会把内容挤到卡片外面去。所以下面是常驻的一天。
+    -->
+    <main class="cal" id="root">
+      <header class="cal-head">
+        <button type="button" class="cal-nav" id="prev" aria-label="Previous month">‹</button>
+        <button type="button" class="cal-title" id="title" title="Back to today">—</button>
+        <button type="button" class="cal-nav" id="next" aria-label="Next month">›</button>
+      </header>
+
+      <div class="cal-week" id="week" aria-hidden="true"></div>
+      <div class="cal-grid" id="grid" role="grid"></div>
+
+      <section class="cal-day">
+        <div class="cal-day-head">
+          <span class="cal-day-label" id="day-label"></span>
+          <span class="cal-day-count" id="day-count"></span>
+        </div>
+        <ol class="cal-events" id="events"></ol>
+        <input
+          class="cal-entry"
+          id="entry"
+          type="text"
+          placeholder="9:30 Standup"
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="New event"
+        />
+      </section>
+    </main>
+    <script src="widget.js"></script>
+  </body>
+</html>

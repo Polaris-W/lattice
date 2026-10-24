@@ -1,0 +1,502 @@
+/**
+ * 日历组件
+ *
+ * 月视图 + 一天的事件。数据是"某一天 → 一串条目"，按日期键存成一张表，
+ * 没有索引、没有游标 —— 一个月最多 42 天、每天几十条，全量读进来重算一遍
+ * 比维护任何索引都便宜。
+ *
+ * # 为什么固定六周
+ *
+ * 有的月份只占 5 行（比如 2 月 1 号正好是周一），有的要 6 行。按实际行数
+ * 画的话，翻月份时卡片高度会跳一下 —— 桌面上的组件是钉在固定尺寸里的，
+ * 跳的是里面那层内容，看起来像重新加载。所以永远画 42 格。
+ *
+ * # 为什么邻月的日子也能点
+ *
+ * 灰色日子如果点不动，用户就得先翻月再找那一天；如果点得动却还留在本月，
+ * 事件看起来像记到了错的月份。所以点邻月的日子 = **跳到那个月并选中它**。
+ */
+(function () {
+  "use strict";
+
+  // -------------------------------------------------------------------------
+  // 桥
+  // -------------------------------------------------------------------------
+
+  var seq = 0;
+  var pending = new Map();
+
+  function call(method, params) {
+    return new Promise(function (resolve, reject) {
+      var id = ++seq;
+      pending.set(id, { resolve: resolve, reject: reject });
+      parent.postMessage(
+        { __lattice: 1, type: "request", id: id, method: method, params: params },
+        "*",
+      );
+      setTimeout(function () {
+        if (!pending.has(id)) return;
+        pending.delete(id);
+        var error = new Error("Bridge call timed out: " + method);
+        error.code = "timeout";
+        reject(error);
+      }, 3000);
+    });
+  }
+
+  var THEME_MAP = {
+    "--lattice-surface": "--surface",
+    "--lattice-text": "--fg",
+    "--lattice-text-muted": "--muted",
+    "--lattice-accent": "--accent",
+    "--lattice-border": "--border",
+    "--lattice-radius": "--radius",
+    "--lattice-font": "--font",
+  };
+
+  function applyTheme(tokens) {
+    if (!tokens) return;
+    Object.keys(THEME_MAP).forEach(function (source) {
+      var value = tokens[source];
+      if (value) document.documentElement.style.setProperty(THEME_MAP[source], value);
+    });
+  }
+
+  window.addEventListener("message", function (event) {
+    var data = event.data;
+    if (!data || data.__lattice !== 1) return;
+    if (data.type === "theme") {
+      applyTheme(data.payload);
+      return;
+    }
+    if (data.type === "config-changed") {
+      applyConfig(data.payload && data.payload.config);
+      return;
+    }
+    if (data.type !== "response") return;
+    var entry = pending.get(data.id);
+    if (!entry) return;
+    pending.delete(data.id);
+    if (data.ok) {
+      entry.resolve(data.result);
+    } else {
+      var error = new Error(data.error || "Bridge call failed");
+      error.code = data.code;
+      entry.reject(error);
+    }
+  });
+
+  function noop() {}
+
+  // -------------------------------------------------------------------------
+  // 日期（纯函数）
+  // -------------------------------------------------------------------------
+
+  var MONTHS = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+  ];
+  var MONTHS_SHORT = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  ];
+
+  function pad2(value) {
+    return value < 10 ? "0" + value : String(value);
+  }
+
+  /** 本地日期 → `YYYY-MM-DD`。不用 toISOString：那个是 UTC，晚上会差一天 */
+  function keyOf(date) {
+    return date.getFullYear() + "-" + pad2(date.getMonth() + 1) + "-" + pad2(date.getDate());
+  }
+
+  function todayKey(now) {
+    return keyOf(new Date(now === undefined ? Date.now() : now));
+  }
+
+  function parseKey(key) {
+    var match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(key || ""));
+    if (!match) return null;
+    var year = Number(match[1]);
+    var month = Number(match[2]) - 1;
+    var day = Number(match[3]);
+    if (month < 0 || month > 11 || day < 1 || day > 31) return null;
+    return { year: year, month: month, day: day };
+  }
+
+  /**
+   * 42 格（6 周 × 7 天），`month` 是 0 起的。
+   *
+   * `new Date(y, m, 1 - offset + i)` 靠 Date 自己处理负数日 —— 手算"上个月
+   * 有几天"会掉进闰年那个坑里。
+   */
+  function monthGrid(year, month, weekStart) {
+    var firstWeekday = new Date(year, month, 1).getDay(); // 0 = 周日
+    var anchor = weekStart === "sunday" ? 0 : 1;
+    var offset = (firstWeekday - anchor + 7) % 7;
+    var cells = [];
+    for (var i = 0; i < 42; i += 1) {
+      var date = new Date(year, month, 1 - offset + i);
+      cells.push({
+        key: keyOf(date),
+        day: date.getDate(),
+        inMonth: date.getMonth() === month && date.getFullYear() === year,
+      });
+    }
+    return cells;
+  }
+
+  function weekdayLabels(weekStart) {
+    return weekStart === "sunday"
+      ? ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]
+      : ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+  }
+
+  function addMonths(year, month, delta) {
+    var total = year * 12 + month + delta;
+    return { year: Math.floor(total / 12), month: ((total % 12) + 12) % 12 };
+  }
+
+  function formatMonth(year, month) {
+    return MONTHS[month] + " " + year;
+  }
+
+  /** `Oct 24`，跨年了才带上年份（卡片窄，能省一个字是一个） */
+  function formatDay(key, now) {
+    var parsed = parseKey(key);
+    if (!parsed) return "";
+    var sameYear = new Date(now === undefined ? Date.now() : now).getFullYear() === parsed.year;
+    return MONTHS_SHORT[parsed.month] + " " + parsed.day + (sameYear ? "" : ", " + parsed.year);
+  }
+
+  // -------------------------------------------------------------------------
+  // 条目（纯函数）
+  // -------------------------------------------------------------------------
+
+  /**
+   * 一行字 → `{ time, title }`。
+   *
+   * 行首是时间就当成时间（`9:30 Standup` / `09：30 站会`，全角冒号也认），
+   * 其余全是标题。这个约定比"两个输入框"省一半地方，也比"必须点开编辑"
+   * 快一步 —— 日历上绝大多数条目就是"几点干什么"。
+   */
+  function parseEntry(text) {
+    var source = String(text == null ? "" : text).trim();
+    if (!source) return null;
+    var match = /^(\d{1,2})\s*[:：.]\s*(\d{2})\s*([\s\S]*)$/.exec(source);
+    if (match) {
+      var hour = Number(match[1]);
+      var minute = Number(match[2]);
+      if (hour < 24 && minute < 60) {
+        return { time: pad2(hour) + ":" + pad2(minute), title: match[3].trim() };
+      }
+    }
+    return { time: "", title: source };
+  }
+
+  /** 没时间的排前面，其余按 `HH:MM` 字典序（定长字符串，字典序就是时间序） */
+  function sortEvents(list) {
+    return list.slice().sort(function (a, b) {
+      if (a.time === b.time) return 0;
+      if (!a.time) return -1;
+      if (!b.time) return 1;
+      return a.time < b.time ? -1 : 1;
+    });
+  }
+
+  function eventsFor(events, key) {
+    var list = events && events[key];
+    return Array.isArray(list) ? sortEvents(list) : [];
+  }
+
+  function countOn(events, key) {
+    var list = events && events[key];
+    return Array.isArray(list) ? list.length : 0;
+  }
+
+  var MAX_PER_DAY = 50;
+
+  /** 加一条。返回新的表（不改入参，自检页要靠这一点做断言） */
+  function addEvent(events, key, entry, id) {
+    if (!entry) return events;
+    var current = Array.isArray(events[key]) ? events[key] : [];
+    if (current.length >= MAX_PER_DAY) return events;
+    var next = {};
+    Object.keys(events).forEach(function (name) {
+      next[name] = events[name];
+    });
+    next[key] = current.concat([{ id: id, time: entry.time, title: entry.title }]);
+    return next;
+  }
+
+  function removeEvent(events, key, id) {
+    var current = Array.isArray(events[key]) ? events[key] : [];
+    var kept = current.filter(function (item) {
+      return item.id !== id;
+    });
+    var next = {};
+    Object.keys(events).forEach(function (name) {
+      if (name !== key) next[name] = events[name];
+    });
+    // 空了就把这一天整条删掉，别在 state.json 里留一堆空数组
+    if (kept.length > 0) next[key] = kept;
+    return next;
+  }
+
+  // -------------------------------------------------------------------------
+  // 界面
+  // -------------------------------------------------------------------------
+
+  var titleEl = document.getElementById("title");
+  var weekEl = document.getElementById("week");
+  var gridEl = document.getElementById("grid");
+  var dayLabelEl = document.getElementById("day-label");
+  var dayCountEl = document.getElementById("day-count");
+  var eventsEl = document.getElementById("events");
+  var entryEl = document.getElementById("entry");
+  var prevEl = document.getElementById("prev");
+  var nextEl = document.getElementById("next");
+
+  var KEY = "calendar";
+  var weekStart = "monday";
+  var events = {};
+  var selected = todayKey();
+  var parsed = parseKey(selected) || { year: 2020, month: 0, day: 1 };
+  var view = { year: parsed.year, month: parsed.month };
+  /** 用户动过之后，迟到的 storage.get 不许把界面倒回去 */
+  var touched = false;
+
+  function applyConfig(next) {
+    if (!next) return;
+    var value = String(next.weekStart || "");
+    weekStart = value === "sunday" ? "sunday" : "monday";
+    renderWeek();
+    renderGrid();
+  }
+
+  function save() {
+    call("storage.set", { key: KEY, value: { events: events, selected: selected } }).catch(noop);
+  }
+
+  function renderHead() {
+    titleEl.textContent = formatMonth(view.year, view.month);
+  }
+
+  function renderWeek() {
+    weekEl.innerHTML = weekdayLabels(weekStart)
+      .map(function (label) {
+        return '<span class="cal-weekday">' + label + "</span>";
+      })
+      .join("");
+  }
+
+  function renderGrid() {
+    var today = todayKey();
+    var cells = monthGrid(view.year, view.month, weekStart);
+    var html = "";
+    for (var i = 0; i < cells.length; i += 1) {
+      var cell = cells[i];
+      var classes = ["cal-cell"];
+      if (!cell.inMonth) classes.push("is-out");
+      if (cell.key === today) classes.push("is-today");
+      if (cell.key === selected) classes.push("is-selected");
+      var count = countOn(events, cell.key);
+      html +=
+        '<button type="button" class="' + classes.join(" ") + '" data-key="' + cell.key + '"' +
+        ' aria-pressed="' + (cell.key === selected ? "true" : "false") + '">' +
+        '<span class="cal-num">' + cell.day + "</span>" +
+        (count > 0 ? '<span class="cal-dot" aria-hidden="true"></span>' : "") +
+        "</button>";
+    }
+    gridEl.innerHTML = html;
+  }
+
+  function renderDay() {
+    dayLabelEl.textContent = formatDay(selected);
+    var list = eventsFor(events, selected);
+    dayCountEl.textContent = list.length === 0 ? "" : String(list.length);
+    if (list.length === 0) {
+      eventsEl.innerHTML = '<li class="cal-empty">Nothing on this day.</li>';
+      return;
+    }
+    eventsEl.innerHTML = list
+      .map(function (item) {
+        return (
+          '<li class="cal-event" data-id="' + item.id + '">' +
+          '<span class="cal-event-time">' + (item.time || "all day") + "</span>" +
+          '<span class="cal-event-title">' + escapeHtml(item.title || "Untitled") + "</span>" +
+          '<button type="button" class="cal-event-x" data-id="' + item.id + '" aria-label="Delete">✕</button>' +
+          "</li>"
+        );
+      })
+      .join("");
+  }
+
+  function escapeHtml(text) {
+    return String(text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function renderAll() {
+    renderHead();
+    renderGrid();
+    renderDay();
+  }
+
+  // ---- 交互 ----
+
+  prevEl.addEventListener("click", function () {
+    touched = true;
+    view = addMonths(view.year, view.month, -1);
+    renderHead();
+    renderGrid();
+  });
+
+  nextEl.addEventListener("click", function () {
+    touched = true;
+    view = addMonths(view.year, view.month, 1);
+    renderHead();
+    renderGrid();
+  });
+
+  titleEl.addEventListener("click", function () {
+    touched = true;
+    selected = todayKey();
+    var today = parseKey(selected);
+    view = { year: today.year, month: today.month };
+    renderAll();
+    save();
+  });
+
+  gridEl.addEventListener("click", function (event) {
+    var cell = event.target.closest(".cal-cell");
+    if (!cell) return;
+    touched = true;
+    selected = cell.dataset.key;
+    var at = parseKey(selected);
+    /*
+     * 点了邻月的日子就跟着跳到那个月：留在本月的话，上面写着"October"、
+     * 下面列着 11 月 3 号的事件，看起来像记错了月份。
+     */
+    if (at && (at.year !== view.year || at.month !== view.month)) {
+      view = { year: at.year, month: at.month };
+    }
+    renderAll();
+    save();
+    entryEl.focus();
+  });
+
+  entryEl.addEventListener("keydown", function (event) {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    var entry = parseEntry(entryEl.value);
+    if (!entry) return;
+    touched = true;
+    var id = String(Date.now()) + "-" + Math.random().toString(36).slice(2, 6);
+    events = addEvent(events, selected, entry, id);
+    entryEl.value = "";
+    renderGrid();
+    renderDay();
+    save();
+  });
+
+  eventsEl.addEventListener("click", function (event) {
+    var button = event.target.closest(".cal-event-x");
+    if (!button) return;
+    touched = true;
+    events = removeEvent(events, selected, button.dataset.id);
+    renderGrid();
+    renderDay();
+    save();
+  });
+
+  // -------------------------------------------------------------------------
+  // 启动
+  // -------------------------------------------------------------------------
+
+  /*
+   * 先画一帧（今天所在的月、空事件表），再去问配置和存档 ——
+   * 等桥的话宿主慢一点卡片就是一块空白，而这一帧本来就画得出来。
+   */
+  renderWeek();
+  renderAll();
+
+  call("config.get")
+    .then(function (values) {
+      if (values) applyConfig(values);
+    })
+    .catch(noop)
+    .then(function () {
+      return call("storage.get", { key: KEY }).catch(function () {
+        return null;
+      });
+    })
+    .then(function (saved) {
+      if (touched || !saved || typeof saved !== "object") return;
+      events = normalizeEvents(saved.events);
+      var key = parseKey(saved.selected) ? String(saved.selected) : todayKey();
+      selected = key;
+      var at = parseKey(key);
+      view = { year: at.year, month: at.month };
+      renderAll();
+    })
+    .catch(noop)
+    .then(function () {
+      parent.postMessage({ __lattice: 1, type: "ready" }, "*");
+    });
+
+  /**
+   * 读存档时逐条筛：日期键要合法、条目要有字符串标题、时间要么空要么
+   * `HH:MM`。存坏一格只丢那一格 —— 整份退回空白等于把用户的日历清空。
+   */
+  function normalizeEvents(raw) {
+    var out = {};
+    if (!raw || typeof raw !== "object") return out;
+    Object.keys(raw).forEach(function (key) {
+      if (!parseKey(key)) return;
+      var list = raw[key];
+      if (!Array.isArray(list)) return;
+      var kept = [];
+      for (var i = 0; i < list.length && kept.length < MAX_PER_DAY; i += 1) {
+        var item = list[i];
+        if (!item || typeof item !== "object") continue;
+        var title = typeof item.title === "string" ? item.title.slice(0, 200) : "";
+        var time = typeof item.time === "string" && /^\d{2}:\d{2}$/.test(item.time) ? item.time : "";
+        var id = typeof item.id === "string" && item.id ? item.id : String(Date.now()) + "-" + i;
+        kept.push({ id: id, time: time, title: title });
+      }
+      if (kept.length > 0) out[key] = kept;
+    });
+    return out;
+  }
+
+  /* 自检页用：日期与条目都是纯函数，DOM 只是它们的一个视图 */
+  window.__latticeCalendar = {
+    keyOf: keyOf,
+    todayKey: todayKey,
+    parseKey: parseKey,
+    monthGrid: monthGrid,
+    weekdayLabels: weekdayLabels,
+    addMonths: addMonths,
+    formatMonth: formatMonth,
+    formatDay: formatDay,
+    parseEntry: parseEntry,
+    sortEvents: sortEvents,
+    eventsFor: eventsFor,
+    addEvent: addEvent,
+    removeEvent: removeEvent,
+    normalizeEvents: normalizeEvents,
+    MAX_PER_DAY: MAX_PER_DAY,
+    snapshot: function () {
+      return {
+        view: { year: view.year, month: view.month },
+        selected: selected,
+        weekStart: weekStart,
+        events: events,
+      };
+    },
+  };
+})();

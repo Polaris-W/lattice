@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3.5" y="5.5" width="17" height="15" rx="2.5" />
+  <path d="M3.5 10h17" />
+  <path d="M8 3.5v3M16 3.5v3" />
+  <!-- 一天被圈出来：和纯日历图标区分开 -->
+  <circle cx="12" cy="15" r="1.8" fill="currentColor" stroke="none" />
+</svg>
