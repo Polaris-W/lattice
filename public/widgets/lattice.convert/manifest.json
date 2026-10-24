@@ -1,0 +1,70 @@
+{
+  "id": "lattice.convert",
+  "name": "Convert",
+  "version": "0.1.0",
+  "description": "Unit converter for length, mass, temperature, data, time and speed — both directions, live",
+  "author": "Lattice",
+  "entry": "index.html",
+  "icon": "icon.svg",
+  "size": { "w": 280, "h": 190, "minW": 220, "minH": 160 },
+  "layer": "desktop",
+  "interactive": true,
+  "permissions": ["storage"],
+  "config": [
+    {
+      "key": "precision",
+      "type": "number",
+      "label": "Significant digits",
+      "default": 6,
+      "min": 3,
+      "max": 12,
+      "step": 1,
+      "unit": "digits",
+      "help": "How many digits the answer keeps. 6 is enough for cooking and for wiring a plug."
+    }
+  ],
+  "help": {
+    "sections": [
+      {
+        "title": "Two ways to use it",
+        "items": [
+          "Type a number on the top row and read the answer on the bottom row.",
+          "Type in the bottom row instead and the top row answers — both fields are live, neither is read-only.",
+          "The ⇅ button swaps the two units and carries the answer up, so you can keep converting back."
+        ]
+      },
+      {
+        "title": "What it converts",
+        "items": [
+          "Length, mass, temperature, data size, time and speed. The chips at the top switch between them.",
+          "Data sizes are 1024-based (1 KB = 1024 B), the way Windows reports file sizes.",
+          "Temperature is the one that is not a simple multiplication — Celsius, Fahrenheit and Kelvin convert through absolute values."
+        ]
+      },
+      {
+        "title": "Significant digits",
+        "items": [
+          "The answer keeps this many digits and drops the rest, so 1 m in feet reads 3.28084 rather than 3.280839895013123.",
+          "Very large or very small answers switch to scientific notation instead of running off the card."
+        ]
+      },
+      {
+        "title": "It remembers where you were",
+        "items": [
+          "The last category and the two units are stored per widget, so reopening the card lands on the same conversion.",
+          "The number itself is not stored — a converter that reopens with a stale number is worse than an empty box."
+        ]
+      }
+    ]
+  },
+  "changelog": [
+    {
+      "version": "0.1.0",
+      "changes": [
+        "First release: six categories, both directions live, swap button.",
+        "Remembers the category and units, not the number."
+      ]
+    }
+  ],
+  "sdk": "^0.1"
+}

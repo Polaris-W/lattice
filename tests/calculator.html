@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>calculator test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+      iframe {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <iframe id="w" src="/widgets/lattice.calculator/index.html" title="calculator"></iframe>
+    <script type="module">
+      /*
+       * 计算器组件的纯逻辑：表达式求值、数字格式化、Base64、MD5。
+       *
+       * 组件的业务代码是 IIFE，没有模块导出 —— 所以这里真的把组件页装进
+       * iframe 跑一遍，再从 `window.__latticeCalc` 拿那几个函数。这样测的是
+       * **组件里那一份代码**，不是另抄一份来测（抄一份的测试只会证明抄对了）。
+       */
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const eq = (actual, expected, text) =>
+        log(JSON.stringify(actual) === JSON.stringify(expected), `${text}（得到 ${JSON.stringify(actual)}）`);
+
+      const frame = document.getElementById("w");
+      await new Promise((resolve) => {
+        if (frame.contentWindow?.__latticeCalc) resolve();
+        else frame.addEventListener("load", () => setTimeout(resolve, 60), { once: true });
+      });
+
+      const api = frame.contentWindow.__latticeCalc;
+      log(Boolean(api), "组件把自己的纯函数挂出来了（没挂就没法测）");
+      if (!api) {
+        document.getElementById("out").textContent = lines.join("\n");
+        window.__done = true;
+        throw new Error("no api");
+      }
+
+      const { evaluate, formatNumber, base64Encode, base64Decode, md5Hex } = api;
+
+      /** 捕获"应该报错"的调用，返回它的人话文案 */
+      const boom = (src) => {
+        try {
+          evaluate(src);
+          return null;
+        } catch (error) {
+          return error.message;
+        }
+      };
+
+      // ---- 1. 优先级与结合性 ----
+
+      eq(evaluate("1+2*3"), 7, "先乘后加");
+      eq(evaluate("(1+2)*3"), 9, "括号优先");
+      eq(evaluate("2^3^2"), 512, "乘方右结合（2^9，不是 8^2）");
+      eq(evaluate("-3^2"), -9, "一元负号比乘方松：-(3^2)");
+      eq(evaluate("17%5"), 2, "% 是取模不是百分比");
+      eq(evaluate("10/4"), 2.5, "除法给小数");
+      eq(evaluate("--3"), 3, "两个负号叠起来是正数");
+      eq(evaluate("2*-3"), -6, "乘号后面跟负号");
+      eq(evaluate("1_000 + 1"), 1001, "下划线当千位分隔符用");
+      eq(evaluate("  12  "), 12, "前后空白不影响");
+
+      // ---- 2. 空输入不是错误 ----
+
+      eq(evaluate(""), null, "空串返回 null（表示还没输入，不是 0）");
+      eq(evaluate("   "), null, "只有空白也一样");
+
+      // ---- 3. 报错要能看懂 ----
+
+      eq(boom("1/0"), "Cannot divide by zero", "除以零说人话");
+      eq(boom("5%0"), "Cannot divide by zero", "取模零也一样");
+      eq(boom("(1+2"), "Unbalanced parentheses", "少右括号");
+      eq(boom("1+2)"), "Unbalanced parentheses", "多右括号");
+      eq(boom("2+"), "Missing a number before +", "运算符后面没东西");
+      eq(boom("*3"), "Missing a number before *", "运算符前面没东西");
+      eq(boom("1 2"), "Incomplete expression", "两个数并排放（少一个运算符）");
+      eq(boom("1..2"), "Two decimal points in one number", "两个小数点");
+      eq(boom("2×3"), "Use * / - instead of ×", "全角乘号给一句人话");
+      eq(boom("2$3"), "Unexpected character: $", "不认识的字符点名");
+
+      /*
+       * 4. 这个组件为什么不用 eval。
+       *
+       * 输入框是别人可以往里贴东西的地方。这条断言钉住的是"代码不会被当成
+       * 表达式执行"——它必须报错，而不是算出 2。
+       */
+      eq(boom("alert(1)"), "Unexpected character: a", "贴进来的代码不会被当成代码执行");
+
+      // ---- 5. 数字怎么显示 ----
+
+      eq(formatNumber(0.1 + 0.2), "0.3", "浮点尾巴不给人看（0.1+0.2）");
+      eq(formatNumber(1 / 3), "0.333333333333", "12 位有效数字，够用且不抖");
+      eq(formatNumber(0), "0", "零就是零");
+      eq(formatNumber(-0), "0", "负零也是零");
+      eq(formatNumber(1e13), "1e13", "太大就用科学计数法");
+      eq(formatNumber(0.0000001), "1e-7", "太小也一样");
+      eq(formatNumber(1 / 0), "Infinity", "无穷不崩");
+      eq(formatNumber(NaN), "NaN", "NaN 不崩");
+
+      // ---- 6. Base64 走 UTF-8 ----
+
+      eq(base64Encode("hello"), "aGVsbG8=", "ASCII 的 Base64");
+      eq(base64Decode(base64Encode("中文和 emoji 🍃")), "中文和 emoji 🍃", "非 ASCII 往返不丢");
+      eq(base64Decode("aGVs\nbG8="), "hello", "粘贴时带进来的换行不影响");
+      let bad = null;
+      try {
+        base64Decode("这不是base64!!");
+      } catch (error) {
+        bad = error.message;
+      }
+      eq(bad, "Not valid Base64", "不是 Base64 就说不是");
+
+      // ---- 7. MD5（向量取自 Node 的 crypto） ----
+
+      eq(md5Hex(""), "d41d8cd98f00b204e9800998ecf8427e", "空串的 MD5");
+      eq(md5Hex("abc"), "900150983cd24fb0d6963f7d28e17f72", "abc 的 MD5");
+      eq(md5Hex("中文"), "a7bac2239fcdcb3a067903d8077c4a07", "按 UTF-8 取字节（中文）");
+      eq(md5Hex("lattice"), "aa33451da4827e9bd90b3c408f7d7dce", "lattice 的 MD5");
+      // 跨块：55 / 56 / 64 字节是填充规则的三处边界
+      eq(md5Hex("a".repeat(55)), "ef1772b6dff9a122358552954ad0df65", "55 字节（填充刚好塞满一块）");
+      eq(md5Hex("a".repeat(56)), "3b0c8ac703f828b04c6c197006d17218", "56 字节（要补一整块）");
+      eq(md5Hex("a".repeat(64)), "014842d480b571495a4a0363793f7367", "64 字节（正好两块）");
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>

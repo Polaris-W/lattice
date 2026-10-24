@@ -1,0 +1,251 @@
+:root {
+  --bg: transparent;
+  --fg: #ecebe6;
+  --muted: #97978f;
+  --accent: #5dcaa5;
+  --border: rgba(255, 255, 255, 0.12);
+  --radius: 10px;
+  --font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI",
+    "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif;
+  --mono: "Cascadia Mono", "Consolas", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  overflow: hidden;
+}
+
+.calc {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 8px;
+  gap: 6px;
+}
+
+/* ---------- 页签 ---------- */
+
+.calc-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  flex: 0 0 auto;
+}
+
+.calc-tab {
+  flex: 1;
+  padding: 3px 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.calc-tab:hover {
+  color: var(--fg);
+}
+
+.calc-tab.is-active {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  color: var(--fg);
+}
+
+/* ---------- 面板 ---------- */
+
+.calc-pane {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.calc-pane.is-active {
+  display: flex;
+}
+
+/* ---------- 计算 ---------- */
+
+.calc-expr {
+  flex: 0 0 auto;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 14px;
+  outline: none;
+}
+
+.calc-expr:focus {
+  border-color: var(--accent);
+}
+
+.calc-expr::placeholder {
+  color: var(--muted);
+}
+
+.calc-result {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 20px;
+  line-height: 1.2;
+  text-align: right;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 出错时结果行不是数字，用正文色，别让它看起来像个答案 */
+.calc-result.is-error {
+  font-size: 12px;
+  color: #f09595;
+  text-align: left;
+}
+
+.calc-history {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.calc-history li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 4px;
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.calc-history li:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+}
+
+.calc-history .calc-expr-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calc-history .calc-answer {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+/* ---------- 编码 / 哈希 ---------- */
+
+.calc-text {
+  flex: 1 1 auto;
+  min-height: 40px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+  resize: none;
+  outline: none;
+}
+
+.calc-text:focus {
+  border-color: var(--accent);
+}
+
+.calc-row {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.calc-btn {
+  flex: 1;
+  padding: 4px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.calc-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.calc-out {
+  flex: 0 0 auto;
+  max-height: 72px;
+  overflow: auto;
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  font-size: 11px;
+  line-height: 1.45;
+  word-break: break-all;
+  user-select: text;
+}
+
+.calc-out.is-mono {
+  font-family: var(--mono);
+}
+
+.calc-out[data-empty="true"] {
+  color: var(--muted);
+}
+
+.calc-out.is-error {
+  color: #f09595;
+}
+
+.calc-copy {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: var(--fg);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.calc-copy:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}

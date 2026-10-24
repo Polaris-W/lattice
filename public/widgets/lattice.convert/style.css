@@ -1,0 +1,176 @@
+:root {
+  --bg: transparent;
+  --fg: #ecebe6;
+  --muted: #97978f;
+  --accent: #5dcaa5;
+  --border: rgba(255, 255, 255, 0.12);
+  --radius: 10px;
+  --font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI",
+    "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  overflow: hidden;
+}
+
+.cv {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 100%;
+  padding: 8px;
+  /*
+   * 竖着居中：默认高度 190 里内容只占 118，顶对齐的话下面空一大块，
+   * 卡片看着像没加载完。拉矮到 minH 时居中也不会溢出（118 + 16 < 160）。
+   */
+  justify-content: center;
+}
+
+/* ---------- 分类 ---------- */
+
+.cv-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  flex: 0 0 auto;
+  /*
+   * 换行而不是横向滚动。六个 chip 在默认 280 宽里正好一行放得下，
+   * 但拉到 minW 220 就放不下了 —— 横向滚动条在这里是藏起来的，
+   * 用户只会看到"分类到 Temp 就没了"，剩下的 Data / Time / Speed
+   * 得靠猜才知道能往右划。换行至少让六项都看得见。
+   */
+}
+
+.cv-cat {
+  flex: 1 0 auto;
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cv-cat:hover {
+  color: var(--fg);
+}
+
+.cv-cat.is-active {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  color: var(--fg);
+}
+
+/* ---------- 行 ---------- */
+
+.cv-row {
+  display: flex;
+  gap: 4px;
+  align-items: stretch;
+  flex: 0 0 auto;
+}
+
+.cv-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  outline: none;
+}
+
+.cv-value:focus {
+  border-color: var(--accent);
+}
+
+.cv-value::placeholder {
+  color: var(--muted);
+}
+
+/* 结果那行用强调色：一眼能分出"我输入的数"和"它算出来的数" */
+.cv-row:last-child .cv-value {
+  color: var(--accent);
+}
+
+.cv-row:last-child .cv-value:focus {
+  color: var(--fg);
+}
+
+.cv-unit {
+  flex: 0 0 auto;
+  width: 76px;
+  padding: 4px 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  outline: none;
+}
+
+.cv-unit:focus {
+  border-color: var(--accent);
+}
+
+/*
+ * 下拉展开的那一列由系统画，跟着 color-scheme 走。深色卡片上不给这一条，
+ * 展开出来是一列白底黑字 —— 和卡片像两个应用。
+ */
+.cv-unit option {
+  background: #1b1b1f;
+  color: #ecebe6;
+}
+
+@media (prefers-color-scheme: light) {
+  .cv-unit option {
+    background: #ffffff;
+    color: #1b1b1f;
+  }
+}
+
+/* ---------- 中间那行 ---------- */
+
+.cv-mid {
+  display: flex;
+  justify-content: center;
+  flex: 0 0 auto;
+  margin: -2px 0;
+}
+
+.cv-swap {
+  width: 22px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cv-swap:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}

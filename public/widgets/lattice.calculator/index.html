@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Calculator</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!--
+      三个页签挤在一张 300×260 的卡片里。为什么是页签而不是三个组件：算一下、
+      转一下、算个哈希是同一件事的三步，分开放只会让人装三个卡片找哪个是哪个。
+    -->
+    <main class="calc" id="root">
+      <nav class="calc-tabs" role="tablist">
+        <button type="button" class="calc-tab is-active" data-pane="calc" role="tab">Calc</button>
+        <button type="button" class="calc-tab" data-pane="encode" role="tab">Encode</button>
+        <button type="button" class="calc-tab" data-pane="hash" role="tab">Hash</button>
+      </nav>
+
+      <section class="calc-pane is-active" data-pane="calc">
+        <input
+          id="expr"
+          class="calc-expr"
+          type="text"
+          inputmode="text"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="0"
+          aria-label="Expression"
+        />
+        <div class="calc-result" id="result">= 0</div>
+        <ul class="calc-history" id="history"></ul>
+      </section>
+
+      <section class="calc-pane" data-pane="encode">
+        <textarea
+          id="encode-in"
+          class="calc-text"
+          spellcheck="false"
+          placeholder="Text to encode or decode"
+          aria-label="Encode input"
+        ></textarea>
+        <div class="calc-row">
+          <button type="button" class="calc-btn" data-encode="b64-enc">Base64 ↑</button>
+          <button type="button" class="calc-btn" data-encode="b64-dec">Base64 ↓</button>
+          <button type="button" class="calc-btn" data-encode="url-enc">URL ↑</button>
+          <button type="button" class="calc-btn" data-encode="url-dec">URL ↓</button>
+        </div>
+        <div class="calc-out" id="encode-out" data-empty="true">Nothing yet</div>
+      </section>
+
+      <section class="calc-pane" data-pane="hash">
+        <textarea
+          id="hash-in"
+          class="calc-text"
+          spellcheck="false"
+          placeholder="Text to hash"
+          aria-label="Hash input"
+        ></textarea>
+        <div class="calc-out is-mono" id="hash-out" data-empty="true">MD5 appears here</div>
+      </section>
+
+      <button type="button" class="calc-copy" id="copy" hidden>Copy</button>
+    </main>
+    <script src="widget.js"></script>
+  </body>
+</html>

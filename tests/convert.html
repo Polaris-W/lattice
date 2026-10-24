@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>convert test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+      iframe {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <iframe id="w" src="/widgets/lattice.convert/index.html" title="convert"></iframe>
+    <script type="module">
+      /*
+       * 单位换算：表本身是否自洽、几个常见换算对不对、显示与解析的边界。
+       *
+       * 换算最怕的不是算错，是**表里少一项或系数打错一位**——那种错没人会发现，
+       * 直到有人拿它去配药或者接线。所以第一段先把表本身过一遍。
+       */
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const eq = (actual, expected, text) =>
+        log(JSON.stringify(actual) === JSON.stringify(expected), `${text}（得到 ${JSON.stringify(actual)}）`);
+      const near = (actual, expected, text, tolerance = 1e-9) =>
+        log(Math.abs(actual - expected) <= tolerance, `${text}（得到 ${actual}）`);
+
+      const frame = document.getElementById("w");
+      await new Promise((resolve) => {
+        if (frame.contentWindow?.__latticeConvert) resolve();
+        else frame.addEventListener("load", () => setTimeout(resolve, 60), { once: true });
+      });
+
+      const api = frame.contentWindow.__latticeConvert;
+      log(Boolean(api), "组件把表和三件纯函数挂出来了");
+      if (!api) {
+        document.getElementById("out").textContent = lines.join("\n");
+        window.__done = true;
+        throw new Error("no api");
+      }
+
+      const { CATEGORIES, convert, formatValue, parseValue } = api;
+
+      // ---- 1. 表本身自洽 ----
+
+      const ids = CATEGORIES.map((c) => c.id);
+      eq(ids, ["length", "mass", "temp", "data", "time", "speed"], "六个分类都在，顺序固定");
+
+      const badUnits = [];
+      for (const category of CATEGORIES) {
+        const seen = new Set();
+        for (const unit of category.units) {
+          if (seen.has(unit.id)) badUnits.push(`${category.id}:${unit.id} 重复`);
+          seen.add(unit.id);
+          const hasFactor = typeof unit.factor === "number" && unit.factor > 0;
+          const hasAffine = typeof unit.toBase === "function" && typeof unit.fromBase === "function";
+          if (!hasFactor && !hasAffine) badUnits.push(`${category.id}:${unit.id} 既没系数也没换算函数`);
+          if (hasFactor && hasAffine) badUnits.push(`${category.id}:${unit.id} 两套都给了（会互相矛盾）`);
+        }
+        if (category.units.length < 2) badUnits.push(`${category.id} 只有一个单位`);
+        if (!category.units.some((u) => u.id === category.base)) {
+          badUnits.push(`${category.id} 的基准单位 ${category.base} 不在表里`);
+        }
+      }
+      eq(badUnits, [], "每个单位都有且只有一种换算方式，基准单位在表里");
+
+      // 基准单位换到自己是恒等
+      const selfBad = [];
+      for (const category of CATEGORIES) {
+        const value = convert(7.5, category.id, category.base, category.base);
+        if (Math.abs(value - 7.5) > 1e-12) selfBad.push(`${category.id} → ${value}`);
+      }
+      eq(selfBad, [], "基准单位换到自己，值不变");
+
+      // ---- 2. 常见换算（对的是现实里的数） ----
+
+      near(convert(1, "length", "m", "ft"), 3.280839895013123, "1 米 = 3.28084 英尺");
+      near(convert(1, "length", "mi", "km"), 1.609344, "1 英里 = 1.609344 公里");
+      near(convert(1, "length", "in", "cm"), 2.54, "1 英寸 = 2.54 厘米");
+      near(convert(1, "mass", "kg", "lb"), 2.2046226218487757, "1 千克 = 2.20462 磅");
+      near(convert(1, "mass", "t", "kg"), 1000, "1 吨 = 1000 千克");
+
+      // 温度是仿射的，这四个值必须**精确**
+      eq(convert(0, "temp", "c", "f"), 32, "0°C = 32°F（精确）");
+      eq(convert(100, "temp", "c", "f"), 212, "100°C = 212°F（精确）");
+      eq(convert(32, "temp", "f", "c"), 0, "32°F = 0°C（精确）");
+      eq(convert(-40, "temp", "c", "f"), -40, "-40 是两种刻度唯一相同的点");
+      near(convert(0, "temp", "k", "c"), -273.15, "0K = -273.15°C");
+      near(convert(300, "temp", "k", "c"), 26.85, "300K = 26.85°C");
+
+      eq(convert(1, "data", "GB", "MB"), 1024, "1 GB = 1024 MB（按 Windows 的口径）");
+      eq(convert(1, "time", "d", "h"), 24, "1 天 = 24 小时");
+      eq(convert(1, "time", "w", "d"), 7, "1 周 = 7 天");
+      near(convert(100, "speed", "kmh", "mph"), 62.13711922373339, "100 km/h = 62.1371 mph");
+      near(convert(1, "speed", "knot", "kmh"), 1.852, "1 节 = 1.852 km/h");
+
+      // ---- 3. 往返：任何单位换过去再换回来，必须回到原值 ----
+
+      const roundTrip = [];
+      for (const category of CATEGORIES) {
+        for (const from of category.units) {
+          for (const to of category.units) {
+            const there = convert(12.3456, category.id, from.id, to.id);
+            const back = convert(there, category.id, to.id, from.id);
+            // 温度经过 °C 再回来会有浮点尾巴，1e-9 的相对误差足够严格
+            if (Math.abs(back - 12.3456) > 1e-9) {
+              roundTrip.push(`${category.id} ${from.id}→${to.id} 回到 ${back}`);
+            }
+          }
+        }
+      }
+      eq(roundTrip, [], "所有单位两两往返都回到原值");
+
+      // ---- 4. 显示 ----
+
+      eq(formatValue(0), "0", "零就是零");
+      eq(formatValue(1 / 3), "0.333333", "默认 6 位有效数字");
+      eq(formatValue(1234567), "1234567", "整数不被截断成 1.23457e6");
+      eq(formatValue(3.280839895013123), "3.28084", "6 位有效数字，尾巴去掉");
+      eq(formatValue(-273.15), "-273.15", "负数照常显示");
+      eq(formatValue(1e16), "1e16", "太大就用科学计数法");
+      eq(formatValue(1e-10), "1e-10", "太小也一样");
+      eq(formatValue(NaN), "", "NaN 显示成空，不显示 NaN 三个字母");
+      eq(formatValue(Infinity), "", "无穷也显示成空");
+
+      // ---- 5. 解析输入 ----
+
+      eq(parseValue("1000"), 1000, "普通数字");
+      eq(parseValue("1,000.5"), 1000.5, "千位逗号");
+      eq(parseValue(" 12.5 "), 12.5, "前后空格");
+      eq(parseValue("1e3"), 1000, "科学计数法");
+      eq(parseValue("−5"), -5, "全角减号也认");
+      eq(parseValue(""), null, "空串是 null（不是 0）");
+      eq(parseValue("abc"), null, "不是数字就是 null");
+      eq(parseValue("1.2.3"), null, "两个小数点不认");
+
+      // ---- 6. 界面接线 ----
+
+      /*
+       * 上面测的是纯函数，下面测的是"输入框真的连着换算"。
+       *
+       * 纯函数全对、界面接错线是完全可能的：少一个 input 监听、换分类时
+       * 忘了重算、⇅ 只换了单位没搬数字 —— 这些都不会让 convert() 报错。
+       * 所以这一段直接操作组件自己的 DOM（同源，拿得到 contentDocument）。
+       */
+      const win = frame.contentWindow;
+      const doc = frame.contentDocument;
+      const fromEl = doc.getElementById("from-value");
+      const toEl = doc.getElementById("to-value");
+      const fromUnitEl = doc.getElementById("from-unit");
+      const toUnitEl = doc.getElementById("to-unit");
+      const type = (el, text) => {
+        el.value = text;
+        el.dispatchEvent(new win.Event("input", { bubbles: true }));
+      };
+
+      eq(api.snapshot(), { category: "length", from: "m", to: "ft", active: "from" }, "开局是 m → ft，且上面那行是主输入");
+      eq([fromEl.value, toEl.value], ["", ""], "开局两个框都是空的");
+
+      type(fromEl, "100");
+      eq(toEl.value, "328.084", "上面输入，下面立刻出结果");
+
+      type(toEl, "212");
+      eq(fromEl.value, "64.6176", "下面输入，上面也算（反方向）");
+
+      doc.getElementById("swap").click();
+      eq(api.snapshot().from + "→" + api.snapshot().to, "ft→m", "⇅ 把两个单位对调");
+      eq(fromEl.value, "212", "⇅ 把结果搬到上面，而不是把两个框清空");
+      eq(toEl.value, "64.6176", "搬完之后方向也跟着反过来");
+
+      const tempChip = doc.querySelector('.cv-cat[data-category="temp"]');
+      tempChip.click();
+      eq(api.snapshot(), { category: "temp", from: "c", to: "f", active: "from" }, "换分类后单位重置成前两个");
+      eq([fromUnitEl.value, toUnitEl.value], ["c", "f"], "下拉框跟着 state 走");
+      eq([...fromUnitEl.options].map((o) => o.textContent), ["°C", "°F", "K"], "温度的单位列表换了");
+      eq(doc.querySelectorAll(".cv-cat.is-active").length, 1, "同时只有一个分类是选中态");
+      eq(doc.querySelector(".cv-cat.is-active").dataset.category, "temp", "选中的就是点的那一个");
+      eq(toEl.value, "413.6", "换分类时用框里已有的数字重算（212°C = 413.6°F）");
+
+      type(fromEl, "");
+      eq(toEl.value, "", "清空输入，结果也清空（不留一个上一位数的结果）");
+
+      type(fromEl, "abc");
+      eq(toEl.value, "", "输入不是数字时结果清空，不显示 NaN");
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>

@@ -1,0 +1,149 @@
+:root {
+  --bg: transparent;
+  --fg: #ecebe6;
+  --muted: #97978f;
+  --surface: #1d1d21;
+  --accent: #5dcaa5;
+  --border: rgba(255, 255, 255, 0.12);
+  --radius: 10px;
+  --font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI",
+    "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  overflow: hidden;
+}
+
+.sw {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 8px 10px 10px;
+  gap: 6px;
+}
+
+/* ---------- 读数 ---------- */
+
+.sw-time {
+  flex: 0 0 auto;
+  font-size: 34px;
+  line-height: 1.1;
+  font-weight: 300;
+  /*
+   * 等宽数字：不等宽的话，读数每变一次整行就左右抖一下 —— 秒表在跑的时候
+   * 一直在变，抖起来特别明显。
+   */
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  text-align: center;
+  /* 时间再长也不换行、不撑破卡片，宁可缩字号 */
+  white-space: nowrap;
+}
+
+.sw-time.is-long {
+  font-size: 27px;
+}
+
+/* ---------- 按钮 ---------- */
+
+.sw-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.sw-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 5px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sw-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.sw-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/*
+ * 主按钮（Start / Pause / Resume）用强调色填底：一眼知道该按哪个。
+ *
+ * 字色用 `--surface` 而不是写死的深色：深色主题里 accent 是浅绿、字该深，
+ * 浅色主题里 accent 是深绿（#0f6e56）、字该白 —— surface 恰好两边都反着来，
+ * 这个用法在待办清单里已经用过（见 lattice.todo 的勾）。
+ * 桥不下发 `--lattice-accent-contrast`，所以只能借 surface 的极性。
+ */
+.sw-btn.is-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--surface, #10201b);
+  font-weight: 600;
+}
+
+/* ---------- 圈 ---------- */
+
+.sw-laps {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  /* 列表贴着底边往上长：卡片拉高时多出来的空间给圈，而不是把读数顶到中间 */
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sw-laps[hidden] {
+  display: none;
+}
+
+.sw-lap {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 2px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+}
+
+/* 最新那一圈是刚才按的，给点亮 */
+.sw-lap:first-child {
+  color: var(--fg);
+}
+
+.sw-lap-n {
+  flex: 0 0 auto;
+  min-width: 14px;
+  opacity: 0.6;
+}
+
+.sw-lap-split {
+  flex: 1 1 auto;
+}
+
+.sw-lap-total {
+  flex: 0 0 auto;
+  opacity: 0.55;
+}

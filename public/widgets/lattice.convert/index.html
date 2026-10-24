@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Convert</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!--
+      两个输入框都活着：从哪边改都行。只让上边能输入、下边只读的写法，在
+      "我知道 100 华氏，想知道摄氏" 这种场景下会逼用户先在心里换个方向。
+    -->
+    <main class="cv" id="root">
+      <nav class="cv-cats" id="cats" role="tablist"></nav>
+
+      <div class="cv-row">
+        <input
+          id="from-value"
+          class="cv-value"
+          type="text"
+          inputmode="decimal"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="0"
+          aria-label="Value"
+        />
+        <select id="from-unit" class="cv-unit" aria-label="From unit"></select>
+      </div>
+
+      <div class="cv-mid">
+        <button type="button" class="cv-swap" id="swap" title="Swap units">⇅</button>
+      </div>
+
+      <div class="cv-row">
+        <input
+          id="to-value"
+          class="cv-value"
+          type="text"
+          inputmode="decimal"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="0"
+          aria-label="Result"
+        />
+        <select id="to-unit" class="cv-unit" aria-label="To unit"></select>
+      </div>
+    </main>
+    <script src="widget.js"></script>
+  </body>
+</html>

@@ -1,0 +1,49 @@
+{
+  "id": "lattice.stopwatch",
+  "name": "Stopwatch",
+  "version": "0.1.0",
+  "description": "Counts up, with laps — keeps running while the card is closed",
+  "author": "Lattice",
+  "entry": "index.html",
+  "icon": "icon.svg",
+  "size": { "w": 240, "h": 176, "minW": 200, "minH": 150 },
+  "layer": "desktop",
+  "interactive": true,
+  "permissions": ["storage"],
+  "help": {
+    "sections": [
+      {
+        "title": "Two buttons",
+        "items": [
+          "The right button starts, pauses and resumes — it reads Start, Pause, then Resume, the same way the Focus timer does.",
+          "The left button changes with the state: it is Lap while running and Reset while stopped, so there is never a button that would do nothing."
+        ]
+      },
+      {
+        "title": "Laps",
+        "items": [
+          "Each lap records the moment you pressed it. The newest lap is at the top, with the split for that lap and the total so far.",
+          "Laps survive a pause and a resume. Reset clears them along with the time."
+        ]
+      },
+      {
+        "title": "It keeps counting while the card is closed",
+        "items": [
+          "Only the moment you pressed Start is stored, never the elapsed time. Reopening the card works the number out again, so a stopwatch left running overnight reads the whole night.",
+          "That also means sleeping the machine counts as time — it is a wall-clock span, not time spent in front of the screen.",
+          "Two Stopwatch widgets do not share one clock: each instance keeps its own time."
+        ]
+      }
+    ]
+  },
+  "changelog": [
+    {
+      "version": "0.1.0",
+      "changes": [
+        "First release: start, pause, resume, reset and laps.",
+        "Keeps running while the card is closed, because it stores the start moment rather than the time so far."
+      ]
+    }
+  ],
+  "sdk": "^0.1"
+}

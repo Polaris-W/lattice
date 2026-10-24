@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Stopwatch</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!--
+      两个按钮，不是三个：跑着的时候左边是 Lap、停着的时候左边是 Reset。
+      三个按钮并排（Lap / Reset / Start）里总有一个是灰的，卡片又只有
+      240 宽 —— 把"当前状态不该有的那个动作"藏进同一个位置更省地方。
+    -->
+    <main class="sw" id="root">
+      <div class="sw-time" id="time">00:00.00</div>
+
+      <div class="sw-actions">
+        <button type="button" class="sw-btn" id="lap">Reset</button>
+        <button type="button" class="sw-btn is-primary" id="run">Start</button>
+      </div>
+
+      <ol class="sw-laps" id="laps" aria-label="Laps"></ol>
+    </main>
+    <script src="widget.js"></script>
+  </body>
+</html>

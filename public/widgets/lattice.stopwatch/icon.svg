@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <!-- 秒表：表冠在正上方，指针指向 1 点方向（一眼和时钟区分开） -->
+  <circle cx="12" cy="13.5" r="7.5" />
+  <path d="M12 13.5 15 10.5" />
+  <path d="M9.5 3.5h5" />
+  <path d="M12 3.5v2.5" />
+</svg>

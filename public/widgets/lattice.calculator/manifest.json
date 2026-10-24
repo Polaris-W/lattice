@@ -1,0 +1,86 @@
+{
+  "id": "lattice.calculator",
+  "name": "Calculator",
+  "version": "0.1.0",
+  "description": "An expression calculator with a running history, plus Base64 / URL encoding and MD5",
+  "author": "Lattice",
+  "entry": "index.html",
+  "icon": "icon.svg",
+  "size": { "w": 300, "h": 260, "minW": 240, "minH": 200 },
+  "layer": "top",
+  "interactive": true,
+  "permissions": ["storage", "clipboard:write"],
+  "config": [
+    {
+      "key": "keepHistory",
+      "type": "toggle",
+      "label": "Keep a history",
+      "default": true,
+      "help": "Off hides the list and stops writing it. Nothing already saved is deleted."
+    },
+    {
+      "key": "historySize",
+      "type": "number",
+      "label": "History entries",
+      "default": 6,
+      "min": 3,
+      "max": 12,
+      "step": 1,
+      "unit": "rows"
+    }
+  ],
+  "help": {
+    "sections": [
+      {
+        "title": "Typing a sum",
+        "items": [
+          "Type the whole expression, not one key at a time: 12*(3+4)-5. The answer updates as you type.",
+          "Enter commits it: the answer moves into the box so you can keep going, and the sum goes into the history.",
+          "Esc clears the box. Backspace does what you expect — this is a text field, not a keypad."
+        ]
+      },
+      {
+        "title": "What the operators do",
+        "items": [
+          "+, -, *, / and ^ (power, right-associative: 2^3^2 is 2^9).",
+          "% is modulo, not percent: 17%5 is 2. A percentage is just /100 written out.",
+          "Parentheses work as usual; a leading minus is allowed, and -3^2 is -(3^2)."
+        ]
+      },
+      {
+        "title": "The history",
+        "items": [
+          "Click a row to put that answer back in the box — the sum stays visible next to it.",
+          "History entries is how many rows fit; Keep a history off hides the list without deleting it.",
+          "It is stored per widget, so two calculators on one desktop share one history."
+        ]
+      },
+      {
+        "title": "Encode and Hash",
+        "items": [
+          "Encode turns text into Base64 or a percent-encoded URL, and back. Base64 is UTF-8 safe, so Chinese survives the round trip.",
+          "Hash gives you MD5 of the text — lowercase hex. WebCrypto has no MD5, so this one is computed in the widget.",
+          "Copy puts the result on the clipboard. The clipboard permission is separate: without it the text is selected instead."
+        ]
+      },
+      {
+        "title": "When it says error",
+        "items": [
+          "Cannot divide by zero and Unbalanced parentheses are the two the parser will tell you about by name.",
+          "Anything else shows Unexpected character with the character in question."
+        ]
+      }
+    ]
+  },
+  "changelog": [
+    {
+      "version": "0.1.0",
+      "changes": [
+        "First release: expression calculator with live results and a clickable history.",
+        "Base64 and URL encoding, both directions, UTF-8 safe.",
+        "MD5 of the typed text, computed in the widget."
+      ]
+    }
+  ],
+  "sdk": "^0.1"
+}

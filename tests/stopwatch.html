@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>stopwatch test</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font: 12px/1.6 ui-monospace, monospace;
+        padding: 16px;
+      }
+      .ok {
+        color: #5dcaa5;
+      }
+      .bad {
+        color: #f09595;
+      }
+      iframe {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <iframe id="w" src="/widgets/lattice.stopwatch/index.html" title="stopwatch"></iframe>
+    <script type="module">
+      /*
+       * 秒表：状态机（纯函数）+ 按钮接线。
+       *
+       * 状态机接 `now` 参数而不是自己读时钟，所以这里可以"快进"到任意毫秒
+       * 验边界 —— 59.999 秒和 1 小时整这两处，真等出来要一小时。
+       *
+       * 要钉住的其实是三件事：
+       *   1. 暂停再继续，前面那段要接上（accumulated + 新的一段）
+       *   2. 存的是起点不是时长，所以"关掉再打开"能接上（见第 4 段）
+       *   3. 格式化在进位处不许提前跳数
+       */
+      const lines = [];
+      const log = (pass, text) => lines.push((pass ? "PASS " : "FAIL ") + text);
+      const eq = (actual, expected, text) =>
+        log(JSON.stringify(actual) === JSON.stringify(expected), `${text}（得到 ${JSON.stringify(actual)}）`);
+
+      const frame = document.getElementById("w");
+      await new Promise((resolve) => {
+        if (frame.contentWindow?.__latticeStopwatch) resolve();
+        else frame.addEventListener("load", () => setTimeout(resolve, 60), { once: true });
+      });
+
+      const api = frame.contentWindow.__latticeStopwatch;
+      log(Boolean(api), "组件把状态机和格式化挂出来了");
+      if (!api) {
+        document.getElementById("out").textContent = lines.join("\n");
+        window.__done = true;
+        throw new Error("no api");
+      }
+
+      const { blank, start, pause, reset, lap, splits, elapsedOf, isRunning, formatDuration } = api;
+
+      // ---- 1. 状态机 ----
+
+      let s = blank();
+      eq([s.startedAt, s.accumulated, s.laps], [null, 0, []], "空表：没起点、没累计、没圈");
+      eq(elapsedOf(s, 1000), 0, "空表读数是 0，不管现在几点");
+      eq(isRunning(s), false, "空表没在跑");
+
+      s = start(s, 5000);
+      eq(elapsedOf(s, 5000), 0, "刚按下 Start 时读数是 0");
+      eq(elapsedOf(s, 8000), 3000, "跑了 3 秒就是 3000");
+
+      const running = s;
+      eq(start(running, 9000), running, "已经在跑时再按 Start 不会把起点改掉（否则会悄悄清零）");
+
+      s = pause(running, 8000);
+      eq([s.startedAt, s.accumulated], [null, 3000], "暂停：把这一段折进累计值，起点清掉");
+      eq(elapsedOf(s, 99999), 3000, "暂停之后时间不再走");
+      eq(pause(s, 99999), s, "停着再按 Pause 不变（不会把累计值翻倍）");
+
+      s = start(s, 10000);
+      eq(elapsedOf(s, 12000), 5000, "继续：3000 累计 + 新的 2000");
+
+      eq(reset(s), blank(), "重置回到空表");
+      eq(reset().laps, [], "重置把圈也清掉");
+
+      // 系统时间被往回调（NTP 校准）：不许出现负数
+      const backwards = start(blank(), 5000);
+      eq(elapsedOf(backwards, 1000), 0, "时钟往回跳时读数是 0，不是负数");
+      eq(pause(backwards, 1000).accumulated, 0, "时钟往回跳时累计值也不会变成负数");
+
+      // ---- 2. 圈 ----
+
+      let t = start(blank(), 0);
+      t = lap(t, 1000);
+      t = lap(t, 3500);
+      t = lap(t, 3600);
+      eq(t.laps, [1000, 3500, 3600], "每圈记的是当时的读数");
+      eq(splits(t.laps), [1000, 2500, 100], "圈内用时 = 相邻两圈相减");
+      eq(splits([]), [], "没圈时没有用时");
+      eq(splits([4200]), [4200], "只有一圈时，圈内用时就是总时长");
+
+      eq(lap(pause(t, 4000), 5000).laps, t.laps, "停着按 Lap 不记圈（不然会记出一堆 0）");
+      eq(lap(t, 4000).laps.length, 4, "跑着按 Lap 才记");
+
+      // 圈要跟着暂停/继续走，不能被丢掉
+      const kept = start(pause(t, 4000), 4000);
+      eq(kept.laps, t.laps, "暂停再继续，已经记下的圈还在");
+
+      // ---- 3. 格式化 ----
+
+      eq(formatDuration(0), "00:00.00", "零");
+      eq(formatDuration(999), "00:00.99", "999ms 是 00:00.99");
+      eq(formatDuration(59999), "00:59.99", "59.999 秒还在 00:59.99");
+      eq(formatDuration(60000), "01:00.00", "整一分钟进位");
+      eq(formatDuration(3599999), "59:59.99", "差 1ms 到一小时");
+      eq(formatDuration(3600000), "1:00:00.00", "整一小时多一位");
+      eq(formatDuration(3723456), "1:02:03.45", "一小时零两分三秒四十五");
+      eq(formatDuration(-5), "00:00.00", "负数显示成零，不显示负号");
+      eq(formatDuration(10), "00:00.01", "10ms 是一个百分秒");
+      eq(formatDuration(9), "00:00.00", "9ms 还没到一个百分秒（向下取整，不提前跳）");
+
+      // ---- 4. 界面接线 ----
+
+      const win = frame.contentWindow;
+      const doc = frame.contentDocument;
+      const timeEl = doc.getElementById("time");
+      const runEl = doc.getElementById("run");
+      const lapEl = doc.getElementById("lap");
+      const lapsEl = doc.getElementById("laps");
+
+      eq([runEl.textContent, lapEl.textContent], ["Start", "Reset"], "开局：Start + Reset");
+      eq(lapEl.disabled, true, "开局 Reset 是灰的（没东西可重置）");
+      eq(timeEl.textContent, "00:00.00", "开局读数是 0");
+      eq(lapsEl.hidden, true, "没圈的时候不占地方");
+
+      runEl.click();
+      eq(runEl.textContent, "Pause", "按一下变成 Pause");
+      eq(lapEl.textContent, "Lap", "跑起来之后左边是 Lap");
+      eq(lapEl.disabled, false, "跑起来 Lap 可以按");
+      eq(api.snapshot().startedAt === null, false, "按下 Start 之后有起点了");
+
+      lapEl.click();
+      eq(api.snapshot().laps.length, 1, "按 Lap 记下一圈");
+      eq(lapsEl.hidden, false, "有圈之后列表出现");
+      eq(lapsEl.children.length, 1, "列表里一行");
+      eq(lapsEl.children[0].querySelector(".sw-lap-n").textContent, "1", "行首是圈号");
+
+      lapEl.click();
+      eq(api.snapshot().laps.length, 2, "第二圈");
+      eq(
+        lapsEl.children[0].querySelector(".sw-lap-n").textContent,
+        "2",
+        "最新的一圈在最上面",
+      );
+      eq(
+        lapsEl.children[1].querySelector(".sw-lap-n").textContent,
+        "1",
+        "旧的圈往下排",
+      );
+
+      runEl.click();
+      eq(runEl.textContent, "Resume", "暂停之后是 Resume");
+      eq(lapEl.textContent, "Reset", "停着的时候左边变回 Reset");
+      const paused = api.snapshot();
+      eq(paused.startedAt, null, "暂停后起点清掉");
+      eq(paused.laps.length, 2, "暂停不清圈");
+
+      runEl.click();
+      eq(runEl.textContent, "Pause", "继续之后又是 Pause");
+      eq(api.snapshot().laps.length, 2, "继续之后圈还在");
+
+      runEl.click(); // 停下
+      lapEl.click(); // Reset
+      eq(timeEl.textContent, "00:00.00", "重置后读数归零");
+      eq(api.snapshot().laps, [], "重置后圈清空");
+      eq(lapsEl.hidden, true, "重置后列表收起来");
+      eq(lapEl.disabled, true, "重置后 Reset 又灰了");
+
+      // 格式化换了字号的那个类，别在长读数时忘了加
+      eq(timeEl.className, "sw-time", "短读数用大字号");
+
+      document.getElementById("out").innerHTML = lines
+        .map((line) => `<span class="${line.startsWith("PASS") ? "ok" : "bad"}">${line}</span>`)
+        .join("\n");
+      window.__done = true;
+    </script>
+  </body>
+</html>
